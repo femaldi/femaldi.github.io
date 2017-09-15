@@ -37,7 +37,7 @@ self.addEventListener('fetch', event => {
 						});
 					});
 				});
-			});	
+			})	
 		);
 	}
 });
