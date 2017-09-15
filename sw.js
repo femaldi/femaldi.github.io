@@ -4,10 +4,8 @@ const RUNTIME = 'runtime';
 // A list of local resources we always want to be cached.
 const PRECACHE_URLS = [
   'index.html',
-  './', // Alias for index.html
-  'styles.css',
-  '../../styles/main.css',
-  'demo.js'
+  'app.js',
+  'sw.js'
 ];
 
 self.addEventListener('install', event => {
