@@ -1,3 +1,4 @@
+//v 1
 const PRECACHE = 'precache-v1';
 const RUNTIME = 'runtime';
 
@@ -6,7 +7,6 @@ const PRECACHE_URLS = [
   'index.html',
   './',
   'app.js',
-  'sw.js',
   'manifest.json'
 ];
 
