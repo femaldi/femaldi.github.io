@@ -14,7 +14,7 @@ self.addEventListener('install', event => {
 			.then(cache => cache.addAll(PRECACHE_URLS))
 			.then(self.skipWaiting())
 	);
-	console.log("Instalando Service Worker")
+	console.log("Instalando Service Worker");
 });
 
 self.addEventListener('activate', event => {
