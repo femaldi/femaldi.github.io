@@ -26,10 +26,10 @@ self.addEventListener('fetch', event => {
 		event.respondWith(
 			caches.match(event.request).then(cachedResponse => {
 				if (cachedResponse){
-					console.log("Request resuelto desde cache")
+					console.log("Request resuelto desde cache");
 					return cachedResponse;
 				}
-				console.log("Request resuelto desde la red")
+				console.log("Request resuelto desde la red");
 				return caches.open(RUNTIME).then(cache => {
 					return fetch(event.request).then(response => {
 						return cache.put(event.request, response.clone()).then(() => {
