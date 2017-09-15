@@ -1,0 +1,6 @@
+{
+  "name": "Mi App",
+  "short_name": "Mi App",
+  "start_url": "./",
+  "display": "standalone",
+}
