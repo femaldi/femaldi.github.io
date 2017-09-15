@@ -1,4 +1,4 @@
-//v 1
+//v 2
 const PRECACHE = 'precache-v1';
 const RUNTIME = 'runtime';
 
