@@ -1,0 +1,499 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Asignador de Habitaciones de Hotel para Estudiantes</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 900px;
+            margin: 20px auto;
+            padding: 0 20px;
+            background-color: #f4f7f6;
+        }
+        h1, h2 {
+            color: #005a8d;
+            border-bottom: 2px solid #e0e0e0;
+            padding-bottom: 10px;
+        }
+        h3 {
+            color: #343a40;
+            margin-top: 15px;
+            margin-bottom: 5px;
+            border-bottom: 1px solid #e9ecef;
+        }
+        .container {
+            display: flex;
+            gap: 30px;
+            flex-wrap: wrap;
+        }
+        .setup-section, .results-section {
+            background: #fff;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            flex: 1;
+            min-width: 300px;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        .checkbox-group {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+        input[type="checkbox"] {
+           transform: scale(1.2);
+        }
+        input[type="text"], input[type="number"] {
+            width: 95%;
+            padding: 8px;
+            border-radius: 4px;
+            border: 1px solid #ccc;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            padding: 10px 15px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background-color 0.2s;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        .action-buttons {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+        }
+        #action-button {
+            width: 100%;
+            background-color: #28a745;
+            padding: 15px;
+            font-size: 18px;
+        }
+        #action-button:hover {
+            background-color: #218838;
+        }
+        #reset-button {
+            background-color: #dc3545;
+        }
+        #reset-button:hover {
+            background-color: #c82333;
+        }
+        #export-csv-btn {
+            background-color: #17a2b8;
+        }
+        #export-csv-btn:hover {
+            background-color: #138496;
+        }
+        .display-area {
+            margin-top: 20px;
+            background-color: #e9ecef;
+            padding: 10px;
+            border-radius: 4px;
+            min-height: 50px;
+            max-height: 250px;
+            overflow-y: auto;
+        }
+        .display-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin: 5px 0 5px 15px;
+            padding: 5px;
+            background: #fff;
+            border-radius: 3px;
+        }
+        .delete-btn {
+            color: #dc3545;
+            font-weight: bold;
+            cursor: pointer;
+            padding: 0 8px;
+            font-size: 18px;
+        }
+        .delete-btn:hover {
+            color: #a71d2a;
+        }
+        #results {
+            background-color: #f8f9fa;
+            padding: 15px;
+            border-radius: 5px;
+            margin-top: 20px;
+            white-space: pre-wrap;
+            font-family: "Courier New", Courier, monospace;
+            border: 1px solid #dee2e6;
+        }
+        .error {
+            color: #D8000C;
+            background-color: #FFD2D2;
+            padding: 10px;
+            border-radius: 5px;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>Asignador de Habitaciones de Hotel para Estudiantes</h1>
+
+    <div class="container">
+        <div class="setup-section">
+            <h2>1. Configuración de Hoteles</h2>
+            <div class="form-group"><label for="hotel-name">Nombre del Hotel</label><input type="text" id="hotel-name" placeholder="Ej: Gran Plaza"></div>
+            <div class="form-group"><label for="room-capacity">Capacidad de Habitación</label><input type="number" id="room-capacity" min="1" value="4"></div>
+            <div class="form-group"><label for="room-quantity">Cantidad de este tipo de habitación</label><input type="number" id="room-quantity" min="1" value="1"></div>
+            <button id="add-rooms-btn">Añadir Habitaciones al Hotel</button>
+            <div class="display-area" id="hotel-display"></div>
+        </div>
+        <div class="setup-section">
+            <h2>2. Configuración de Grupos</h2>
+            <div class="form-group"><label for="division-name">Nombre del Grupo / División</label><input type="text" id="division-name" placeholder="Ej: División A, Coordinadores, etc."></div>
+            <div class="checkbox-group"><input type="checkbox" id="is-adult-group"><label for="is-adult-group">Marcar como grupo de adultos</label></div>
+            <div class="checkbox-group"><input type="checkbox" id="is-mixed-gender-group"><label for="is-mixed-gender-group">Permitir género mixto en este grupo</label></div>
+            <div class="form-group"><label for="male-students">Número de Hombres</label><input type="number" id="male-students" min="0" value="0"></div>
+            <div class="form-group"><label for="female-students">Número de Mujeres</label><input type="number" id="female-students" min="0" value="0"></div>
+            <button id="add-group-btn">Añadir Grupo</button>
+            <div class="display-area" id="student-display"></div>
+        </div>
+    </div>
+
+    <div class="results-section" style="margin-top: 30px;">
+        <h2>3. Ejecutar Asignación y Exportar</h2>
+        <button id="action-button">Distribuir Grupos Óptimamente</button>
+        <div class="action-buttons">
+            <button id="reset-button">Reiniciar Todo</button>
+            <button id="export-csv-btn" disabled>Exportar a CSV</button>
+        </div>
+        <div id="results">Los resultados de la asignación aparecerán aquí...</div>
+    </div>
+
+<script>
+    let hotels = {};
+    let studentGroups = [];
+    let lastAssignmentResults = [];
+    let nextRoomId = 1;
+
+    const hotelNameInput = document.getElementById('hotel-name');
+    const roomCapacityInput = document.getElementById('room-capacity');
+    const roomQuantityInput = document.getElementById('room-quantity');
+    const addRoomsBtn = document.getElementById('add-rooms-btn');
+    const hotelDisplay = document.getElementById('hotel-display');
+    const divisionNameInput = document.getElementById('division-name');
+    const isAdultGroupCheckbox = document.getElementById('is-adult-group');
+    const isMixedGenderCheckbox = document.getElementById('is-mixed-gender-group');
+    const maleStudentsInput = document.getElementById('male-students');
+    const femaleStudentsInput = document.getElementById('female-students');
+    const addGroupBtn = document.getElementById('add-group-btn');
+    const studentDisplay = document.getElementById('student-display');
+    const actionButton = document.getElementById('action-button');
+    const resetButton = document.getElementById('reset-button');
+    const exportCsvBtn = document.getElementById('export-csv-btn');
+    const resultsDiv = document.getElementById('results');
+
+    addRoomsBtn.addEventListener('click', addRooms);
+    addGroupBtn.addEventListener('click', addStudentGroup);
+    actionButton.addEventListener('click', runAssignment);
+    resetButton.addEventListener('click', resetAll);
+    exportCsvBtn.addEventListener('click', exportToCsv);
+    hotelDisplay.addEventListener('click', handleHotelDisplayClick);
+    studentDisplay.addEventListener('click', handleStudentDisplayClick);
+    
+    function updateHotelDisplay() {
+        hotelDisplay.innerHTML = '';
+        if (Object.keys(hotels).length === 0) { hotelDisplay.innerHTML = '<p>Aún no hay hoteles configurados.</p>'; return; }
+        for (const hotelName in hotels) {
+            const hotelHeader = document.createElement('h3');
+            hotelHeader.textContent = hotelName; hotelDisplay.appendChild(hotelHeader);
+            if (hotels[hotelName].length === 0) {
+                 const p = document.createElement('p'); p.textContent = `No hay habitaciones añadidas para este hotel.`; hotelDisplay.appendChild(p);
+            } else {
+                hotels[hotelName].forEach((group, index) => {
+                    const item = document.createElement('div'); item.className = 'display-item';
+                    item.innerHTML = `<span>› ${group.quantity} habitación(es) con capacidad ${group.capacity}</span>
+                                      <span class="delete-btn" data-hotel-name="${hotelName}" data-group-index="${index}" title="Eliminar este grupo de habitaciones">X</span>`;
+                    hotelDisplay.appendChild(item);
+                });
+            }
+        }
+    }
+
+    function updateStudentDisplay() {
+        studentDisplay.innerHTML = '';
+        if (studentGroups.length === 0) { studentDisplay.innerHTML = '<p>Aún no hay grupos añadidos.</p>'; return; }
+        studentGroups.forEach((group, index) => {
+            const item = document.createElement('div');
+            item.className = 'display-item';
+            const prefix = group.isAdult ? 'Grupo (Adultos)' : 'División';
+            const mixedText = group.isMixedGender ? ' (Mixto)' : '';
+            item.innerHTML = `<span>${prefix}: ${group.division}${mixedText} (${group.males} H, ${group.females} M)</span>
+                              <span class="delete-btn" data-group-index="${index}" title="Eliminar este grupo">X</span>`;
+            studentDisplay.appendChild(item);
+        });
+    }
+
+    function handleHotelDisplayClick(e) {
+        if (e.target.classList.contains('delete-btn')) {
+            const hotelName = e.target.dataset.hotelName; const groupIndex = parseInt(e.target.dataset.groupIndex, 10);
+            hotels[hotelName].splice(groupIndex, 1);
+            if (hotels[hotelName].length === 0) { delete hotels[hotelName]; }
+            updateHotelDisplay();
+        }
+    }
+
+    function handleStudentDisplayClick(e) {
+        if (e.target.classList.contains('delete-btn')) {
+            const groupIndex = parseInt(e.target.dataset.groupIndex, 10);
+            studentGroups.splice(groupIndex, 1);
+            updateStudentDisplay();
+        }
+    }
+
+    function addRooms() {
+        const hotelName = hotelNameInput.value.trim(); const capacity = parseInt(roomCapacityInput.value); const quantity = parseInt(roomQuantityInput.value);
+        if (!hotelName) { alert('Por favor, ingrese un nombre de hotel.'); return; }
+        if (isNaN(capacity) || isNaN(quantity) || capacity < 1 || quantity < 1) { alert('Por favor, ingrese una capacidad y cantidad válidas.'); return; }
+        if (!hotels[hotelName]) { hotels[hotelName] = []; }
+        const roomIds = []; for (let i = 0; i < quantity; i++) { roomIds.push(nextRoomId++); }
+        hotels[hotelName].push({ quantity, capacity, ids: roomIds });
+        updateHotelDisplay();
+    }
+
+    function addStudentGroup() {
+        const division = divisionNameInput.value.trim();
+        const isAdult = isAdultGroupCheckbox.checked;
+        const isMixedGender = isMixedGenderCheckbox.checked;
+        const males = parseInt(maleStudentsInput.value);
+        const females = parseInt(femaleStudentsInput.value);
+        if (!division) { alert('Por favor, ingrese un nombre de grupo/división.'); return; }
+        if (isNaN(males) || isNaN(females) || males < 0 || females < 0) { alert('Por favor, ingrese un número válido de personas.'); return; }
+        if (males === 0 && females === 0) { alert('No se puede añadir un grupo vacío.'); return; }
+        studentGroups.push({ division, males, females, isAdult, isMixedGender });
+        updateStudentDisplay();
+        divisionNameInput.value = ''; maleStudentsInput.value = 0; femaleStudentsInput.value = 0; isAdultGroupCheckbox.checked = false; isMixedGenderCheckbox.checked = false;
+    }
+
+    function resetAll() {
+        hotels = {}; studentGroups = []; lastAssignmentResults = []; nextRoomId = 1;
+        updateHotelDisplay(); updateStudentDisplay();
+        hotelNameInput.value = '';
+        resultsDiv.innerHTML = 'Los resultados de la asignación aparecerán aquí...';
+        resultsDiv.classList.remove('error');
+        exportCsvBtn.disabled = true;
+    }
+
+    function runAssignment() {
+        let allRooms = [];
+        for (const hotelName in hotels) {
+            for (const group of hotels[hotelName]) {
+                for (const roomId of group.ids) { allRooms.push({ id: roomId, capacity: group.capacity, hotelName: hotelName }); }
+            }
+        }
+        if (allRooms.length === 0 || studentGroups.length === 0) {
+            resultsDiv.textContent = 'Por favor, configure habitaciones y grupos primero.'; resultsDiv.classList.add('error'); return;
+        }
+        resultsDiv.classList.remove('error'); exportCsvBtn.disabled = true;
+
+        let assignableRooms = JSON.parse(JSON.stringify(allRooms));
+        assignableRooms.forEach(room => { room.assignedTo = null; room.occupancy = 0; });
+
+        const subgroups = [];
+        studentGroups.forEach(group => {
+            if (group.isMixedGender) {
+                const total = group.males + group.females;
+                if (total > 0) {
+                    subgroups.push({ division: group.division, gender: 'Mixto', gender_es: 'Mixto', count: total, isAdult: group.isAdult, isMixedGender: true });
+                }
+            } else {
+                if (group.males > 0) subgroups.push({ division: group.division, gender: 'Male', gender_es: 'Hombres', count: group.males, isAdult: group.isAdult, isMixedGender: false });
+                if (group.females > 0) subgroups.push({ division: group.division, gender: 'Female', gender_es: 'Mujeres', count: group.females, isAdult: group.isAdult, isMixedGender: false });
+            }
+        });
+
+        subgroups.sort((a, b) => b.count - a.count);
+        assignableRooms.sort((a, b) => b.capacity - a.capacity);
+        
+        for (const subgroup of subgroups) {
+            let studentsToPlace = subgroup.count;
+
+            for (const room of assignableRooms) {
+                if (studentsToPlace === 0) break;
+                if (room.assignedTo && room.assignedTo.division === subgroup.division && room.assignedTo.gender === subgroup.gender) {
+                    const space = room.capacity - room.occupancy;
+                    if (space > 0) { const canPlace = Math.min(studentsToPlace, space); room.occupancy += canPlace; studentsToPlace -= canPlace; }
+                }
+            }
+            
+            for (const room of assignableRooms) {
+                if (studentsToPlace < 2) break;
+                if (!room.assignedTo && room.capacity > 0) {
+                    const canPlace = Math.min(studentsToPlace, room.capacity);
+                    room.assignedTo = { division: subgroup.division, gender: subgroup.gender, isAdult: subgroup.isAdult }; room.occupancy += canPlace; studentsToPlace -= canPlace;
+                }
+            }
+            
+            if (studentsToPlace > 0) {
+                for (const room of assignableRooms) {
+                    if (studentsToPlace === 0) break;
+                    if (room.assignedTo && room.assignedTo.division === subgroup.division && room.assignedTo.gender === subgroup.gender) {
+                         const space = room.capacity - room.occupancy;
+                         if (space > 0) { const canPlace = Math.min(studentsToPlace, space); room.occupancy += canPlace; studentsToPlace -= canPlace; }
+                    }
+                }
+            }
+            
+            if (studentsToPlace === 1) {
+                let rebalanced = false;
+                const donorRoom = assignableRooms.find(r => r.assignedTo && r.assignedTo.division === subgroup.division && r.assignedTo.gender === subgroup.gender && r.occupancy > 1);
+                if (donorRoom) {
+                    const newRoom = assignableRooms.find(r => !r.assignedTo && r.capacity >= 2);
+                    if (newRoom) {
+                        donorRoom.occupancy--;
+                        newRoom.assignedTo = { division: subgroup.division, gender: subgroup.gender, isAdult: subgroup.isAdult };
+                        newRoom.occupancy = 2;
+                        studentsToPlace = 0;
+                        rebalanced = true;
+                    }
+                }
+                if (!rebalanced) {
+                    const lastResortRoom = assignableRooms.find(r => !r.assignedTo && r.capacity >= 1);
+                    if(lastResortRoom) {
+                        lastResortRoom.assignedTo = { division: subgroup.division, gender: subgroup.gender, isAdult: subgroup.isAdult };
+                        lastResortRoom.occupancy = 1;
+                        studentsToPlace = 0;
+                    }
+                }
+            }
+            subgroup.unassigned = studentsToPlace;
+        }
+
+        lastAssignmentResults = assignableRooms;
+        exportCsvBtn.disabled = false;
+        renderResults(assignableRooms, subgroups);
+    }
+    
+    function renderResults(assignedRooms, subgroups) {
+        let totalRoomCapacity = 0; allRoomsFlat().forEach(r => totalRoomCapacity += r.capacity);
+        let totalStudents = studentGroups.reduce((sum, g) => sum + g.males + g.females, 0);
+
+        let output = `Resultados de la Asignación\nTotal Personas: ${totalStudents} | Capacidad Total: ${totalRoomCapacity}\n=================================================\n\n`;
+        const assignedGroups = {};
+        assignedRooms.forEach(room => {
+            if (room.assignedTo) {
+                const subgroup = subgroups.find(s => s.division === room.assignedTo.division && s.gender === room.assignedTo.gender);
+                const prefix = subgroup.isAdult ? 'Grupo (Adultos)' : 'División';
+                const key = `${prefix}: ${subgroup.division} - ${subgroup.gender_es}`;
+                if (!assignedGroups[key]) assignedGroups[key] = [];
+                let personText = room.occupancy === 1 ? 'persona' : 'personas';
+                assignedGroups[key].push(`- Hotel '${room.hotelName}', Habitación #${room.id} (Cap: ${room.capacity}): Ocupada con ${room.occupancy} ${personText}`);
+            }
+        });
+
+        for (const groupName in assignedGroups) {
+            output += `--- ${groupName} ---\n`;
+            output += assignedGroups[groupName].sort().join('\n');
+            output += '\n\n';
+        }
+
+        const unassignedStudents = subgroups.filter(g => g.unassigned > 0);
+        if (unassignedStudents.length > 0) {
+            output += "!!! HABITACIONES INSUFICIENTES !!!\n";
+            unassignedStudents.forEach(g => { output += `- ${g.unassigned} de '${g.division} (${g.gender_es.toLowerCase()})' no pudieron ser asignados.\n`; });
+            output += '\n'; resultsDiv.classList.add('error');
+        }
+
+        const unusedRooms = assignedRooms.filter(r => !r.assignedTo);
+        if (unusedRooms.length > 0) {
+            output += `--- Habitaciones Sin Usar ---\n`;
+            const unusedByHotel = {};
+            unusedRooms.forEach(room => {
+                if (!unusedByHotel[room.hotelName]) unusedByHotel[room.hotelName] = {};
+                unusedByHotel[room.hotelName][room.capacity] = (unusedByHotel[room.hotelName][room.capacity] || 0) + 1;
+            });
+            for(const hotelName in unusedByHotel) {
+                 output += `  Hotel '${hotelName}':\n`;
+                 for(const capacity in unusedByHotel[hotelName]) {
+                     output += `    - ${unusedByHotel[hotelName][capacity]} habitación(es) con capacidad ${capacity} están vacías.\n`;
+                 }
+            }
+        }
+        resultsDiv.textContent = output;
+    }
+
+    function allRoomsFlat() {
+        const rooms = [];
+        for (const hotelName in hotels) {
+            for (const group of hotels[hotelName]) {
+                for (const roomId of group.ids) { rooms.push({ id: roomId, capacity: group.capacity, hotelName: hotelName }); }
+            }
+        }
+        return rooms;
+    }
+
+    function exportToCsv() {
+        if (lastAssignmentResults.length === 0) { alert("No hay resultados para exportar. Por favor, ejecute una asignación primero."); return; }
+        
+        const csvRows = [];
+        
+        csvRows.push("Habitaciones Asignadas");
+        csvRows.push("hotel,id_habitacion,grupo,genero,cantidad,tipo_grupo");
+        for (const room of lastAssignmentResults) {
+            if (room.assignedTo) {
+                let genero;
+                if (room.assignedTo.gender === 'Male') genero = 'Hombre';
+                else if (room.assignedTo.gender === 'Female') genero = 'Mujer';
+                else genero = 'Mixto';
+                
+                const tipoGrupo = room.assignedTo.isAdult ? 'Adultos' : 'Estudiantes';
+                const values = [`"${room.hotelName.replace(/"/g, '""')}"`, room.id, `"${room.assignedTo.division.replace(/"/g, '""')}"`, genero, room.occupancy, tipoGrupo].join(',');
+                csvRows.push(values);
+            }
+        }
+
+        const unusedRooms = lastAssignmentResults.filter(r => !r.assignedTo);
+        if(unusedRooms.length > 0) {
+            csvRows.push(""); // Blank row separator
+            csvRows.push("Habitaciones Sin Usar");
+            csvRows.push("hotel,id_habitacion,capacidad");
+            for (const room of unusedRooms) {
+                const values = [`"${room.hotelName.replace(/"/g, '""')}"`, room.id, room.capacity].join(',');
+                csvRows.push(values);
+            }
+        }
+
+        const csvContent = csvRows.join('\n');
+        const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
+        const link = document.createElement("a");
+        if (link.download !== undefined) {
+            const url = URL.createObjectURL(blob);
+            link.setAttribute("href", url);
+            link.setAttribute("download", "asignacion_grupos.csv");
+            link.style.visibility = 'hidden';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+    }
+
+    updateHotelDisplay();
+    updateStudentDisplay();
+</script>
+</body>
+</html>
