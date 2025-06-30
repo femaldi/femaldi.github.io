@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Digital Operator</title>
+    <script src="//cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser.min.js"></script>
+    <style>
+        body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            background-color: #000;
+            font-family: "Courier New", Courier, monospace;
+        }
+        #main-container {
+            display: flex;
+            flex-direction: row;
+            border: 1px solid #00ff00;
+        }
+        #game-container { }
+        #ui-panel {
+            width: 250px;
+            background-color: #001a00;
+            padding: 10px;
+            color: #00ff00;
+            display: flex;
+            flex-direction: column;
+        }
+        #ui-panel h3 {
+            margin-top: 15px;
+            margin-bottom: 10px;
+            border-bottom: 1px solid #00ff00;
+            padding-bottom: 5px;
+        }
+        .ui-section {
+            padding-left: 10px;
+        }
+        .command-button {
+            display: block; color: #00ff00; text-decoration: none;
+            text-align: center; border: 1px solid #00ff00;
+            padding: 8px; margin-bottom: 10px; background-color: #002a00;
+            transition: background-color 0.2s, color 0.2s;
+        }
+        .command-button:hover {
+            background-color: #004d00; color: #99ff99; cursor: pointer;
+        }
+        #buffer-bar {
+            display: flex;
+            flex-wrap: nowrap;
+            margin-top: 5px;
+            width: 100%;
+        }
+        .buffer-slot {
+            border: 1px solid #008800;
+            margin-right: 4px;
+            padding: 4px 0;
+            text-align: center;
+            font-size: 11px;
+            font-weight: bold;
+            line-height: 1;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        .buffer-slot:last-child {
+            margin-right: 0;
+        }
+        .buffer-slot.filled {
+            background-color: #00ff00;
+            color: #001a00;
+            border-color: #00ff00;
+        }
+        .buffer-slot.executing {
+            background-color: #008800;
+            color: #99ff99;
+            border-color: #00ff00;
+        }
+        /* --- NEW STYLE FOR SPENT SLOTS --- */
+        .buffer-slot.spent {
+            background-color: #333; /* Dark grey background */
+            color: #888; /* Dim text color */
+            border-color: #555; /* Dim border color */
+        }
+        .queue-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        #undo-button {
+            font-size: 12px;
+            color: #ffdd00;
+            text-decoration: none;
+            border: 1px solid #ffdd00;
+            padding: 2px 5px;
+            transition: background-color 0.2s, color 0.2s;
+        }
+        #undo-button:hover {
+            background-color: #332d00;
+            cursor: pointer;
+        }
+        #undo-button.disabled {
+            color: #555;
+            border-color: #555;
+            background-color: transparent;
+            cursor: not-allowed;
+        }
+        #reset-button {
+            font-size: 12px;
+            color: #ff4444; /* Red for reset */
+            text-decoration: none;
+            border: 1px solid #ff4444;
+            padding: 2px 5px;
+            transition: background-color 0.2s, color 0.2s;
+        }
+        #reset-button:hover {
+            background-color: #330000;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <div id="main-container">
+        <div id="game-container"></div>
+        <div id="ui-panel"></div>
+    </div>
+    
+    <script src="block-config.js"></script>
+    <script src="command-config.js"></script> 
+    <script src="game.js"></script>
+</body>
+</html>
