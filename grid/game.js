@@ -454,7 +454,8 @@ class GameScene extends Phaser.Scene {
 
     createUIPanel() {
         this.uiPanel = document.getElementById('ui-panel');
-        let html = `<div class="ui-section"><a href="#" id="reset-button">[RESTART LEVEL]</a></div>`;
+        let html = `<h3>INDEX</h3><div class="ui-section"><a href="#" id="reset-button">[RESTART LEVEL]</a></div>`;
+        html += `<div class="ui-section"><a id="tutorial-button" target="_blank" href="tutorial.html">[OPERATOR MANUAL]</a></div>`;
         html += `<h3>COMMANDS</h3><div id="command-list" class="ui-section">`;
         for (const key in COMMAND_TYPES) {
             const cmd = COMMAND_TYPES[key];

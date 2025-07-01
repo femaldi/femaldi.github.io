@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Digital Operator - Manual</title>
+    <style>
+        body {
+            background-color: #000;
+            color: #00ff00;
+            font-family: "Courier New", Courier, monospace;
+            line-height: 1.6;
+        }
+
+        .manual-container {
+            max-width: 800px;
+            margin: 20px auto;
+            padding: 20px 40px;
+            border: 1px solid #00ff00;
+            background-color: #001a00;
+        }
+
+        h1, h2, h3 {
+            color: #00ff00;
+            border-bottom: 1px solid #00ff00;
+            padding-bottom: 5px;
+            margin-top: 30px;
+        }
+        
+        h1 {
+            text-align: center;
+            border-bottom-width: 2px;
+            font-size: 2.5em;
+        }
+
+        a {
+            color: #ffff00;
+            text-decoration: none;
+            border: 1px solid #ffff00;
+            padding: 5px 10px;
+            display: inline-block;
+            margin-top: 20px;
+            transition: background-color 0.2s;
+        }
+        a:hover {
+            background-color: #332d00;
+        }
+
+        .key {
+            color: #ffff00;
+            background-color: #222;
+            border: 1px solid #555;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-weight: bold;
+        }
+
+        .block-legend {
+            display: flex;
+            align-items: center;
+            margin-bottom: 15px;
+            border-left: 2px solid #008800;
+            padding-left: 10px;
+        }
+        
+        .sprite-placeholder {
+            width: 48px;
+            height: 48px;
+            margin-right: 20px;
+            flex-shrink: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: 24px;
+            border: 1px solid #008800;
+        }
+        
+        /* Mimicking game sprites with CSS */
+        .sprite-wall { background-color: #008800; }
+        .sprite-door { background-color: rgba(255, 255, 0, 0.2); border-color: #ffff00; color: #ffff00; }
+        .sprite-data { background-color: rgba(0, 255, 255, 0.2); border-color: #00ffff; color: #00ffff; border-radius: 50%; }
+        .sprite-exec { background-color: rgba(255, 136, 0, 0.2); border-color: #ff8800; color: #ff8800; }
+        .sprite-player { background-color: #222; color: #fff; border-color: #fff; }
+
+    </style>
+</head>
+<body>
+
+    <div class="manual-container">
+        <h1>OPERATOR FIELD MANUAL</h1>
+        <p>
+            Welcome, Operator. You have gained access to the system. Your objective is to navigate the network grid and acquire target data. This manual contains the operational parameters of your interface. Study it carefully. Failure to comply with system protocols will result in instability and termination.
+        </p>
+        
+        <h2>CONTROLS</h2>
+        <ul>
+            <li><span class="key">ARROW KEYS</span> - Move the Operator one tile. Each move consumes 1 tick.</li>
+            <li><span class="key">SPACEBAR</span> - Wait in place. Consumes 1 tick.</li>
+            <li><span class="key">MOUSE CLICK</span> - Select a tile on the grid when in TARGETING mode.</li>
+            <li><span class="key">ESCAPE</span> - Cancel the current command selection process.</li>
+            <li><span class="key">[UNDO]</span> - Removes the last command from the Execution Queue.</li>
+            <li><span class="key">[RESTART LEVEL]</span> - Aborts the current attempt and restarts the level from the beginning.</li>
+        </ul>
+
+        <h2>CORE MECHANICS</h2>
+
+        <h3>The Tick System</h3>
+        <p>
+            The system operates in discrete time units called 'ticks'. Every action you take, whether moving with the <span class="key">ARROW KEYS</span> or waiting with the <span class="key">SPACEBAR</span>, advances the system by one tick. Time is a critical resource.
+        </p>
+
+        <h3>The Execution Queue & Buffer</h3>
+        <p>
+            You cannot alter the grid directly. You must queue commands to be executed.
+        </p>
+        <ol>
+            <li><strong>Select a Command:</strong> Choose a command like <span class="key">[DELETE]</span> or <span class="key">[COPY]</span> from the side panel.</li>
+            <li><strong>Allocate Buffer:</strong> Each command has a base cost. This cost is multiplied by the <span class="key">COMMAND MULTIPLIER</span> of the target tile. Queuing a command consumes a corresponding amount of your <span class="key">BUFFER</span>. You cannot queue a command if its final cost exceeds your available buffer space.</li>
+            <li><strong>Execute the Program:</strong> Move your Operator onto an Execution Point (<span style="color: #ff8800;">X</span>) to enter <span class="key">EXECUTION MODE</span>.</li>
+            <li><strong>Advance the Queue:</strong> While in <span class="key">EXECUTION MODE</span>, every subsequent move or wait action (which still costs 1 tick) will process the next command in your queue.</li>
+        </ol>
+
+        <h2>BLOCK IDENTIFIERS</h2>
+
+        <div class="block-legend">
+            <div class="sprite-placeholder sprite-player">◆</div>
+            <div><strong>Operator (You)</strong><br>Your cursor in the system. Use it to navigate and initiate command execution.</div>
+        </div>
+
+        <div class="block-legend">
+            <div class="sprite-placeholder sprite-wall">#</div>
+            <div><strong>Wall</strong><br>Blocks all movement. Walls have a high command multiplier (x2), making them very expensive to modify.</div>
+        </div>
+
+        <div class="block-legend">
+            <div class="sprite-placeholder sprite-door">|</div>
+            <div><strong>Door / Gate</strong><br>Blocks all movement. Doors have a standard command multiplier (x1).</div>
+        </div>
+
+        <div class="block-legend">
+            <div class="sprite-placeholder sprite-data">●</div>
+            <div><strong>Data Node</strong><br>The objective. Move onto this tile to acquire the data and complete the level. Data nodes have the highest command multiplier (x5).</div>
+        </div>
+        
+        <div class="block-legend">
+            <div class="sprite-placeholder sprite-exec">X</div>
+            <div><strong>Execution Point</strong><br>A stable system node. Moving onto this tile begins processing your queued commands.</div>
+        </div>
+        
+    </div>
+
+</body>
+</html>
