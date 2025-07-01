@@ -344,16 +344,29 @@ class GameScene extends Phaser.Scene {
         return true;
     }
 
-    movePlayer(dx, dy) {
+        movePlayer(dx, dy) {
+        // --- THIS FUNCTION CONTAINS THE TRAIL EFFECT LOGIC ---
+        const oldX = this.playerGridPos.x * TILE_SIZE + TILE_SIZE / 2;
+        const oldY = this.playerGridPos.y * TILE_SIZE + TILE_SIZE / 2;
+
         if (dx === 0 && dy === 0) {
-            // This is a "wait" action
+            // "Wait" action. Create a ghost at the current spot.
+            const ghost = this.add.image(oldX, oldY, 'game-sprites', 'player');
+            ghost.setDisplaySize(this.player.displayWidth, this.player.displayHeight).setDepth(this.player.depth - 1);
+            this.tweens.add({ targets: ghost, alpha: 0, duration: 400, onComplete: () => ghost.destroy() });
         } else {
-            // This is a directional move
+            // Directional move
             const targetX = this.playerGridPos.x + dx;
             const targetY = this.playerGridPos.y + dy;
             if (targetX < 0 || targetX >= GRID_WIDTH || targetY < 0 || targetY >= GRID_HEIGHT) return;
             const targetTileId = this.levelLayout[targetY][targetX];
             if (targetTileId === 'wall' || targetTileId === 'door') return;
+
+            // Create a ghost at the old position before moving
+            const ghost = this.add.image(oldX, oldY, 'game-sprites', 'player');
+            ghost.setDisplaySize(this.player.displayWidth, this.player.displayHeight).setDepth(this.player.depth - 1);
+            this.tweens.add({ targets: ghost, alpha: 0, duration: 400, onComplete: () => ghost.destroy() });
+            
             this.playerGridPos.x = targetX;
             this.playerGridPos.y = targetY;
             this.tweens.add({
@@ -364,6 +377,7 @@ class GameScene extends Phaser.Scene {
                 ease: 'Power2'
             });
         }
+
         this.ticks++;
         this.updateTickCounter();
         if (this.resetTimerTicksRemaining > 0) {
@@ -575,16 +589,62 @@ class GameScene extends Phaser.Scene {
         const SPRITE_KEY = 'game-sprites';
         const TILE_W = 64;
         const TILE_H = 64;
+        
+        // --- Unchanged: Wall, Data, Door ---
         gfx.fillStyle(0x008800); gfx.fillRect(TILE_W * 0, 0, TILE_W, TILE_H);
         gfx.lineStyle(4, 0x00ff00); gfx.strokeRect(TILE_W * 0 + 2, 2, TILE_W - 4, TILE_H - 4);
         gfx.lineBetween(TILE_W * 0, TILE_H / 2, TILE_W * 1, TILE_H / 2); gfx.lineBetween(TILE_W / 2, 0, TILE_W / 2, TILE_H);
         const dataX = TILE_W * 1; gfx.lineStyle(4, 0x00ffff); gfx.strokeCircle(dataX + TILE_W / 2, TILE_H / 2, TILE_W / 2 - 4); gfx.fillStyle(0x00ffff, 0.3); gfx.fillCircle(dataX + TILE_W / 2, TILE_H / 2, TILE_W / 2 - 4); gfx.fillStyle(0x00ffff); gfx.fillCircle(dataX + TILE_W / 2, TILE_H / 2, TILE_W / 4);
         const doorX = TILE_W * 2; gfx.lineStyle(4, 0xffff00); gfx.strokeRect(doorX + 2, 2, TILE_W - 4, TILE_H - 4); gfx.fillStyle(0xffff00, 0.2); gfx.fillRect(doorX + 2, 2, TILE_W - 4, TILE_H - 4); gfx.lineStyle(6, 0xffff00); gfx.lineBetween(doorX + TILE_W / 2, 10, doorX + TILE_W / 2, TILE_H - 10);
-        const playerX = TILE_W * 3; gfx.fillStyle(0xffffff); gfx.beginPath(); gfx.moveTo(playerX + TILE_W / 2, 8); gfx.lineTo(playerX + TILE_W - 8, TILE_H - 8); gfx.lineTo(playerX + 8, TILE_H - 8); gfx.closePath(); gfx.fillPath();
+        
+        // --- NEW PLAYER SPRITE ---
+        const playerX = TILE_W * 3;
+        const centerX = playerX + TILE_W / 2;
+        const centerY = TILE_H / 2;
+        
+        // Layer 1: Outer glowing brackets (cyan)
+        gfx.lineStyle(6, 0x00ffff, 0.5);
+        gfx.beginPath();
+        gfx.moveTo(centerX - 24, centerY - 16);
+        gfx.lineTo(centerX - 16, centerY - 16);
+        gfx.lineTo(centerX - 16, centerY - 24);
+        gfx.moveTo(centerX + 24, centerY - 16);
+        gfx.lineTo(centerX + 16, centerY - 16);
+        gfx.lineTo(centerX + 16, centerY - 24);
+        gfx.moveTo(centerX - 24, centerY + 16);
+        gfx.lineTo(centerX - 16, centerY + 16);
+        gfx.lineTo(centerX - 16, centerY + 24);
+        gfx.moveTo(centerX + 24, centerY + 16);
+        gfx.lineTo(centerX + 16, centerY + 16);
+        gfx.lineTo(centerX + 16, centerY + 24);
+        gfx.strokePath();
+
+        // Layer 2: Inner diamond shape (white)
+        gfx.fillStyle(0xffffff);
+        gfx.beginPath();
+        gfx.moveTo(centerX, centerY - 18);       // Top point
+        gfx.lineTo(centerX + 18, centerY);       // Right point
+        gfx.lineTo(centerX, centerY + 18);       // Bottom point
+        gfx.lineTo(centerX - 18, centerY);       // Left point
+        gfx.closePath();
+        gfx.fillPath();
+        
+        // Layer 3: Inner core (darker fill)
+        gfx.fillStyle(0xcccccc);
+        gfx.fillCircle(centerX, centerY, 6);
+
+
+        // --- Unchanged: Execution Point ---
         const execX = TILE_W * 4; gfx.fillStyle(0xff8800, 0.2); gfx.fillRect(execX, 0, TILE_W, TILE_H); gfx.lineStyle(4, 0xff8800); gfx.strokeRect(execX + 2, 2, TILE_W - 4, TILE_H - 4); gfx.lineStyle(6, 0xff8800); gfx.moveTo(execX + 16, 16); gfx.lineTo(execX + 48, 48); gfx.moveTo(execX + 16, 48); gfx.lineTo(execX + 48, 16); gfx.strokePath();
+        
+        // Generate the final texture atlas
         gfx.generateTexture(SPRITE_KEY, TILE_W * 5, TILE_H);
         gfx.destroy();
-        this.textures.get(SPRITE_KEY).add('wall', 0, TILE_W * 0, 0, TILE_W, TILE_H); this.textures.get(SPRITE_KEY).add('data', 0, TILE_W * 1, 0, TILE_W, TILE_H); this.textures.get(SPRITE_KEY).add('door', 0, TILE_W * 2, 0, TILE_W, TILE_H); this.textures.get(SPRITE_KEY).add('player', 0, TILE_W * 3, 0, TILE_W, TILE_H); this.textures.get(SPRITE_KEY).add('execution_point', 0, TILE_W * 4, 0, TILE_W, TILE_H);
+        this.textures.get(SPRITE_KEY).add('wall', 0, TILE_W * 0, 0, TILE_W, TILE_H);
+        this.textures.get(SPRITE_KEY).add('data', 0, TILE_W * 1, 0, TILE_W, TILE_H);
+        this.textures.get(SPRITE_KEY).add('door', 0, TILE_W * 2, 0, TILE_W, TILE_H);
+        this.textures.get(SPRITE_KEY).add('player', 0, TILE_W * 3, 0, TILE_W, TILE_H);
+        this.textures.get(SPRITE_KEY).add('execution_point', 0, TILE_W * 4, 0, TILE_W, TILE_H);
     }
 
     createPlayer() {
