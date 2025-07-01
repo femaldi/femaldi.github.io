@@ -26,7 +26,7 @@ const COMMAND_TYPES = {
         shortName: 'WT', // Base short name
         targetCount: 0,
         description: 'Pauses execution for a set number of ticks.',
-        level_enabled: 2,
+        level_enabled: 4,
         system_reset: false,
         // New property for selectable options
         options: [
