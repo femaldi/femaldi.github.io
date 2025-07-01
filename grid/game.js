@@ -39,6 +39,7 @@ class GameScene extends Phaser.Scene {
         this.targetHighlights = [];
         this.bufferSize = PLAYER_BUFFER_SIZE;
         this.currentBufferUsed = 0;
+        this.waitTicksRemaining = 0;
 
         // Reset Timer
         this.levelResetTimerDuration = -1;
@@ -71,6 +72,7 @@ class GameScene extends Phaser.Scene {
         this.executionQueue = [];
         this.spentCommands = [];
         this.sentinels = []; // Clear sentinels on create
+        this.waitTicksRemaining = 0;
         this.setGameState('MOVEMENT');
         const levelData = this.cache.json.get(`level${this.currentLevel}`);
         this.levelLayout = JSON.parse(JSON.stringify(levelData.tiles));
@@ -99,6 +101,66 @@ class GameScene extends Phaser.Scene {
         this.updateTickCounter();
         this.updateBufferUI();
         this.updateQueueUI();
+        this.time.delayedCall(250, this.checkForUnlocks, [], this);
+    }
+
+    checkForUnlocks() {
+        if (this.currentLevel <= 1) {
+            return;
+        }
+
+        const newlyUnlocked = [];
+        for (const key in COMMAND_TYPES) {
+            const cmd = COMMAND_TYPES[key];
+            if (cmd.level_enabled === this.currentLevel) {
+                newlyUnlocked.push(cmd);
+            }
+        }
+
+        if (newlyUnlocked.length > 0) {
+            this.showUnlockModal(newlyUnlocked);
+        }
+    }
+
+    showUnlockModal(unlockedCommands) {
+        this.setGameState('PAUSED'); // Pause the game
+        
+        const container = document.getElementById('main-container');
+        
+        // Create Overlay
+        const overlay = document.createElement('div');
+        overlay.className = 'modal-overlay';
+
+        // Create Modal Box
+        const modal = document.createElement('div');
+        modal.className = 'unlock-modal';
+
+        let listHtml = '<ul>';
+        unlockedCommands.forEach(cmd => {
+            listHtml += `
+                <li>
+                    <span class="cmd-name">${cmd.name}</span>
+                    <span class="cmd-desc">${cmd.description}</span>
+                    <span class="cmd-cost">Cost: ${cmd.cost}</span>
+                </li>
+            `;
+        });
+        listHtml += '</ul>';
+
+        modal.innerHTML = `
+            <h4>NEW COMMANDS AVAILABLE</h4>
+            ${listHtml}
+            <div id="unlock-ok-button" class="modal-button">[ OK ]</div>
+        `;
+        
+        overlay.appendChild(modal);
+        container.appendChild(overlay);
+
+        // Add dismiss listener
+        document.getElementById('unlock-ok-button').addEventListener('click', () => {
+            container.removeChild(overlay);
+            this.setGameState('MOVEMENT'); // Unpause the game
+        }, { once: true }); // Use 'once' to auto-remove the listener after it fires
     }
 
     update() {
@@ -277,6 +339,41 @@ class GameScene extends Phaser.Scene {
 
     startTargeting(commandType) {
         if (this.gameState !== 'MOVEMENT') return;
+
+        // --- NEW: Check if the command has options ---
+        if (commandType.options && commandType.options.length > 0) {
+            this.showWaitModal(commandType);
+            return;
+        }
+
+        // --- MODIFIED: Handle no-target commands without options ---
+        if (commandType.targetCount === 0) {
+            if (commandType.cost > (this.bufferSize - this.currentBufferUsed)) {
+                 this.statusText.setText(`> INSUFFICIENT BUFFER (Cost: ${commandType.cost})`);
+                 this.time.delayedCall(2000, () => {
+                    if (this.gameState === 'MOVEMENT') this.statusText.setText('> Awaiting input...');
+                 });
+                 return;
+            }
+            // This part is now less likely to be used but good to keep for future simple commands
+            const newCommand = {
+                id: commandType.id,
+                name: commandType.name,
+                shortName: commandType.shortName,
+                targets: [],
+                finalCost: commandType.cost,
+                system_reset: commandType.system_reset,
+                wait_duration: commandType.wait_duration || 0
+            };
+            this.executionQueue.push(newCommand);
+            this.currentBufferUsed += newCommand.finalCost;
+            this.updateQueueUI();
+            this.updateBufferUI();
+            this.statusText.setText(`> ${commandType.name} added to queue.`);
+            return;
+        }
+        
+        // --- Original targeting logic for other commands ---
         const minPossibleCost = commandType.cost;
         if (minPossibleCost > (this.bufferSize - this.currentBufferUsed)) {
             this.statusText.setText(`> INSUFFICIENT BUFFER (Min Cost: ${minPossibleCost})`);
@@ -292,9 +389,83 @@ class GameScene extends Phaser.Scene {
             shortName: commandType.shortName,
             targetCount: commandType.targetCount,
             targets: [],
-            finalCost: 0
+            finalCost: 0,
+            system_reset: commandType.system_reset
+            // wait_duration is no longer needed here as it's handled by the modal
         };
         this.statusText.setText(`> TARGETING: ${commandType.description}`);
+    }
+
+    // --- NEW: Modal for selecting WAIT duration ---
+    showWaitModal(commandType) {
+        this.setGameState('PAUSED'); // Pause the game while player chooses
+
+        const container = document.getElementById('main-container');
+        const overlay = document.createElement('div');
+        overlay.className = 'modal-overlay';
+        const modal = document.createElement('div');
+        modal.className = 'unlock-modal'; // We can reuse the same modal style
+
+        let optionsHtml = '<ul>';
+        commandType.options.forEach(opt => {
+            const canAfford = (this.currentBufferUsed + opt.cost) <= this.bufferSize;
+            const disabledClass = canAfford ? '' : 'disabled';
+            const costColor = canAfford ? '#fff' : '#ff5555';
+            optionsHtml += `
+                <li class="wait-option ${disabledClass}" data-duration="${opt.duration}" data-cost="${opt.cost}">
+                    <span class="cmd-name">WAIT for ${opt.duration} ticks</span>
+                    <span class="cmd-cost" style="color: ${costColor}">Cost: ${opt.cost}</span>
+                </li>
+            `;
+        });
+        optionsHtml += '</ul>';
+
+        modal.innerHTML = `
+            <h4>SELECT WAIT DURATION</h4>
+            ${optionsHtml}
+            <div id="wait-cancel-button" class="modal-button">[ CANCEL ]</div>
+        `;
+
+        overlay.appendChild(modal);
+        container.appendChild(overlay);
+
+        const dismiss = () => {
+            container.removeChild(overlay);
+            this.setGameState('MOVEMENT');
+        };
+
+        // Add listeners for each option
+        modal.querySelectorAll('.wait-option').forEach(optionElement => {
+            optionElement.addEventListener('click', () => {
+                const canAfford = !optionElement.classList.contains('disabled');
+                if (!canAfford) return; // Do nothing if they can't afford it
+
+                const duration = parseInt(optionElement.dataset.duration, 10);
+                const cost = parseInt(optionElement.dataset.cost, 10);
+                
+                // Construct and add the command
+                const newCommand = {
+                    id: commandType.id,
+                    name: `${commandType.name} (${duration})`,
+                    shortName: `${commandType.shortName}${duration}`,
+                    targets: [],
+                    finalCost: cost,
+                    system_reset: commandType.system_reset,
+                    wait_duration: duration
+                };
+
+                this.executionQueue.push(newCommand);
+                this.currentBufferUsed += newCommand.finalCost;
+                this.updateQueueUI();
+                this.updateBufferUI();
+                this.statusText.setText(`> ${newCommand.name} added to queue.`);
+                
+                dismiss();
+            });
+        });
+
+        // Add cancel button listener
+        document.getElementById('wait-cancel-button').addEventListener('click', dismiss);
     }
 
     handleTargetingClick(pointer) {
@@ -362,19 +533,15 @@ class GameScene extends Phaser.Scene {
             return;
         }
         this.setGameState('EXECUTING');
-        if (this.levelResetTimerDuration > 0 && this.resetTimerTicksRemaining <= 0) {
-            this.resetTimerTicksRemaining = this.levelResetTimerDuration;
-            this.statusText.setText(`> SYSTEM INSTABILITY. RESET IN ${this.resetTimerTicksRemaining} TICKS.`);
-        } else {
-            this.statusText.setText(`> EXECUTION MODE. Move to process queue (${this.executionQueue.length} left).`);
-        }
+        this.statusText.setText(`> EXECUTION MODE. Move to process queue (${this.executionQueue.length} left).`);
     }
 
     processNextCommandInQueue() {
         if (this.executionQueue.length === 0) return;
-        this.currentExecutingCommand = this.executionQueue[0];
-        const command = this.executionQueue.shift();
+        this.currentExecutingCommand = this.executionQueue.shift(); // Move command out of queue
+        const command = this.currentExecutingCommand; // Use a shorter alias
         let success = false;
+        
         switch (command.id) {
             case 'delete':
                 success = this.executeDelete(command);
@@ -382,20 +549,35 @@ class GameScene extends Phaser.Scene {
             case 'copy':
                 success = this.executeCopy(command);
                 break;
+            case 'wait': // Only one case needed now
+                this.waitTicksRemaining = command.wait_duration - 1;
+                this.statusText.setText(`> WAITING... ${command.wait_duration} ticks remaining.`);
+                success = true;
+                break;
         }
-        const targetPos = command.targets[command.targets.length - 1];
-        this.showExecutionEffect(targetPos.x, targetPos.y, success);
+
+        // Show visual effect only for commands with targets
+        if (command.targets.length > 0) {
+            const targetPos = command.targets[command.targets.length - 1];
+            this.showExecutionEffect(targetPos.x, targetPos.y, success);
+        }
+
+        // --- NEW: Conditional System Reset ---
+        if (command.system_reset && this.levelResetTimerDuration > 0 && this.resetTimerTicksRemaining <= 0) {
+            this.resetTimerTicksRemaining = this.levelResetTimerDuration;
+            this.statusText.setText(`> SYSTEM INSTABILITY. RESET IN ${this.resetTimerTicksRemaining} TICKS.`);
+        }
+
         this.spentCommands.push(this.currentExecutingCommand);
         this.currentExecutingCommand = null;
         this.updateQueueUI();
         this.updateBufferUI();
-        if (this.executionQueue.length === 0) {
+        
+        if (this.executionQueue.length === 0 && this.waitTicksRemaining <= 0) {
             this.setGameState('MOVEMENT');
             this.statusText.setText('> Execution complete. Awaiting input.');
-        } else {
-            if (this.resetTimerTicksRemaining <= 0) {
-                this.statusText.setText(`> EXECUTION MODE. Move to process queue (${this.executionQueue.length} left).`);
-            }
+        } else if (this.resetTimerTicksRemaining <= 0 && this.waitTicksRemaining <= 0) {
+             this.statusText.setText(`> EXECUTION MODE. Move to process queue (${this.executionQueue.length} left).`);
         }
     }
 
@@ -508,8 +690,14 @@ class GameScene extends Phaser.Scene {
                 this.statusText.setText(`> SYSTEM INSTABILITY. RESET IN ${this.resetTimerTicksRemaining} TICKS.`);
             }
         }
+        
         if (this.gameState === 'EXECUTING') {
-            this.processNextCommandInQueue();
+            if (this.waitTicksRemaining > 0) {
+                this.waitTicksRemaining--;
+                this.statusText.setText(`> WAITING... ${this.waitTicksRemaining + 1} ticks remaining.`);
+            } else {
+                this.processNextCommandInQueue();
+            }
         }
         
         const currentTileId = this.levelLayout[this.playerGridPos.y][this.playerGridPos.x];
@@ -531,9 +719,10 @@ class GameScene extends Phaser.Scene {
              this.cameras.main.flash(500, 255, 0, 0);
         }
 
-        // --- THESE ARE RESET IN BOTH CASES ---
+        // THESE ARE RESET IN BOTH CASES
         this.levelLayout = JSON.parse(JSON.stringify(this.originalLevelLayout));
         this.resetTimerTicksRemaining = -1;
+        this.waitTicksRemaining = 0;
 
         // Reset dynamic objects
         this.sentinels.forEach(s => s.sprite.destroy());
@@ -543,7 +732,6 @@ class GameScene extends Phaser.Scene {
         // Rebuild static visuals
         this.rebuildLevelVisuals();
         
-        // --- THIS IS THE FIX ---
         // Conditionally reset buffer, commands, and player state
         if (fullReset) {
             // Clear all commands and buffer usage
@@ -559,10 +747,37 @@ class GameScene extends Phaser.Scene {
             this.player.setPosition(this.playerGridPos.x * TILE_SIZE + TILE_SIZE / 2, this.playerGridPos.y * TILE_SIZE + TILE_SIZE / 2);
             this.player.setAngle(0); 
             this.player.setDisplaySize(TILE_SIZE * 0.8, TILE_SIZE * 0.8);
-        }
-        // If it's not a fullReset, the executionQueue, buffer, spentCommands, and player position are all preserved.
+        } else {
+            // --- THIS IS THE NEW LOGIC ---
+            // After a soft reset, check if the player's preserved position is now invalid.
+            let isPlayerInInvalidSpot = false;
 
-        // UI must be updated in both cases to reflect the current (potentially preserved) state.
+            // Check 1: Is the player on a solid wall or door?
+            if (this.isCollidable(this.playerGridPos.x, this.playerGridPos.y)) {
+                isPlayerInInvalidSpot = true;
+            }
+
+            // Check 2: Is the player on top of a newly respawned sentinel?
+            if (!isPlayerInInvalidSpot) {
+                for (const sentinel of this.sentinels) {
+                    if (sentinel.gridPos.x === this.playerGridPos.x && sentinel.gridPos.y === this.playerGridPos.y) {
+                        isPlayerInInvalidSpot = true;
+                        break;
+                    }
+                }
+            }
+
+            // If the player is in an invalid spot, trigger a hard reset.
+            if (isPlayerInInvalidSpot) {
+                console.log("Player stranded in invalid position after soft reset. Triggering hard reset.");
+                this.statusText.setText('> FATAL ERROR: Operator crushed during system reconstitution.');
+                this.setGameState('MOVEMENT');
+                this.playerCaught(); // This handles the failure animation and calls resetLevel(true)
+                return; // IMPORTANT: Stop the soft reset process here.
+            }
+        }
+
+        // UI must be updated in both cases to reflect the current state.
         this.updateQueueUI();
         this.updateBufferUI();
         
@@ -611,29 +826,50 @@ class GameScene extends Phaser.Scene {
         let html = `<h3>INDEX</h3><div class="ui-section"><a href="#" id="reset-button">[RESTART LEVEL]</a></div>`;
         html += `<div class="ui-section"><a id="tutorial-button" target="_blank" href="tutorial.html">[OPERATOR MANUAL]</a></div>`;
         html += `<h3>COMMANDS</h3><div id="command-list" class="ui-section">`;
+        
         for (const key in COMMAND_TYPES) {
             const cmd = COMMAND_TYPES[key];
-            html += `<a href="#" class="command-button" data-command-id="${cmd.id}">[${cmd.name}] (Cost: ${cmd.cost})</a>`;
+            if (cmd.level_enabled <= this.currentLevel) {
+                // --- MODIFIED: Display base cost, or a range if there are options ---
+                let costText = `Cost: ${cmd.cost}`;
+                if (cmd.options) {
+                    const costs = cmd.options.map(o => o.cost);
+                    costText = `Cost: ${Math.min(...costs)}-${Math.max(...costs)}`;
+                }
+                html += `<a href="#" class="command-button" data-command-id="${cmd.id}">[${cmd.name}] (${costText})</a>`;
+            }
         }
+
         html += `</div><h3>BUFFER</h3><div id="buffer-display" class="ui-section"><span id="buffer-text"></span><div id="buffer-bar"></div></div>`;
         html += `<div class="queue-header"><h3>EXECUTION QUEUE</h3><a href="#" id="undo-button" class="disabled">[UNDO]</a></div><div id="queue-list" class="ui-section">...</div>`;
         html += `<h3>STATUS</h3><div id="status-display" class="ui-section">> Awaiting input...</div>`;
         this.uiPanel.innerHTML = html;
+
+        // Add robust event listeners
         document.querySelectorAll('.command-button').forEach(button => {
             button.addEventListener('click', (e) => {
                 e.preventDefault();
-                if (this.gameState !== 'MOVEMENT') return;
-                const cmdId = e.target.getAttribute('data-command-id');
-                this.startTargeting(COMMAND_TYPES[cmdId]);
+                
+                // If we are currently targeting something, cancel it first.
+                if (this.gameState === 'TARGETING') {
+                    this.endTargeting();
+                }
+                
+                // Now, if we are in MOVEMENT mode, we can start a new command.
+                if (this.gameState === 'MOVEMENT') {
+                    const cmdId = e.target.getAttribute('data-command-id');
+                    this.startTargeting(COMMAND_TYPES[cmdId]);
+                }
             });
         });
+
         document.getElementById('undo-button').addEventListener('click', (e) => {
             e.preventDefault();
             this.undoLastCommand();
         });
         document.getElementById('reset-button').addEventListener('click', (e) => {
             e.preventDefault();
-            this.resetLevel(true); // Changed from scene.restart() to use our new function
+            this.resetLevel(true);
         });
         const statusDiv = document.getElementById('status-display');
         this.statusText = {

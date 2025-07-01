@@ -134,6 +134,111 @@
             background-color: #330000;
             cursor: pointer;
         }
+
+        /* --- NEW MODAL STYLES for Command Unlock --- */
+        .modal-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 26, 0, 0.85); /* Darker green overlay */
+            z-index: 999;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .unlock-modal {
+            width: 500px;
+            background-color: #001a00;
+            border: 2px solid #ffff00;
+            color: #ffff00;
+            padding: 25px;
+            z-index: 1000;
+            box-shadow: 0 0 20px rgba(255, 255, 0, 0.5);
+        }
+
+        .unlock-modal h4 {
+            margin: 0 0 20px 0;
+            font-size: 24px;
+            border-bottom: 2px solid #ffff00;
+            padding-bottom: 10px;
+            text-align: center;
+        }
+
+        .unlock-modal ul {
+            list-style: none;
+            padding: 0;
+            margin: 0 0 25px 0;
+        }
+
+        .unlock-modal li {
+            padding: 10px;
+            border: 1px dashed #008800;
+            margin-bottom: 10px;
+        }
+        
+        .unlock-modal li .cmd-name {
+            font-size: 18px;
+            font-weight: bold;
+        }
+
+        .unlock-modal li .cmd-desc {
+            color: #fff;
+            font-size: 14px;
+            margin-top: 5px;
+            display: block; /* Ensure it takes its own line */
+        }
+
+        .unlock-modal li .cmd-cost {
+            color: #aaa;
+            font-size: 12px;
+            margin-top: 8px;
+            text-align: right;
+            display: block; /* Ensure it takes its own line */
+        }
+
+        .unlock-modal .modal-button {
+            display: block;
+            width: 120px;
+            margin: 0 auto;
+            padding: 10px;
+            border: 1px solid #00ff00;
+            background-color: #002a00;
+            color: #00ff00;
+            text-align: center;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background-color 0.2s;
+        }
+
+        .unlock-modal .modal-button:hover {
+            background-color: #004d00;
+        }
+
+        .unlock-modal li.wait-option {
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+
+        .unlock-modal li.wait-option:hover {
+            background-color: #004d00;
+        }
+
+        .unlock-modal li.wait-option.disabled {
+            cursor: not-allowed;
+            color: #888;
+            border-color: #555;
+        }
+
+        .unlock-modal li.wait-option.disabled:hover {
+            background-color: transparent;
+        }
+
+        .unlock-modal li.wait-option.disabled .cmd-name {
+            color: #888;
+        }
     </style>
 </head>
 <body>
