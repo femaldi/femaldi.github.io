@@ -351,9 +351,9 @@ class GameScene extends Phaser.Scene {
 
         if (dx === 0 && dy === 0) {
             // "Wait" action. Create a ghost at the current spot.
-            const ghost = this.add.image(oldX, oldY, 'game-sprites', 'player');
-            ghost.setDisplaySize(this.player.displayWidth, this.player.displayHeight).setDepth(this.player.depth - 1);
-            this.tweens.add({ targets: ghost, alpha: 0, duration: 400, onComplete: () => ghost.destroy() });
+            const trail = this.add.image(oldX, oldY, 'game-sprites', 'trail');
+            trail.setDisplaySize(TILE_SIZE * 0.75, TILE_SIZE * 0.75).setDepth(this.player.depth - 1);
+            this.tweens.add({ targets: trail, alpha: 0, scale: 0, duration: 500, onComplete: () => trail.destroy() });
         } else {
             // Directional move
             const targetX = this.playerGridPos.x + dx;
@@ -363,9 +363,9 @@ class GameScene extends Phaser.Scene {
             if (targetTileId === 'wall' || targetTileId === 'door') return;
 
             // Create a ghost at the old position before moving
-            const ghost = this.add.image(oldX, oldY, 'game-sprites', 'player');
-            ghost.setDisplaySize(this.player.displayWidth, this.player.displayHeight).setDepth(this.player.depth - 1);
-            this.tweens.add({ targets: ghost, alpha: 0, duration: 400, onComplete: () => ghost.destroy() });
+            const trail = this.add.image(oldX, oldY, 'game-sprites', 'trail');
+            trail.setDisplaySize(TILE_SIZE * 0.75, TILE_SIZE * 0.75).setDepth(this.player.depth - 1);
+            this.tweens.add({ targets: trail, alpha: 0, scale: 0, duration: 500, onComplete: () => trail.destroy() });
             
             this.playerGridPos.x = targetX;
             this.playerGridPos.y = targetY;
@@ -637,14 +637,21 @@ class GameScene extends Phaser.Scene {
         // --- Unchanged: Execution Point ---
         const execX = TILE_W * 4; gfx.fillStyle(0xff8800, 0.2); gfx.fillRect(execX, 0, TILE_W, TILE_H); gfx.lineStyle(4, 0xff8800); gfx.strokeRect(execX + 2, 2, TILE_W - 4, TILE_H - 4); gfx.lineStyle(6, 0xff8800); gfx.moveTo(execX + 16, 16); gfx.lineTo(execX + 48, 48); gfx.moveTo(execX + 16, 48); gfx.lineTo(execX + 48, 16); gfx.strokePath();
         
-        // Generate the final texture atlas
-        gfx.generateTexture(SPRITE_KEY, TILE_W * 5, TILE_H);
+        const trailX = TILE_W * 5;
+        gfx.fillStyle(0x00ffff); // Match the player's cyan brackets
+        gfx.fillRect(trailX + 16, 16, 32, 32); // Draw a 32x32 square in the center of the 64x64 tile area
+
+        // Generate the final texture atlas (now 6 tiles wide)
+        gfx.generateTexture(SPRITE_KEY, TILE_W * 6, TILE_H);
         gfx.destroy();
+
+        // Add the new frame definition
         this.textures.get(SPRITE_KEY).add('wall', 0, TILE_W * 0, 0, TILE_W, TILE_H);
         this.textures.get(SPRITE_KEY).add('data', 0, TILE_W * 1, 0, TILE_W, TILE_H);
         this.textures.get(SPRITE_KEY).add('door', 0, TILE_W * 2, 0, TILE_W, TILE_H);
         this.textures.get(SPRITE_KEY).add('player', 0, TILE_W * 3, 0, TILE_W, TILE_H);
         this.textures.get(SPRITE_KEY).add('execution_point', 0, TILE_W * 4, 0, TILE_W, TILE_H);
+        this.textures.get(SPRITE_KEY).add('trail', 0, TILE_W * 5, 0, TILE_W, TILE_H); // <-- NEW
     }
 
     createPlayer() {
