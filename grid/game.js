@@ -20,8 +20,12 @@ class GameScene extends Phaser.Scene {
         this.playerGridPos = null;
         this.levelLayout = [];
         this.originalLevelLayout = [];
+        this.dynamicBlockData = []; // --- NEW
         this.levelObjects = [];
         this.currentLevel = 1;
+
+        // --- NEW: Dynamic Objects ---
+        this.sentinels = [];
 
         // Input & State
         this.cursors = null;
@@ -66,16 +70,19 @@ class GameScene extends Phaser.Scene {
         this.currentBufferUsed = 0;
         this.executionQueue = [];
         this.spentCommands = [];
+        this.sentinels = []; // Clear sentinels on create
         this.setGameState('MOVEMENT');
         const levelData = this.cache.json.get(`level${this.currentLevel}`);
         this.levelLayout = JSON.parse(JSON.stringify(levelData.tiles));
         this.originalLevelLayout = JSON.parse(JSON.stringify(levelData.tiles));
+        this.dynamicBlockData = levelData.dynamic_blocks || []; // --- NEW
         this.levelResetTimerDuration = levelData.reset_timer || -1;
         this.resetTimerTicksRemaining = -1;
         this.bufferSize = levelData.buffer_size || PLAYER_BUFFER_SIZE;
         this.drawGridLines();
         this.rebuildLevelVisuals();
         this.createPlayer();
+        this.createDynamicBlocks(); // --- NEW
         this.createDigitalRain();
         this.setupInput();
         this.createUIPanel();
@@ -97,6 +104,90 @@ class GameScene extends Phaser.Scene {
     update() {
         this.updateDigitalRain();
     }
+    
+    // --- NEW: Sentinel and Collision Logic ---
+
+    createDynamicBlocks() {
+        this.dynamicBlockData.forEach(blockData => {
+            if (blockData.type === 'sentinel') {
+                this.createSentinel(blockData);
+            }
+        });
+    }
+
+    createSentinel(data) {
+        const [x, y] = data.position;
+        const sprite = this.add.image(x * TILE_SIZE + TILE_SIZE / 2, y * TILE_SIZE + TILE_SIZE / 2, 'game-sprites', 'sentinel');
+        sprite.setDisplaySize(TILE_SIZE * 0.9, TILE_SIZE * 0.9).setDepth(9);
+
+        let velocity;
+        if (data.parameters.direction === 'vertical') {
+            sprite.setRotation(Phaser.Math.DegToRad(90));
+            velocity = { dx: 0, dy: 1 };
+        } else {
+            velocity = { dx: 1, dy: 0 };
+        }
+        
+        this.sentinels.push({
+            sprite: sprite,
+            gridPos: { x, y },
+            velocity: velocity,
+            initialData: data
+        });
+    }
+    
+    updateSentinels() {
+        if (this.sentinels.length === 0) return;
+
+        this.sentinels.forEach(sentinel => {
+            const nextX = sentinel.gridPos.x + sentinel.velocity.dx;
+            const nextY = sentinel.gridPos.y + sentinel.velocity.dy;
+
+            if (this.isCollidable(nextX, nextY)) {
+                // Hit a wall, reverse direction
+                sentinel.velocity.dx *= -1;
+                sentinel.velocity.dy *= -1;
+            } else {
+                // Move to the new position
+                sentinel.gridPos.x = nextX;
+                sentinel.gridPos.y = nextY;
+                this.tweens.add({
+                    targets: sentinel.sprite,
+                    x: sentinel.gridPos.x * TILE_SIZE + TILE_SIZE / 2,
+                    y: sentinel.gridPos.y * TILE_SIZE + TILE_SIZE / 2,
+                    duration: 150,
+                    ease: 'Power2'
+                });
+            }
+        });
+    }
+
+    playerCaught() {
+        if (this.gameState === 'PAUSED' || this.gameState === 'FINISHED') return;
+        this.setGameState('PAUSED');
+        this.statusText.setText('> SECURITY ALERT. OPERATOR COMPROMISED.');
+        this.cameras.main.flash(500, 255, 0, 0); // Flash red
+        
+        this.tweens.add({
+            targets: this.player,
+            scale: 0,
+            angle: 360,
+            duration: 400,
+            onComplete: () => {
+                this.time.delayedCall(200, () => this.resetLevel(true));
+            }
+        });
+    }
+
+    isCollidable(x, y) {
+        if (x < 0 || x >= GRID_WIDTH || y < 0 || y >= GRID_HEIGHT) {
+            return true; // Grid boundaries are collidable
+        }
+        const tileId = this.levelLayout[y][x];
+        return tileId === 'wall' || tileId === 'door';
+    }
+    
+    // --- End of New Sentinel Logic ---
 
     setGameState(newState) {
         console.log(`State change: ${this.gameState} -> ${newState}`);
@@ -232,7 +323,6 @@ class GameScene extends Phaser.Scene {
     }
 
     addCommandToQueue() {
-        //this.spentCommands = [];
         this.executionQueue.push(this.currentTargetingCommand);
         this.currentBufferUsed += this.currentTargetingCommand.finalCost;
         this.updateQueueUI();
@@ -344,46 +434,75 @@ class GameScene extends Phaser.Scene {
         return true;
     }
 
-        movePlayer(dx, dy) {
-        // --- THIS FUNCTION CONTAINS THE TRAIL EFFECT LOGIC ---
-        const oldX = this.playerGridPos.x * TILE_SIZE + TILE_SIZE / 2;
-        const oldY = this.playerGridPos.y * TILE_SIZE + TILE_SIZE / 2;
+    movePlayer(dx, dy) {
+        // --- THIS IS THE CORE OF THE FIX ---
+        // 1. Capture the state of all moving entities BEFORE they move.
+        const playerOldPos = { x: this.playerGridPos.x, y: this.playerGridPos.y };
+        const sentinelsOldPos = this.sentinels.map(s => ({ x: s.gridPos.x, y: s.gridPos.y }));
 
-        if (dx === 0 && dy === 0) {
-            // "Wait" action. Create a ghost at the current spot.
-            const trail = this.add.image(oldX, oldY, 'game-sprites', 'trail');
-            trail.setDisplaySize(TILE_SIZE * 0.75, TILE_SIZE * 0.75).setDepth(this.player.depth - 1);
-            this.tweens.add({ targets: trail, alpha: 0, scale: 0, duration: 500, onComplete: () => trail.destroy() });
-        } else {
-            // Directional move
-            const targetX = this.playerGridPos.x + dx;
-            const targetY = this.playerGridPos.y + dy;
-            if (targetX < 0 || targetX >= GRID_WIDTH || targetY < 0 || targetY >= GRID_HEIGHT) return;
-            const targetTileId = this.levelLayout[targetY][targetX];
-            if (targetTileId === 'wall' || targetTileId === 'door') return;
+        // 2. Animate the player's "thinking" trail, regardless of move or wait.
+        const trail = this.add.image(playerOldPos.x * TILE_SIZE + TILE_SIZE / 2, playerOldPos.y * TILE_SIZE + TILE_SIZE / 2, 'game-sprites', 'trail');
+        trail.setDisplaySize(TILE_SIZE * 0.75, TILE_SIZE * 0.75).setDepth(this.player.depth - 1);
+        this.tweens.add({ targets: trail, alpha: 0, scale: 0, duration: 500, onComplete: () => trail.destroy() });
 
-            // Create a ghost at the old position before moving
-            const trail = this.add.image(oldX, oldY, 'game-sprites', 'trail');
-            trail.setDisplaySize(TILE_SIZE * 0.75, TILE_SIZE * 0.75).setDepth(this.player.depth - 1);
-            this.tweens.add({ targets: trail, alpha: 0, scale: 0, duration: 500, onComplete: () => trail.destroy() });
+        // 3. Update the player's grid position if it's a valid move.
+        const targetX = this.playerGridPos.x + dx;
+        const targetY = this.playerGridPos.y + dy;
+
+        if (dx !== 0 || dy !== 0) { // It's a move, not a wait
+            if (this.isCollidable(targetX, targetY)) return; // Player hits a wall, action fails.
             
             this.playerGridPos.x = targetX;
             this.playerGridPos.y = targetY;
-            this.tweens.add({
-                targets: this.player,
-                x: targetX * TILE_SIZE + TILE_SIZE / 2,
-                y: targetY * TILE_SIZE + TILE_SIZE / 2,
-                duration: 150,
-                ease: 'Power2'
-            });
+        }
+        // If it was a wait (dx=0, dy=0), playerGridPos remains unchanged.
+
+        // 4. Update the sentinels' positions.
+        this.updateSentinels();
+
+        // 5. Perform the comprehensive collision check.
+        let collisionDetected = false;
+        for (let i = 0; i < this.sentinels.length; i++) {
+            const sentinel = this.sentinels[i];
+            const sentinelOldPos = sentinelsOldPos[i];
+            
+            // Condition 1: Did they land on the same tile? (Head-on)
+            if (this.playerGridPos.x === sentinel.gridPos.x && this.playerGridPos.y === sentinel.gridPos.y) {
+                collisionDetected = true;
+                break;
+            }
+
+            // Condition 2: Did they swap tiles? (Cross-over)
+            if (this.playerGridPos.x === sentinelOldPos.x && this.playerGridPos.y === sentinelOldPos.y &&
+                playerOldPos.x === sentinel.gridPos.x && playerOldPos.y === sentinel.gridPos.y) {
+                collisionDetected = true;
+                break;
+            }
+        }
+        
+        // 6. Animate the player's movement AFTER collision checks are done.
+        this.tweens.add({
+            targets: this.player,
+            x: this.playerGridPos.x * TILE_SIZE + TILE_SIZE / 2,
+            y: this.playerGridPos.y * TILE_SIZE + TILE_SIZE / 2,
+            duration: 150,
+            ease: 'Power2'
+        });
+
+        // 7. Handle the outcome.
+        if (collisionDetected) {
+            this.playerCaught();
+            return; // Stop further processing for this tick
         }
 
+        // 8. If no collision, proceed with the rest of the tick's logic.
         this.ticks++;
         this.updateTickCounter();
+
         if (this.resetTimerTicksRemaining > 0) {
             this.resetTimerTicksRemaining--;
             if (this.resetTimerTicksRemaining === 0) {
-                this.resetLevel();
+                this.resetLevel(false);
                 return;
             } else {
                 this.statusText.setText(`> SYSTEM INSTABILITY. RESET IN ${this.resetTimerTicksRemaining} TICKS.`);
@@ -392,6 +511,7 @@ class GameScene extends Phaser.Scene {
         if (this.gameState === 'EXECUTING') {
             this.processNextCommandInQueue();
         }
+        
         const currentTileId = this.levelLayout[this.playerGridPos.y][this.playerGridPos.x];
         if (currentTileId === 'data') {
             this.levelComplete();
@@ -401,18 +521,52 @@ class GameScene extends Phaser.Scene {
         }
     }
 
-    resetLevel() {
-        this.statusText.setText('> KERNEL PANIC. SYSTEM RESETTING...');
-        this.setGameState('PAUSED');
-        this.cameras.main.flash(500, 255, 0, 0);
+    resetLevel(fullReset = false) {
+        if (fullReset) {
+            this.statusText.setText('> SECURITY ALERT. OPERATOR COMPROMISED. SYSTEM RESTARTING...');
+            this.setGameState('PAUSED');
+        } else {
+             this.statusText.setText('> KERNEL PANIC. SYSTEM RESETTING...');
+             this.setGameState('PAUSED');
+             this.cameras.main.flash(500, 255, 0, 0);
+        }
+
+        // --- THESE ARE RESET IN BOTH CASES ---
         this.levelLayout = JSON.parse(JSON.stringify(this.originalLevelLayout));
-        this.executionQueue = [];
-        this.currentExecutingCommand = null;
         this.resetTimerTicksRemaining = -1;
+
+        // Reset dynamic objects
+        this.sentinels.forEach(s => s.sprite.destroy());
+        this.sentinels = [];
+        this.createDynamicBlocks();
+
+        // Rebuild static visuals
         this.rebuildLevelVisuals();
+        
+        // --- THIS IS THE FIX ---
+        // Conditionally reset buffer, commands, and player state
+        if (fullReset) {
+            // Clear all commands and buffer usage
+            this.executionQueue = [];
+            this.currentExecutingCommand = null;
+            this.currentBufferUsed = 0;
+            this.spentCommands = [];
+
+            // Reset player's position and visual state
+            let startPos = this.findPlayerStart();
+            this.playerGridPos.x = startPos.x;
+            this.playerGridPos.y = startPos.y;
+            this.player.setPosition(this.playerGridPos.x * TILE_SIZE + TILE_SIZE / 2, this.playerGridPos.y * TILE_SIZE + TILE_SIZE / 2);
+            this.player.setAngle(0); 
+            this.player.setDisplaySize(TILE_SIZE * 0.8, TILE_SIZE * 0.8);
+        }
+        // If it's not a fullReset, the executionQueue, buffer, spentCommands, and player position are all preserved.
+
+        // UI must be updated in both cases to reflect the current (potentially preserved) state.
         this.updateQueueUI();
         this.updateBufferUI();
-        this.time.delayedCall(600, () => {
+        
+        this.time.delayedCall(fullReset ? 400 : 600, () => {
             this.statusText.setText('> Awaiting input...');
             this.setGameState('MOVEMENT');
         });
@@ -477,10 +631,9 @@ class GameScene extends Phaser.Scene {
             e.preventDefault();
             this.undoLastCommand();
         });
-        // --- NEW: Reset button listener ---
         document.getElementById('reset-button').addEventListener('click', (e) => {
             e.preventDefault();
-            this.scene.restart();
+            this.resetLevel(true); // Changed from scene.restart() to use our new function
         });
         const statusDiv = document.getElementById('status-display');
         this.statusText = {
@@ -586,73 +739,114 @@ class GameScene extends Phaser.Scene {
     }
 
     createBlockTextures() {
-        const gfx = this.make.graphics({ add: false });
         const SPRITE_KEY = 'game-sprites';
+
+        if (this.textures.exists(SPRITE_KEY)) {
+            return;
+        }
+
         const TILE_W = 64;
         const TILE_H = 64;
-        
-        // --- Unchanged: Wall, Data, Door ---
-        gfx.fillStyle(0x008800); gfx.fillRect(TILE_W * 0, 0, TILE_W, TILE_H);
-        gfx.lineStyle(4, 0x00ff00); gfx.strokeRect(TILE_W * 0 + 2, 2, TILE_W - 4, TILE_H - 4);
-        gfx.lineBetween(TILE_W * 0, TILE_H / 2, TILE_W * 1, TILE_H / 2); gfx.lineBetween(TILE_W / 2, 0, TILE_W / 2, TILE_H);
-        const dataX = TILE_W * 1; gfx.lineStyle(4, 0x00ffff); gfx.strokeCircle(dataX + TILE_W / 2, TILE_H / 2, TILE_W / 2 - 4); gfx.fillStyle(0x00ffff, 0.3); gfx.fillCircle(dataX + TILE_W / 2, TILE_H / 2, TILE_W / 2 - 4); gfx.fillStyle(0x00ffff); gfx.fillCircle(dataX + TILE_W / 2, TILE_H / 2, TILE_W / 4);
-        const doorX = TILE_W * 2; gfx.lineStyle(4, 0xffff00); gfx.strokeRect(doorX + 2, 2, TILE_W - 4, TILE_H - 4); gfx.fillStyle(0xffff00, 0.2); gfx.fillRect(doorX + 2, 2, TILE_W - 4, TILE_H - 4); gfx.lineStyle(6, 0xffff00); gfx.lineBetween(doorX + TILE_W / 2, 10, doorX + TILE_W / 2, TILE_H - 10);
-        
-        // --- NEW PLAYER SPRITE ---
-        const playerX = TILE_W * 3;
-        const centerX = playerX + TILE_W / 2;
-        const centerY = TILE_H / 2;
-        
-        // Layer 1: Outer glowing brackets (cyan)
-        gfx.lineStyle(6, 0x00ffff, 0.5);
-        gfx.beginPath();
-        gfx.moveTo(centerX - 24, centerY - 16);
-        gfx.lineTo(centerX - 16, centerY - 16);
-        gfx.lineTo(centerX - 16, centerY - 24);
-        gfx.moveTo(centerX + 24, centerY - 16);
-        gfx.lineTo(centerX + 16, centerY - 16);
-        gfx.lineTo(centerX + 16, centerY - 24);
-        gfx.moveTo(centerX - 24, centerY + 16);
-        gfx.lineTo(centerX - 16, centerY + 16);
-        gfx.lineTo(centerX - 16, centerY + 24);
-        gfx.moveTo(centerX + 24, centerY + 16);
-        gfx.lineTo(centerX + 16, centerY + 16);
-        gfx.lineTo(centerX + 16, centerY + 24);
-        gfx.strokePath();
+        const ATLAS_WIDTH = TILE_W * 7;
+        const ATLAS_HEIGHT = TILE_H;
 
-        // Layer 2: Inner diamond shape (white)
-        gfx.fillStyle(0xffffff);
-        gfx.beginPath();
-        gfx.moveTo(centerX, centerY - 18);       // Top point
-        gfx.lineTo(centerX + 18, centerY);       // Right point
-        gfx.lineTo(centerX, centerY + 18);       // Bottom point
-        gfx.lineTo(centerX - 18, centerY);       // Left point
-        gfx.closePath();
-        gfx.fillPath();
+        // The main canvas for our atlas will be a RenderTexture.
+        const rt = this.make.renderTexture({ width: ATLAS_WIDTH, height: ATLAS_HEIGHT }, false);
+
+        // Helper function to draw vector shapes onto our RenderTexture
+        const drawVectorTile = (tileIndex, drawCallback) => {
+            const gfx = this.make.graphics({ add: false });
+            drawCallback(gfx, TILE_W, TILE_H); // Pass dimensions for centering
+            rt.draw(gfx, TILE_W * tileIndex, 0);
+            gfx.destroy();
+        };
+
+        // --- Tile 0: Wall ---
+        drawVectorTile(0, (gfx) => {
+            gfx.fillStyle(0x008800); gfx.fillRect(0, 0, TILE_W, TILE_H);
+            gfx.lineStyle(4, 0x00ff00); gfx.strokeRect(2, 2, TILE_W - 4, TILE_H - 4);
+            gfx.lineBetween(0, TILE_H / 2, TILE_W, TILE_H / 2);
+            gfx.lineBetween(TILE_W / 2, 0, TILE_W / 2, TILE_H);
+        });
+
+        // --- Tile 1: Data ---
+        drawVectorTile(1, (gfx, w, h) => {
+            gfx.lineStyle(4, 0x00ffff); gfx.strokeCircle(w / 2, h / 2, w / 2 - 4);
+            gfx.fillStyle(0x00ffff, 0.3); gfx.fillCircle(w / 2, h / 2, w / 2 - 4);
+            gfx.fillStyle(0x00ffff); gfx.fillCircle(w / 2, h / 2, w / 4);
+        });
+
+        // --- Tile 2: Door ---
+        drawVectorTile(2, (gfx, w, h) => {
+            gfx.lineStyle(4, 0xffff00); gfx.strokeRect(2, 2, w - 4, h - 4);
+            gfx.fillStyle(0xffff00, 0.2); gfx.fillRect(2, 2, w - 4, h - 4);
+            gfx.lineStyle(6, 0xffff00); gfx.lineBetween(w / 2, 10, w / 2, h - 10);
+        });
+
+        // --- Tile 3: Player ---
+        drawVectorTile(3, (gfx, w, h) => {
+            const centerX = w / 2; const centerY = h / 2;
+            gfx.lineStyle(6, 0x00ffff, 0.5); gfx.beginPath(); gfx.moveTo(centerX - 24, centerY - 16); gfx.lineTo(centerX - 16, centerY - 16); gfx.lineTo(centerX - 16, centerY - 24); gfx.moveTo(centerX + 24, centerY - 16); gfx.lineTo(centerX + 16, centerY - 16); gfx.lineTo(centerX + 16, centerY - 24); gfx.moveTo(centerX - 24, centerY + 16); gfx.lineTo(centerX - 16, centerY + 16); gfx.lineTo(centerX - 16, centerY + 24); gfx.moveTo(centerX + 24, centerY + 16); gfx.lineTo(centerX + 16, centerY + 16); gfx.lineTo(centerX + 16, centerY + 24); gfx.strokePath();
+            gfx.fillStyle(0xffffff); gfx.beginPath(); gfx.moveTo(centerX, centerY - 18); gfx.lineTo(centerX + 18, centerY); gfx.lineTo(centerX, centerY + 18); gfx.lineTo(centerX - 18, centerY); gfx.closePath(); gfx.fillPath();
+            gfx.fillStyle(0xcccccc); gfx.fillCircle(centerX, centerY, 6);
+        });
+
+        // --- Tile 4: Execution Point ---
+        drawVectorTile(4, (gfx, w, h) => {
+            gfx.fillStyle(0xff8800, 0.2); gfx.fillRect(0, 0, w, h);
+            gfx.lineStyle(4, 0xff8800); gfx.strokeRect(2, 2, w - 4, h - 4);
+            gfx.lineStyle(6, 0xff8800); gfx.moveTo(16, 16); gfx.lineTo(48, 48); gfx.moveTo(16, 48); gfx.lineTo(48, 16); gfx.strokePath();
+        });
+
+        // --- Tile 5: Trail ---
+        drawVectorTile(5, (gfx) => {
+            gfx.fillStyle(0x00ffff);
+            gfx.fillRect(16, 16, 32, 32);
+        });
         
-        // Layer 3: Inner core (darker fill)
-        gfx.fillStyle(0xcccccc);
-        gfx.fillCircle(centerX, centerY, 6);
+        // --- Tile 6: Sentinel Graphic (NEW) ---
+        drawVectorTile(6, (gfx, w, h) => {
+            const centerX = w / 2;
+            const centerY = h / 2;
+            const mainRadius = 20;
+            const arrowSize = 8;
+            
+            // Layer 1: Outer glow
+            gfx.fillStyle(0xff0000, 0.3);
+            gfx.fillCircle(centerX, centerY, mainRadius + 4);
 
+            // Layer 2: Main stroked circle and arrows
+            gfx.lineStyle(4, 0xff0000);
+            gfx.strokeCircle(centerX, centerY, mainRadius);
+            
+            // Arrows
+            gfx.beginPath();
+            // Left arrow <
+            gfx.moveTo(centerX - mainRadius - 2, centerY - arrowSize);
+            gfx.lineTo(centerX - mainRadius - 2 - arrowSize, centerY);
+            gfx.lineTo(centerX - mainRadius - 2, centerY + arrowSize);
+            // Right arrow >
+            gfx.moveTo(centerX + mainRadius + 2, centerY - arrowSize);
+            gfx.lineTo(centerX + mainRadius + 2 + arrowSize, centerY);
+            gfx.lineTo(centerX + mainRadius + 2, centerY + arrowSize);
+            gfx.strokePath();
 
-        // --- Unchanged: Execution Point ---
-        const execX = TILE_W * 4; gfx.fillStyle(0xff8800, 0.2); gfx.fillRect(execX, 0, TILE_W, TILE_H); gfx.lineStyle(4, 0xff8800); gfx.strokeRect(execX + 2, 2, TILE_W - 4, TILE_H - 4); gfx.lineStyle(6, 0xff8800); gfx.moveTo(execX + 16, 16); gfx.lineTo(execX + 48, 48); gfx.moveTo(execX + 16, 48); gfx.lineTo(execX + 48, 16); gfx.strokePath();
-        
-        const trailX = TILE_W * 5;
-        gfx.fillStyle(0x00ffff); // Match the player's cyan brackets
-        gfx.fillRect(trailX + 16, 16, 32, 32); // Draw a 32x32 square in the center of the 64x64 tile area
+            // Layer 3: Dark core "eye"
+            gfx.fillStyle(0x880000);
+            gfx.fillCircle(centerX, centerY, mainRadius / 2);
+        });
 
-        // Generate the final texture atlas (now 6 tiles wide)
-        gfx.generateTexture(SPRITE_KEY, TILE_W * 6, TILE_H);
-        gfx.destroy();
+        // --- Finalize Texture and Add Frames ---
+        rt.saveTexture(SPRITE_KEY);
+        rt.destroy(); // Clean up the render texture
 
-        // Add the new frame definition
         this.textures.get(SPRITE_KEY).add('wall', 0, TILE_W * 0, 0, TILE_W, TILE_H);
         this.textures.get(SPRITE_KEY).add('data', 0, TILE_W * 1, 0, TILE_W, TILE_H);
         this.textures.get(SPRITE_KEY).add('door', 0, TILE_W * 2, 0, TILE_W, TILE_H);
         this.textures.get(SPRITE_KEY).add('player', 0, TILE_W * 3, 0, TILE_W, TILE_H);
         this.textures.get(SPRITE_KEY).add('execution_point', 0, TILE_W * 4, 0, TILE_W, TILE_H);
-        this.textures.get(SPRITE_KEY).add('trail', 0, TILE_W * 5, 0, TILE_W, TILE_H); // <-- NEW
+        this.textures.get(SPRITE_KEY).add('trail', 0, TILE_W * 5, 0, TILE_W, TILE_H);
+        this.textures.get(SPRITE_KEY).add('sentinel', 0, TILE_W * 6, 0, TILE_W, TILE_H);
     }
 
     createPlayer() {
@@ -689,6 +883,10 @@ class GameScene extends Phaser.Scene {
     }
 
     levelComplete() {
+        // --- NEW: Clean up sentinels on win ---
+        this.sentinels.forEach(s => s.sprite.destroy());
+        this.sentinels = [];
+
         this.tweens.add({
             targets: this.player,
             scaleX: 2,
