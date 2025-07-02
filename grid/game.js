@@ -265,6 +265,15 @@ class GameScene extends Phaser.Scene {
     setGameState(newState) {
         console.log(`State change: ${this.gameState} -> ${newState}`);
         this.gameState = newState;
+
+        const gameCanvas = this.sys.game.canvas;
+        if (newState === 'TARGETING') {
+            gameCanvas.classList.add('targeting-cursor');
+        } else {
+            // Remove the class for any other state
+            gameCanvas.classList.remove('targeting-cursor');
+        }
+
         const undoButton = document.getElementById('undo-button');
         if (undoButton) {
             if (this.gameState === 'MOVEMENT' && this.executionQueue.length > 0) {
@@ -941,7 +950,7 @@ class GameScene extends Phaser.Scene {
             const emptySlot = document.createElement('div');
             emptySlot.className = 'buffer-slot';
             emptySlot.style.flex = remainingSpace;
-            emptySlot.innerHTML = ' ';
+            emptySlot.innerHTML = 'X';
             bufferBar.appendChild(emptySlot);
         }
     }
