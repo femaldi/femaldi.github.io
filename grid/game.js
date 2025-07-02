@@ -617,7 +617,6 @@ class GameScene extends Phaser.Scene {
     }
 
     movePlayer(dx, dy) {
-        // --- THIS IS THE CORE OF THE FIX ---
         // 1. Capture the state of all moving entities BEFORE they move.
         const playerOldPos = { x: this.playerGridPos.x, y: this.playerGridPos.y };
         const sentinelsOldPos = this.sentinels.map(s => ({ x: s.gridPos.x, y: s.gridPos.y }));
@@ -631,13 +630,11 @@ class GameScene extends Phaser.Scene {
         const targetX = this.playerGridPos.x + dx;
         const targetY = this.playerGridPos.y + dy;
 
-        if (dx !== 0 || dy !== 0) { // It's a move, not a wait
-            if (this.isCollidable(targetX, targetY)) return; // Player hits a wall, action fails.
-            
+        if (dx !== 0 || dy !== 0) {
+            if (this.isCollidable(targetX, targetY)) return;
             this.playerGridPos.x = targetX;
             this.playerGridPos.y = targetY;
         }
-        // If it was a wait (dx=0, dy=0), playerGridPos remains unchanged.
 
         // 4. Update the sentinels' positions.
         this.updateSentinels();
@@ -647,14 +644,10 @@ class GameScene extends Phaser.Scene {
         for (let i = 0; i < this.sentinels.length; i++) {
             const sentinel = this.sentinels[i];
             const sentinelOldPos = sentinelsOldPos[i];
-            
-            // Condition 1: Did they land on the same tile? (Head-on)
             if (this.playerGridPos.x === sentinel.gridPos.x && this.playerGridPos.y === sentinel.gridPos.y) {
                 collisionDetected = true;
                 break;
             }
-
-            // Condition 2: Did they swap tiles? (Cross-over)
             if (this.playerGridPos.x === sentinelOldPos.x && this.playerGridPos.y === sentinelOldPos.y &&
                 playerOldPos.x === sentinel.gridPos.x && playerOldPos.y === sentinel.gridPos.y) {
                 collisionDetected = true;
@@ -674,23 +667,34 @@ class GameScene extends Phaser.Scene {
         // 7. Handle the outcome.
         if (collisionDetected) {
             this.playerCaught();
-            return; // Stop further processing for this tick
+            return;
         }
 
         // 8. If no collision, proceed with the rest of the tick's logic.
         this.ticks++;
         this.updateTickCounter();
 
+        // The order of these final checks is now critical.
+
+        // 8a. First, check for WIN condition.
+        const currentTileId = this.levelLayout[this.playerGridPos.y][this.playerGridPos.x];
+        if (currentTileId === 'data') {
+            this.levelComplete();
+            return; // IMPORTANT: Stop processing if the level is won.
+        }
+
+        // 8b. Then, check for TIMER-BASED RESET. This will only run if the win condition was not met.
         if (this.resetTimerTicksRemaining > 0) {
             this.resetTimerTicksRemaining--;
             if (this.resetTimerTicksRemaining === 0) {
-                this.resetLevel(false);
+                this.resetLevel(false); 
                 return;
             } else {
                 this.statusText.setText(`> SYSTEM INSTABILITY. RESET IN ${this.resetTimerTicksRemaining} TICKS.`);
             }
         }
         
+        // 8c. Then, handle EXECUTION QUEUE.
         if (this.gameState === 'EXECUTING') {
             if (this.waitTicksRemaining > 0) {
                 this.waitTicksRemaining--;
@@ -700,10 +704,7 @@ class GameScene extends Phaser.Scene {
             }
         }
         
-        const currentTileId = this.levelLayout[this.playerGridPos.y][this.playerGridPos.x];
-        if (currentTileId === 'data') {
-            this.levelComplete();
-        }
+        // 8d. Finally, check for entering execution mode.
         if (currentTileId === 'execution_point' && this.gameState === 'MOVEMENT') {
             this.initiateExecutionMode();
         }
@@ -751,6 +752,15 @@ class GameScene extends Phaser.Scene {
             // --- THIS IS THE NEW LOGIC ---
             // After a soft reset, check if the player's preserved position is now invalid.
             let isPlayerInInvalidSpot = false;
+
+            // Check 1: Is the player on top of the newly respawned Data node?
+            const playerTile = this.levelLayout[this.playerGridPos.y][this.playerGridPos.x];
+            if (playerTile === 'data') {
+                console.log("Player landed on Data node after soft reset. Player wins.");
+                this.statusText.setText('> UNEXPECTED DATA ACQUISITION. CONNECTION TERMINATING...');
+                this.levelComplete();
+                return; // IMPORTANT: Stop the reset process here.
+            }
 
             // Check 1: Is the player on a solid wall or door?
             if (this.isCollidable(this.playerGridPos.x, this.playerGridPos.y)) {

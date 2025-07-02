@@ -15,7 +15,7 @@ const BLOCK_TYPES = {
         name: 'Data Node',
         char: 'D',
         color: '#00ffff',
-        command_multiplier: 5 // Data is critical and very expensive
+        command_multiplier: 8 // Data is critical and very expensive
     },
     door: {
         id: 'door',
