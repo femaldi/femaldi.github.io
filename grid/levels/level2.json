@@ -3,6 +3,7 @@
   "height": 24,
   "reset_timer": 13,
   "buffer_size": 10,
+  "network_node": "F0.CC.5",
   "tiles": [
     [
       null,

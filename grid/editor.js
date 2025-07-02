@@ -14,6 +14,9 @@ class EditorScene extends Phaser.Scene {
         this.selectedBlock = { id: 'wall', isDynamic: false }; // --- MODIFIED: Start with wall selected
         this.paletteHighlight = null;
         this.parameterEditor = null; // --- NEW: To hold the parameter editor UI
+        this.networkNode = null;
+        this.buffer_size = null;
+        this.reset_timer = null;
     }
     
     preload() {
@@ -31,6 +34,9 @@ class EditorScene extends Phaser.Scene {
 
     initializeGridData() {
         this.dynamicBlocks = []; // Clear dynamic blocks on creation
+        this.networkNode = null;
+        this.buffer_size = null;
+        this.reset_timer = null;
         for (let y = 0; y < GRID_HEIGHT; y++) {
             this.gridData[y] = [];
             this.gridObjects[y] = []; // It creates a new array for gridObjects...
@@ -39,6 +45,13 @@ class EditorScene extends Phaser.Scene {
                 this.gridObjects[y][x] = null; // ... and fills it with `null`!
             }
         }
+    }
+
+    generateNetworkNode() {
+        const hex1 = Math.floor(Math.random() * 256).toString(16).toUpperCase().padStart(2, '0');
+        const hex2 = Math.floor(Math.random() * 256).toString(16).toUpperCase().padStart(2, '0');
+        const digit = Math.floor(Math.random() * 10);
+        return `${hex1}.${hex2}.${digit}`;
     }
 
     drawGrid() {
@@ -233,9 +246,10 @@ class EditorScene extends Phaser.Scene {
         const levelData = {
             width: GRID_WIDTH,
             height: GRID_HEIGHT,
-            reset_timer: 32,
-            buffer_size: 5,
+            reset_timer: this.reset_timer || 32,
+            buffer_size: this.buffer_size || 5,
             tiles: this.gridData,
+            network_node: this.networkNode || this.generateNetworkNode(),
             dynamic_blocks: this.dynamicBlocks
         };
         const jsonString = JSON.stringify(levelData, null, 2);
@@ -301,6 +315,9 @@ class EditorScene extends Phaser.Scene {
         
         // Load data from file
         this.gridData = levelData.tiles;
+        this.networkNode = levelData.network_node || null;
+        this.buffer_size = levelData.buffer_size || null;
+        this.reset_timer = levelData.reset_timer || null;
         if (levelData.dynamic_blocks && Array.isArray(levelData.dynamic_blocks)) {
             this.dynamicBlocks = levelData.dynamic_blocks;
         }
@@ -313,8 +330,6 @@ class EditorScene extends Phaser.Scene {
             }
         }
     }
-    
-    // --- NEW: Parameter Editor UI methods ---
     
     closeParameterEditor() {
         if (this.parameterEditor) {

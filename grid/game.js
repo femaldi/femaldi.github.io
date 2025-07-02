@@ -1,7 +1,7 @@
 // --- CONFIGURATION ---
-const TILE_SIZE = 32;
-const GRID_WIDTH = 24;
-const GRID_HEIGHT = 24;
+// const TILE_SIZE = 32;
+// const GRID_WIDTH = 24;
+// const GRID_HEIGHT = 24;
 const UI_WIDTH = 250;
 const PLAYER_BUFFER_SIZE = 5;
 const FONT_STYLE = {
@@ -23,6 +23,7 @@ class GameScene extends Phaser.Scene {
         this.dynamicBlockData = []; // --- NEW
         this.levelObjects = [];
         this.currentLevel = 1;
+        this.networkNode = 'UNKNOWN';
 
         // --- NEW: Dynamic Objects ---
         this.sentinels = [];
@@ -57,6 +58,15 @@ class GameScene extends Phaser.Scene {
         this.costTooltip = null;
     }
 
+    init(data) {
+        // If a startLevel is passed from the previous scene, use it.
+        // Otherwise, it will use the default '1' from the constructor.
+        if (data && data.startLevel) {
+            this.currentLevel = data.startLevel;
+        }
+        console.log(`Initializing GameScene for level: ${this.currentLevel}`);
+    }
+
     preload() {
         this.createBlockTextures();
         const levelKey = `level${this.currentLevel}`;
@@ -78,6 +88,7 @@ class GameScene extends Phaser.Scene {
         this.levelLayout = JSON.parse(JSON.stringify(levelData.tiles));
         this.originalLevelLayout = JSON.parse(JSON.stringify(levelData.tiles));
         this.dynamicBlockData = levelData.dynamic_blocks || []; // --- NEW
+        this.networkNode = levelData.network_node || 'XX.XX.X'; // Fallback for older levels
         this.levelResetTimerDuration = levelData.reset_timer || -1;
         this.resetTimerTicksRemaining = -1;
         this.bufferSize = levelData.buffer_size || PLAYER_BUFFER_SIZE;
@@ -968,20 +979,9 @@ class GameScene extends Phaser.Scene {
 
     updateTickCounter() {
         const hudElement = document.getElementById('game-hud');
-        if (!hudElement) {
-            const newHud = document.createElement('div');
-            newHud.id = 'game-hud';
-            newHud.style.position = 'absolute';
-            newHud.style.bottom = '10px';
-            newHud.style.left = '10px';
-            newHud.style.color = '#00ff00';
-            newHud.style.fontFamily = 'Courier New';
-            document.querySelector('#main-container').prepend(newHud);
-            this.tickText = {
-                setText: text => newHud.innerText = text
-            };
+        if (hudElement) {
+            hudElement.innerText = `OPERATOR v1.0 | NETWORK_NODE: ${this.networkNode} | TICKS: ${this.ticks}`;
         }
-        this.tickText.setText(`OPERATOR v1.0 | NETWORK_NODE: 7F.A4.1 | TICKS: ${this.ticks}`);
     }
 
     createBlockTextures() {
@@ -1145,7 +1145,7 @@ class GameScene extends Phaser.Scene {
         this.cameras.main.fadeOut(1000, 0, 0, 0, (camera, progress) => {
             if (progress === 1) {
                 this.currentLevel++;
-                this.scene.restart();
+                this.scene.start('GameScene', { startLevel: this.currentLevel });
             }
         });
     }
@@ -1200,13 +1200,13 @@ class GameScene extends Phaser.Scene {
 }
 
 // --- PHASER GAME CONFIGURATION ---
-const config = {
-    type: Phaser.AUTO,
-    width: TILE_SIZE * GRID_WIDTH,
-    height: TILE_SIZE * GRID_HEIGHT,
-    parent: 'game-container',
-    backgroundColor: '#001a00',
-    scene: [GameScene]
-};
+// const config = {
+//     type: Phaser.AUTO,
+//     width: TILE_SIZE * GRID_WIDTH,
+//     height: TILE_SIZE * GRID_HEIGHT,
+//     parent: 'game-container',
+//     backgroundColor: '#001a00',
+//     scene: [GameScene]
+// };
 
-const game = new Phaser.Game(config);
+// const game = new Phaser.Game(config);

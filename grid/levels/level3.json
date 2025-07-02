@@ -3,6 +3,7 @@
   "height": 24,
   "reset_timer": 3,
   "buffer_size": 18,
+  "network_node": "D8.99.1",
   "tiles": [
     [
       "wall",
