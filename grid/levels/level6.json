@@ -1,8 +1,8 @@
 {
   "width": 24,
   "height": 24,
-  "reset_timer": 21,
-  "buffer_size": 15,
+  "reset_timer": 22,
+  "buffer_size": 8,
   "tiles": [
     [
       null,
@@ -168,18 +168,18 @@
       null,
       null,
       null,
-      "wall",
-      "wall",
-      "wall",
-      "wall",
-      "wall",
-      "wall",
-      "wall",
-      "wall",
-      "wall",
-      "wall",
-      "wall",
-      "wall",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
       null,
       null,
       null,
@@ -193,20 +193,20 @@
       null,
       null,
       null,
-      "hard_wall",
-      "wall",
-      "wall",
-      "wall",
-      "wall",
-      "wall",
-      "wall",
-      "wall",
-      "wall",
-      "wall",
-      "wall",
-      "wall",
-      "wall",
-      "hard_wall",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
       null,
       null,
       null,
@@ -219,7 +219,6 @@
       null,
       null,
       null,
-      "hard_wall",
       null,
       null,
       null,
@@ -232,7 +231,8 @@
       null,
       null,
       null,
-      "hard_wall",
+      null,
+      null,
       null,
       null,
       null,
@@ -243,8 +243,10 @@
       null,
       null,
       null,
-      null,
-      null,
+      "hard_wall",
+      "hard_wall",
+      "hard_wall",
+      "hard_wall",
       "hard_wall",
       null,
       null,
@@ -257,8 +259,6 @@
       null,
       null,
       null,
-      null,
-      "hard_wall",
       null,
       null,
       null,
@@ -266,38 +266,38 @@
     ],
     [
       null,
+      "hard_wall",
+      "hard_wall",
+      "hard_wall",
+      "hard_wall",
+      null,
+      null,
       null,
       "hard_wall",
       "hard_wall",
       "hard_wall",
       "hard_wall",
       "hard_wall",
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
       "hard_wall",
       "hard_wall",
       "hard_wall",
-      null,
+      "hard_wall",
+      "hard_wall",
+      "hard_wall",
+      "hard_wall",
+      "hard_wall",
+      "hard_wall",
+      "hard_wall",
       null
     ],
     [
-      null,
       null,
       "hard_wall",
       "execution_point",
       "player",
       null,
       null,
+      "hard_wall",
       null,
       null,
       null,
@@ -308,64 +308,38 @@
       null,
       null,
       null,
+      "hard_wall",
       null,
       null,
       null,
       "data",
       "hard_wall",
-      null,
       null
     ],
     [
       null,
+      "hard_wall",
+      "hard_wall",
+      "hard_wall",
+      "hard_wall",
+      null,
+      null,
       null,
       "hard_wall",
       "hard_wall",
       "hard_wall",
       "hard_wall",
       "hard_wall",
-      "wall",
-      "wall",
-      "wall",
-      "wall",
-      "wall",
-      "wall",
-      "wall",
-      "wall",
-      "wall",
-      "wall",
-      "wall",
-      "wall",
       "hard_wall",
       "hard_wall",
       "hard_wall",
       null,
-      null
-    ],
-    [
+      "hard_wall",
       null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      "wall",
-      "wall",
-      "wall",
-      "wall",
-      "wall",
-      "wall",
-      "wall",
-      "wall",
-      "wall",
-      "wall",
-      "wall",
-      "wall",
-      null,
-      null,
-      null,
-      null,
+      "hard_wall",
+      "hard_wall",
+      "hard_wall",
+      "hard_wall",
       null
     ],
     [
@@ -373,6 +347,28 @@
       null,
       null,
       null,
+      "hard_wall",
+      "hard_wall",
+      "hard_wall",
+      "hard_wall",
+      "hard_wall",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      "hard_wall",
+      null,
+      null,
+      null,
+      "hard_wall",
+      null,
+      null,
+      null,
+      null
+    ],
+    [
       null,
       null,
       null,
@@ -388,7 +384,11 @@
       null,
       null,
       null,
-      null,
+      "hard_wall",
+      "hard_wall",
+      "hard_wall",
+      "hard_wall",
+      "hard_wall",
       null,
       null,
       null,
@@ -629,126 +629,96 @@
       null
     ]
   ],
-  "network_node": "AC.74.2",
+  "network_node": "5B.29.9",
   "dynamic_blocks": [
+    {
+      "type": "arrow",
+      "position": [
+        5,
+        12
+      ],
+      "parameters": {
+        "direction": "up"
+      }
+    },
+    {
+      "type": "arrow",
+      "position": [
+        5,
+        10
+      ],
+      "parameters": {
+        "direction": "right"
+      }
+    },
+    {
+      "type": "arrow",
+      "position": [
+        7,
+        10
+      ],
+      "parameters": {
+        "direction": "down"
+      }
+    },
+    {
+      "type": "arrow",
+      "position": [
+        7,
+        12
+      ],
+      "parameters": {
+        "direction": "left"
+      }
+    },
+    {
+      "type": "sentinel",
+      "position": [
+        5,
+        12
+      ],
+      "parameters": {
+        "direction": "horizontal"
+      }
+    },
+    {
+      "type": "sentinel",
+      "position": [
+        5,
+        10
+      ],
+      "parameters": {
+        "direction": "horizontal"
+      }
+    },
     {
       "type": "sentinel",
       "position": [
         7,
-        8
-      ],
-      "parameters": {
-        "direction": "vertical"
-      }
-    },
-    {
-      "type": "sentinel",
-      "position": [
-        8,
-        9
-      ],
-      "parameters": {
-        "direction": "vertical"
-      }
-    },
-    {
-      "type": "sentinel",
-      "position": [
-        9,
         10
       ],
       "parameters": {
-        "direction": "vertical"
+        "direction": "horizontal"
       }
     },
     {
       "type": "sentinel",
       "position": [
-        10,
-        11
+        7,
+        12
       ],
       "parameters": {
-        "direction": "vertical"
-      }
-    },
-    {
-      "type": "sentinel",
-      "position": [
-        11,
-        8
-      ],
-      "parameters": {
-        "direction": "vertical"
-      }
-    },
-    {
-      "type": "sentinel",
-      "position": [
-        12,
-        9
-      ],
-      "parameters": {
-        "direction": "vertical"
-      }
-    },
-    {
-      "type": "sentinel",
-      "position": [
-        13,
-        10
-      ],
-      "parameters": {
-        "direction": "vertical"
-      }
-    },
-    {
-      "type": "sentinel",
-      "position": [
-        14,
-        11
-      ],
-      "parameters": {
-        "direction": "vertical"
-      }
-    },
-    {
-      "type": "sentinel",
-      "position": [
-        15,
-        8
-      ],
-      "parameters": {
-        "direction": "vertical"
-      }
-    },
-    {
-      "type": "sentinel",
-      "position": [
-        16,
-        9
-      ],
-      "parameters": {
-        "direction": "vertical"
-      }
-    },
-    {
-      "type": "sentinel",
-      "position": [
-        17,
-        10
-      ],
-      "parameters": {
-        "direction": "vertical"
+        "direction": "horizontal"
       }
     },
     {
       "type": "sentinel",
       "position": [
         18,
-        11
+        13
       ],
       "parameters": {
-        "direction": "vertical"
+        "direction": "horizontal"
       }
     }
   ]

@@ -159,9 +159,7 @@ class EditorScene extends Phaser.Scene {
         });
     }
 
-    // --- EDITOR LOGIC (REFACTORED) ---
-
-    handleGridClick(pointer) {
+        handleGridClick(pointer) {
         if (this.parameterEditor && this.parameterEditor.active) {
             const bg = this.parameterEditor.getChildren()[0];
             if (!bg.getBounds().contains(pointer.x, pointer.y)) {
@@ -174,19 +172,79 @@ class EditorScene extends Phaser.Scene {
         const gridY = Math.floor(pointer.y / TILE_SIZE);
 
         if (gridX < 0 || gridX >= GRID_WIDTH || gridY < 0 || gridY >= GRID_HEIGHT) return;
-        
-        const existingDynamicBlock = this.findDynamicBlockAt(gridX, gridY);
-        if (existingDynamicBlock && this.selectedBlock.id === 'erase') {
-             this.clearTile(gridX, gridY);
-        } else if (existingDynamicBlock) {
-            this.showParameterEditor(existingDynamicBlock, pointer);
-        } else {
-            if (this.selectedBlock.isDynamic) {
-                this.placeDynamicBlock(gridX, gridY);
+
+        const selectedToolId = this.selectedBlock.id;
+        const isSelectedToolDynamic = this.selectedBlock.isDynamic;
+
+        // --- Rule 1: ERASE tool is selected. ---
+        if (selectedToolId === 'erase') {
+            // Erase is a special case. It *can* target a specific dynamic block if there are multiple.
+            const existingBlocks = this.findDynamicBlocksAt(gridX, gridY);
+            if (existingBlocks.length > 1) {
+                // If there are multiple, prompt which one to erase.
+                this.showEraseSelectorModal(existingBlocks, pointer);
             } else {
-                this.placeStaticBlock(gridX, gridY);
+                // If there's 0 or 1, just wipe the whole tile.
+                this.clearTile(gridX, gridY);
+            }
+            return;
+        }
+        
+        // --- Rule 2: A STATIC tool (wall, etc.) is selected. ---
+        if (!isSelectedToolDynamic) {
+            this.placeStaticBlock(gridX, gridY);
+            return;
+        }
+
+        // --- Rule 3: A DYNAMIC tool (sentinel, arrow) is selected. ---
+        if (isSelectedToolDynamic) {
+            const existingDynamicBlocks = this.findDynamicBlocksAt(gridX, gridY);
+            // Find a block on the tile that MATCHES the selected tool.
+            const blockToEdit = existingDynamicBlocks.find(b => b.type === selectedToolId);
+
+            if (blockToEdit) {
+                // A block of the selected tool's type exists. Edit its parameters.
+                this.showParameterEditor(blockToEdit, pointer);
+            } else {
+                // No block of the selected tool's type exists. Place a new one.
+                this.placeDynamicBlock(gridX, gridY);
             }
         }
+    }
+
+    // --- NEW: A modal to choose which DYNAMIC block to erase from a stack ---
+    showEraseSelectorModal(blocks, pointer) {
+        this.closeParameterEditor(); // Use the same mechanism to ensure only one modal is open
+
+        this.parameterEditor = this.add.group();
+        const startX = pointer.x + 10;
+        const startY = pointer.y + 10;
+        const boxWidth = 180;
+        const boxHeight = 20 + blocks.length * 40 + 10;
+
+        const bg = this.add.rectangle(startX, startY, boxWidth, boxHeight, 0x000000, 0.9).setOrigin(0).setStrokeStyle(1, '#ff0000'); // Red border for erase
+        this.parameterEditor.add(bg);
+
+        let currentY = startY + 10;
+
+        blocks.forEach(block => {
+            const blockType = DYNAMIC_BLOCK_TYPES[block.type];
+            const optionText = this.add.text(startX + 10, currentY, `Erase: ${blockType.name}`, { fontSize: '16px', color: blockType.color })
+                .setInteractive({ useHandCursor: true });
+            
+            optionText.on('pointerdown', () => {
+                // Remove only the selected block from the main array
+                const index = this.dynamicBlocks.findIndex(b => b === block);
+                if (index > -1) {
+                    this.dynamicBlocks.splice(index, 1);
+                }
+                this.updateGridVisual(block.position[0], block.position[1]);
+                this.closeParameterEditor();
+            });
+
+            this.parameterEditor.add(optionText);
+            currentY += 40;
+        });
     }
     
     placeStaticBlock(x, y) {
@@ -196,9 +254,19 @@ class EditorScene extends Phaser.Scene {
     }
 
     placeDynamicBlock(x, y) {
-        this.clearTile(x, y);
         const blockType = DYNAMIC_BLOCK_TYPES[this.selectedBlock.id];
         if (!blockType) return;
+        
+        // Prevent adding the same type of block twice to the same tile.
+        const existingBlocks = this.findDynamicBlocksAt(x, y);
+        if (existingBlocks.some(b => b.type === blockType.id)) {
+            return;
+        }
+        
+        // Clear any underlying STATIC block before adding a dynamic one.
+        if (this.gridData[y][x] !== null) {
+            this.gridData[y][x] = null;
+        }
 
         const newBlock = {
             type: blockType.id,
@@ -215,11 +283,18 @@ class EditorScene extends Phaser.Scene {
     
     updateGridVisual(x, y) {
         const visualObject = this.gridObjects[y][x];
-        const dynamicBlock = this.findDynamicBlockAt(x, y);
+        const dynamicBlocksOnTile = this.findDynamicBlocksAt(x, y);
         
-        if (dynamicBlock) {
-            const blockType = DYNAMIC_BLOCK_TYPES[dynamicBlock.type];
-            visualObject.setText(blockType.getDisplayChar(dynamicBlock.parameters));
+        if (dynamicBlocksOnTile.length > 0) {
+            // Find the block with the highest render priority
+            let topBlock = dynamicBlocksOnTile.reduce((prev, current) => {
+                const prevPrio = DYNAMIC_BLOCK_TYPES[prev.type].renderPriority || 0;
+                const currPrio = DYNAMIC_BLOCK_TYPES[current.type].renderPriority || 0;
+                return (prevPrio > currPrio) ? prev : current;
+            });
+            
+            const blockType = DYNAMIC_BLOCK_TYPES[topBlock.type];
+            visualObject.setText(blockType.getDisplayChar(topBlock.parameters));
             visualObject.setColor(blockType.color);
         } else {
             const staticBlockId = this.gridData[y][x];
@@ -229,16 +304,15 @@ class EditorScene extends Phaser.Scene {
         }
     }
 
-    findDynamicBlockAt(x, y) {
-        return this.dynamicBlocks.find(b => b.position[0] === x && b.position[1] === y);
+    findDynamicBlocksAt(x, y) {
+        return this.dynamicBlocks.filter(b => b.position[0] === x && b.position[1] === y);
     }
 
     clearTile(x, y) {
+        // Remove from static grid data
         this.gridData[y][x] = null;
-        const index = this.dynamicBlocks.findIndex(b => b.position[0] === x && b.position[1] === y);
-        if (index > -1) {
-            this.dynamicBlocks.splice(index, 1);
-        }
+        // Remove all dynamic blocks at this position
+        this.dynamicBlocks = this.dynamicBlocks.filter(b => b.position[0] !== x || b.position[1] !== y);
         this.updateGridVisual(x, y);
     }
 
@@ -338,15 +412,20 @@ class EditorScene extends Phaser.Scene {
         }
     }
 
+    // This function is now more generic.
     showParameterEditor(block, pointer) {
-        this.closeParameterEditor();
+        this.closeParameterEditor(); 
 
         const blockType = DYNAMIC_BLOCK_TYPES[block.type];
-        if (!blockType) return;
+        if (!blockType || !blockType.parameters) return;
 
         this.parameterEditor = this.add.group();
 
-        const options = blockType.parameters.direction.options;
+        // Assume one parameter for now, but this could be looped
+        const paramKey = Object.keys(blockType.parameters)[0];
+        const paramConfig = blockType.parameters[paramKey];
+
+        const options = paramConfig.options;
         const startX = pointer.x + 10;
         const startY = pointer.y + 10;
         const boxWidth = 150;
@@ -361,12 +440,13 @@ class EditorScene extends Phaser.Scene {
             const optionText = this.add.text(startX + 10, currentY, `Set: ${option}`, { fontSize: '16px' })
                 .setInteractive({ useHandCursor: true });
             
-            if (block.parameters.direction === option) {
+            if (block.parameters[paramKey] === option) {
                 optionText.setColor('#ffff00');
             }
 
-            optionText.on('pointerdown', (pointer) => {
-                block.parameters.direction = option;
+            optionText.on('pointerdown', () => {
+                // Use the generic paramKey to set the parameter
+                block.parameters[paramKey] = option;
                 this.updateGridVisual(block.position[0], block.position[1]);
                 this.closeParameterEditor();
             });
@@ -375,6 +455,7 @@ class EditorScene extends Phaser.Scene {
             currentY += 30;
         });
     }
+
 }
 
 
