@@ -49,6 +49,8 @@ class GameScene extends Phaser.Scene {
         this.resetTimerTicksRemaining = -1;
 
         // UI
+        this.tickMessages = [];
+        this.statusLog = null; // Will be the proxy object
         this.ticks = 0;
         this.tickText = null;
         this.rainGroup = null;
@@ -102,6 +104,7 @@ class GameScene extends Phaser.Scene {
         this.createDigitalRain();
         this.setupInput();
         this.createUIPanel();
+        this.renderStatusLog();
         this.hoverHighlight = this.add.rectangle(0, 0, TILE_SIZE, TILE_SIZE, 0xffffff, 0.2).setOrigin(0).setVisible(false).setDepth(20);
         this.costTooltip = this.add.text(0, 0, '', {
             fontFamily: 'Courier',
@@ -116,6 +119,26 @@ class GameScene extends Phaser.Scene {
         this.updateBufferUI();
         this.updateQueueUI();
         this.time.delayedCall(250, this.checkForUnlocks, [], this);
+    }
+
+    renderStatusLog() {
+        const statusDiv = document.getElementById('status-display');
+        if (!statusDiv) return;
+
+        let html = '';
+        if (this.tickMessages.length === 0) {
+            if (this.gameState === 'EXECUTING') {
+                html = `> EXECUTION MODE. Move to process queue (${this.executionQueue.length} left).`;
+            } else if (this.gameState === 'TARGETING') {
+                const cmd = COMMAND_TYPES[this.currentTargetingCommand.id];
+                html = `> TARGETING: ${cmd.description}`;
+            } else {
+                html = '> Awaiting input...';
+            }
+        } else {
+            html = this.tickMessages.map(msg => `<div>${msg}</div>`).join('');
+        }
+        statusDiv.innerHTML = html;
     }
 
     checkForUnlocks() {
@@ -279,7 +302,7 @@ class GameScene extends Phaser.Scene {
     playerCaught() {
         if (this.gameState === 'PAUSED' || this.gameState === 'FINISHED') return;
         this.setGameState('PAUSED');
-        this.statusText.setText('> SECURITY ALERT. OPERATOR COMPROMISED.');
+        this.statusLog.addMessage('> SECURITY ALERT. OPERATOR COMPROMISED.');
         this.cameras.main.flash(500, 255, 0, 0); // Flash red
         
         this.tweens.add({
@@ -473,9 +496,9 @@ class GameScene extends Phaser.Scene {
         // --- MODIFIED: Handle no-target commands without options ---
         if (commandType.targetCount === 0) {
             if (commandType.cost > (this.bufferSize - this.currentBufferUsed)) {
-                 this.statusText.setText(`> INSUFFICIENT BUFFER (Cost: ${commandType.cost})`);
+                 this.statusLog.addMessage(`> INSUFFICIENT BUFFER (Cost: ${commandType.cost})`); // MODIFIED
                  this.time.delayedCall(2000, () => {
-                    if (this.gameState === 'MOVEMENT') this.statusText.setText('> Awaiting input...');
+                    if (this.gameState === 'MOVEMENT') this.statusLog.addMessage('> Awaiting input...');
                  });
                  return;
             }
@@ -493,16 +516,16 @@ class GameScene extends Phaser.Scene {
             this.currentBufferUsed += newCommand.finalCost;
             this.updateQueueUI();
             this.updateBufferUI();
-            this.statusText.setText(`> ${commandType.name} added to queue.`);
+            this.statusLog.addMessage(`> ${commandType.name} added to queue.`); // MODIFIED
             return;
         }
         
         // --- Original targeting logic for other commands ---
         const minPossibleCost = commandType.cost;
         if (minPossibleCost > (this.bufferSize - this.currentBufferUsed)) {
-            this.statusText.setText(`> INSUFFICIENT BUFFER (Min Cost: ${minPossibleCost})`);
+            this.statusLog.addMessage(`> INSUFFICIENT BUFFER (Min Cost: ${minPossibleCost})`); // MODIFIED
             this.time.delayedCall(2000, () => {
-                if (this.gameState === 'MOVEMENT') this.statusText.setText('> Awaiting input...');
+                if (this.gameState === 'MOVEMENT') this.statusLog.addMessage('> Awaiting input...');
             });
             return;
         }
@@ -517,7 +540,7 @@ class GameScene extends Phaser.Scene {
             system_reset: commandType.system_reset
             // wait_duration is no longer needed here as it's handled by the modal
         };
-        this.statusText.setText(`> TARGETING: ${commandType.description}`);
+        this.statusLog.addMessage(`> TARGETING: ${commandType.description}`);
     }
 
     // --- NEW: Modal for selecting WAIT duration ---
@@ -582,7 +605,7 @@ class GameScene extends Phaser.Scene {
                 this.currentBufferUsed += newCommand.finalCost;
                 this.updateQueueUI();
                 this.updateBufferUI();
-                this.statusText.setText(`> ${newCommand.name} added to queue.`);
+                this.statusLog.addMessage(`> ${newCommand.name} added to queue.`);
                 
                 dismiss();
             });
@@ -627,9 +650,9 @@ class GameScene extends Phaser.Scene {
         const remainingBuffer = this.bufferSize - this.currentBufferUsed;
         const alreadyAccumulatedCost = this.currentTargetingCommand.finalCost;
         if ((alreadyAccumulatedCost + costOfThisClick) > remainingBuffer) {
-            this.statusText.setText(`> CANNOT AFFORD TARGET (Total Cost: ${alreadyAccumulatedCost + costOfThisClick})`);
+            this.statusLog.addMessage(`> CANNOT AFFORD TARGET (Total Cost: ${alreadyAccumulatedCost + costOfThisClick})`); // MODIFIED
             this.costTooltip.setVisible(false);
-            this.time.delayedCall(2000, () => this.statusText.setText(`> TARGETING: ${commandType.description}`));
+            this.time.delayedCall(2000, () => this.statusLog.addMessage(`> TARGETING: ${commandType.description}`));
             return;
         }
         
@@ -685,7 +708,7 @@ class GameScene extends Phaser.Scene {
         this.targetHighlights = [];
         this.hoverHighlight.setVisible(false);
         this.costTooltip.setVisible(false);
-        this.statusText.setText('> Awaiting input...');
+        this.statusLog.addMessage('> Awaiting input...');
         this.setGameState('MOVEMENT');
     }
 
@@ -700,18 +723,17 @@ class GameScene extends Phaser.Scene {
             this.updateQueueUI();
             this.updateBufferUI();
             this.setGameState(this.gameState);
-            this.statusText.setText('> Last command removed from queue.');
+            this.statusLog.addMessage('> Last command removed from queue.'); // MODIFIED
         }
     }
 
     initiateExecutionMode() {
         if (this.executionQueue.length === 0) {
-            this.statusText.setText('> Queue is empty. Nothing to execute.');
-            this.time.delayedCall(1500, () => this.statusText.setText('> Awaiting input...'));
+            this.statusLog.addMessage('> Queue is empty. Nothing to execute.'); // MODIFIED
             return;
         }
         this.setGameState('EXECUTING');
-        this.statusText.setText(`> EXECUTION MODE. Move to process queue (${this.executionQueue.length} left).`);
+        //this.statusLog.addMessage(`> EXECUTION MODE. Move to process queue (${this.executionQueue.length} left).`);
     }
 
     updateFutureCommandSnapshots(x, y) {
@@ -753,7 +775,7 @@ class GameScene extends Phaser.Scene {
             if (lastTarget) {
                 this.showExecutionEffect(lastTarget.x, lastTarget.y, false);
             }
-            this.statusText.setText(`> CMD ${command.name} FAILED: Target state changed.`);
+            this.statusLog.addMessage(`> CMD ${command.name} FAILED: Target state changed.`); // MODIFIED
             
             this.spentCommands.push(this.currentExecutingCommand);
             this.currentExecutingCommand = null;
@@ -762,7 +784,7 @@ class GameScene extends Phaser.Scene {
             
             if (this.executionQueue.length === 0 && this.waitTicksRemaining <= 0) {
                  this.setGameState('MOVEMENT');
-                 this.statusText.setText('> Execution complete. Awaiting input.');
+                 this.statusLog.addMessage('> Execution complete. Awaiting input.');
             }
             return;
         }
@@ -777,7 +799,7 @@ class GameScene extends Phaser.Scene {
                 break;
             case 'wait':
                 this.waitTicksRemaining = command.wait_duration - 1;
-                this.statusText.setText(`> WAITING... ${command.wait_duration} ticks remaining.`);
+                this.statusLog.addMessage(`> WAITING... ${command.wait_duration} ticks remaining.`); // MODIFIED
                 success = true;
                 break;
         }
@@ -803,7 +825,7 @@ class GameScene extends Phaser.Scene {
 
         if (command.system_reset && this.levelResetTimerDuration > 0 && this.resetTimerTicksRemaining <= 0) {
             this.resetTimerTicksRemaining = this.levelResetTimerDuration;
-            this.statusText.setText(`> SYSTEM INSTABILITY. RESET IN ${this.resetTimerTicksRemaining} TICKS.`);
+            this.statusLog.addMessage(`> SYSTEM INSTABILITY. RESET IN ${this.resetTimerTicksRemaining} TICKS.`);
         }
 
         this.spentCommands.push(this.currentExecutingCommand);
@@ -813,9 +835,9 @@ class GameScene extends Phaser.Scene {
         
         if (this.executionQueue.length === 0 && this.waitTicksRemaining <= 0) {
             this.setGameState('MOVEMENT');
-            this.statusText.setText('> Execution complete. Awaiting input.');
+            this.statusLog.addMessage('> Execution complete. Awaiting input.');
         } else if (this.resetTimerTicksRemaining <= 0 && this.waitTicksRemaining <= 0) {
-             this.statusText.setText(`> EXECUTION MODE. Move to process queue (${this.executionQueue.length} left).`);
+             this.statusLog.addMessage(`> EXECUTION MODE. Move to process queue (${this.executionQueue.length} left).`);
         }
     }
 
@@ -955,6 +977,8 @@ class GameScene extends Phaser.Scene {
             return;
         }
 
+        this.tickMessages = [];
+
         // 9. Proceed with the rest of the tick's logic.
         this.ticks++;
         this.updateTickCounter();
@@ -971,14 +995,14 @@ class GameScene extends Phaser.Scene {
                 this.resetLevel(false); 
                 return;
             } else {
-                this.statusText.setText(`> SYSTEM INSTABILITY. RESET IN ${this.resetTimerTicksRemaining} TICKS.`);
+                this.statusLog.addMessage(`> SYSTEM INSTABILITY. RESET IN ${this.resetTimerTicksRemaining} TICKS.`); // MODIFIED
             }
         }
         
         if (this.gameState === 'EXECUTING') {
             if (this.waitTicksRemaining > 0) {
                 this.waitTicksRemaining--;
-                this.statusText.setText(`> WAITING... ${this.waitTicksRemaining + 1} ticks remaining.`);
+                this.statusLog.addMessage(`> WAITING... ${this.waitTicksRemaining + 1} ticks remaining.`); // MODIFIED
             } else {
                 this.processNextCommandInQueue();
             }
@@ -987,16 +1011,18 @@ class GameScene extends Phaser.Scene {
         if (currentTileId === 'execution_point' && this.gameState === 'MOVEMENT') {
             this.initiateExecutionMode();
         }
+
+        this.renderStatusLog();
     }
 
 // This is the complete function to be placed inside the GameScene class in game.js
 
     resetLevel(fullReset = false) {
         if (fullReset) {
-            this.statusText.setText('> SECURITY ALERT. OPERATOR COMPROMISED. SYSTEM RESTARTING...');
+            this.statusLog.addMessage('> SECURITY ALERT. OPERATOR COMPROMISED. SYSTEM RESTARTING...'); // MODIFIED
             this.setGameState('PAUSED');
         } else {
-             this.statusText.setText('> KERNEL PANIC. SYSTEM RESETTING...');
+             this.statusLog.addMessage('> KERNEL PANIC. SYSTEM RESETTING...'); // MODIFIED
              this.setGameState('PAUSED');
         }
 
@@ -1036,7 +1062,7 @@ class GameScene extends Phaser.Scene {
                 const playerTile = this.levelLayout[this.playerGridPos.y][this.playerGridPos.x];
                 if (playerTile === 'data') {
                     console.log("Player landed on Data node after soft reset. Player wins.");
-                    this.statusText.setText('> UNEXPECTED DATA ACQUISITION. CONNECTION TERMINATING...');
+                    this.statusLog.addMessage('> UNEXPECTED DATA ACQUISITION. CONNECTION TERMINATING...');
                     this.levelComplete();
                     return; 
                 }
@@ -1055,7 +1081,7 @@ class GameScene extends Phaser.Scene {
 
                 if (isPlayerInInvalidSpot) {
                     console.log("Player stranded in invalid position after soft reset. Triggering hard reset.");
-                    this.statusText.setText('> FATAL ERROR: Operator crushed during system reconstitution.');
+                    this.statusLog.addMessage('> FATAL ERROR: Operator crushed during system reconstitution.');
                     this.playerCaught();
                     return;
                 }
@@ -1070,7 +1096,7 @@ class GameScene extends Phaser.Scene {
             this.cameras.main.fadeIn(1000, 0, 0, 0, (camera, progress) => {
                 if (progress === 1) {
                     this.clearScanlineWipe();
-                    this.statusText.setText('> Awaiting input...');
+                    this.statusLog.addMessage('> Awaiting input...');
                     this.setGameState('MOVEMENT');
                 }
             });
@@ -1172,10 +1198,13 @@ class GameScene extends Phaser.Scene {
             e.preventDefault();
             this.resetLevel(true);
         });
-        const statusDiv = document.getElementById('status-display');
-        this.statusText = {
-            setText: (text) => {
-                statusDiv.innerHTML = text;
+
+        this.statusLog = {
+            addMessage: (text) => {
+                // For instantaneous actions, we clear the previous non-tick messages,
+                // add the new one, and render immediately.
+                this.tickMessages.push(text);
+                this.renderStatusLog();
             }
         };
     }
