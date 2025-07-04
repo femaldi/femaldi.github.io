@@ -61,7 +61,7 @@ const DYNAMIC_BLOCK_TYPES = {
         char: 'S',          // Base character for the palette
         color: '#e040fb',   // A distinct purple/magenta color
         renderPriority: 10,
-        command_multiplier: 3,
+        command_multiplier: 6,
         isMobile: true,
         // Defines the parameters this block type can have
         parameters: {

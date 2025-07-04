@@ -1,0 +1,855 @@
+{
+  "width": 24,
+  "height": 24,
+  "reset_timer": 36,
+  "buffer_size": 15,
+  "tiles": [
+    [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    [
+      null,
+      "hard_wall",
+      "hard_wall",
+      "hard_wall",
+      null,
+      null,
+      null,
+      "hard_wall",
+      "hard_wall",
+      "hard_wall",
+      "hard_wall",
+      "hard_wall",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    [
+      null,
+      "hard_wall",
+      "player",
+      "hard_wall",
+      null,
+      null,
+      null,
+      "hard_wall",
+      null,
+      null,
+      null,
+      "hard_wall",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    [
+      null,
+      "hard_wall",
+      null,
+      "hard_wall",
+      null,
+      null,
+      null,
+      "hard_wall",
+      null,
+      "hard_wall",
+      null,
+      "hard_wall",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    [
+      null,
+      "hard_wall",
+      "execution_point",
+      "hard_wall",
+      null,
+      null,
+      null,
+      "hard_wall",
+      null,
+      "hard_wall",
+      null,
+      "hard_wall",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    [
+      null,
+      "hard_wall",
+      null,
+      "hard_wall",
+      "hard_wall",
+      "hard_wall",
+      "hard_wall",
+      "hard_wall",
+      null,
+      "hard_wall",
+      null,
+      "hard_wall",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    [
+      null,
+      "hard_wall",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      "hard_wall",
+      null,
+      "hard_wall",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    [
+      null,
+      "hard_wall",
+      "hard_wall",
+      "hard_wall",
+      "hard_wall",
+      "hard_wall",
+      "hard_wall",
+      "hard_wall",
+      "hard_wall",
+      "hard_wall",
+      null,
+      "hard_wall",
+      "hard_wall",
+      "hard_wall",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      "hard_wall",
+      null,
+      null,
+      null,
+      "hard_wall",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      "hard_wall",
+      "data",
+      "hard_wall",
+      "hard_wall",
+      "hard_wall",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      "hard_wall",
+      "hard_wall",
+      "hard_wall",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  ],
+  "network_node": "CC.BC.7",
+  "dynamic_blocks": [
+    {
+      "type": "arrow",
+      "position": [
+        4,
+        11
+      ],
+      "parameters": {
+        "direction": "right"
+      }
+    },
+    {
+      "type": "arrow",
+      "position": [
+        7,
+        11
+      ],
+      "parameters": {
+        "direction": "right"
+      }
+    },
+    {
+      "type": "arrow",
+      "position": [
+        3,
+        11
+      ],
+      "parameters": {
+        "direction": "right"
+      }
+    },
+    {
+      "type": "arrow",
+      "position": [
+        5,
+        11
+      ],
+      "parameters": {
+        "direction": "right"
+      }
+    },
+    {
+      "type": "arrow",
+      "position": [
+        6,
+        11
+      ],
+      "parameters": {
+        "direction": "right"
+      }
+    },
+    {
+      "type": "arrow",
+      "position": [
+        8,
+        11
+      ],
+      "parameters": {
+        "direction": "up"
+      }
+    },
+    {
+      "type": "arrow",
+      "position": [
+        10,
+        12
+      ],
+      "parameters": {
+        "direction": "down"
+      }
+    },
+    {
+      "type": "arrow",
+      "position": [
+        8,
+        10
+      ],
+      "parameters": {
+        "direction": "up"
+      }
+    },
+    {
+      "type": "arrow",
+      "position": [
+        8,
+        9
+      ],
+      "parameters": {
+        "direction": "up"
+      }
+    },
+    {
+      "type": "arrow",
+      "position": [
+        10,
+        10
+      ],
+      "parameters": {
+        "direction": "down"
+      }
+    },
+    {
+      "type": "arrow",
+      "position": [
+        8,
+        8
+      ],
+      "parameters": {
+        "direction": "up"
+      }
+    },
+    {
+      "type": "arrow",
+      "position": [
+        8,
+        7
+      ],
+      "parameters": {
+        "direction": "right"
+      }
+    },
+    {
+      "type": "arrow",
+      "position": [
+        9,
+        7
+      ],
+      "parameters": {
+        "direction": "right"
+      }
+    },
+    {
+      "type": "arrow",
+      "position": [
+        10,
+        7
+      ],
+      "parameters": {
+        "direction": "down"
+      }
+    },
+    {
+      "type": "arrow",
+      "position": [
+        10,
+        8
+      ],
+      "parameters": {
+        "direction": "down"
+      }
+    },
+    {
+      "type": "arrow",
+      "position": [
+        10,
+        9
+      ],
+      "parameters": {
+        "direction": "down"
+      }
+    },
+    {
+      "type": "arrow",
+      "position": [
+        10,
+        11
+      ],
+      "parameters": {
+        "direction": "down"
+      }
+    },
+    {
+      "type": "arrow",
+      "position": [
+        11,
+        13
+      ],
+      "parameters": {
+        "direction": "right"
+      }
+    },
+    {
+      "type": "arrow",
+      "position": [
+        10,
+        13
+      ],
+      "parameters": {
+        "direction": "right"
+      }
+    },
+    {
+      "type": "sentinel",
+      "position": [
+        2,
+        11
+      ],
+      "parameters": {
+        "direction": "vertical"
+      }
+    },
+    {
+      "type": "arrow",
+      "position": [
+        2,
+        8
+      ],
+      "parameters": {
+        "direction": "down"
+      }
+    },
+    {
+      "type": "arrow",
+      "position": [
+        2,
+        11
+      ],
+      "parameters": {
+        "direction": "up"
+      }
+    }
+  ]
+}
