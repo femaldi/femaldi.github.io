@@ -302,7 +302,7 @@ class GameScene extends Phaser.Scene {
     playerCaught() {
         if (this.gameState === 'PAUSED' || this.gameState === 'FINISHED') return;
         this.setGameState('PAUSED');
-        this.statusLog.addMessage('> SECURITY ALERT. OPERATOR COMPROMISED.');
+        //this.statusLog.addMessage('> SECURITY ALERT. OPERATOR COMPROMISED.');
         this.cameras.main.flash(500, 255, 0, 0); // Flash red
         
         this.tweens.add({
