@@ -1,11 +1,12 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Digital Operator</title>
+    <title>Digital Vibes</title>
     <script src="//cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser.min.js"></script>
     <style>
         body {
             display: flex;
+            flex-direction: column;
             justify-content: center;
             align-items: center;
             height: 100vh;
@@ -13,12 +14,22 @@
             background-color: #000;
             font-family: "Courier New", Courier, monospace;
         }
+
+        #app-container {
+            display: flex;
+            flex-direction: column;
+            border: 1px solid #00ff00;
+        }
+
         #main-container {
             display: flex;
             flex-direction: row;
-            border: 1px solid #00ff00;
         }
-        #game-container { }
+
+        #game-container { 
+            position: relative;
+        }
+
         #ui-panel {
             width: 250px;
             background-color: #001a00;
@@ -26,39 +37,36 @@
             color: #00ff00;
             display: flex;
             flex-direction: column;
-            /* --- NEW: Prevent the panel itself from growing --- */
-            height: 768px; /* Same as the game grid height */
-            box-sizing: border-box; /* Ensures padding is included in height */
+            height: 768px;
+            box-sizing: border-box;
         }
+
         #ui-panel h3 {
             margin-top: 15px;
             margin-bottom: 10px;
             border-bottom: 1px solid #00ff00;
             padding-bottom: 5px;
-            /* --- NEW: Prevent headers from shrinking --- */
             flex-shrink: 0;
         }
+
         .ui-section {
             padding-left: 10px;
         }
-        
-        /* --- NEW: Give fixed-size sections no shrink/grow ability --- */
+
         #command-list, #buffer-display {
             flex-shrink: 0;
         }
 
-        /* --- NEW: The sections that should scroll --- */
         #queue-list, #status-display {
-            overflow-y: auto; /* Add a scrollbar only when needed */
-            min-height: 40px; /* Give them a minimum size */
-            flex-shrink: 1; /* Allow them to shrink if needed */
-            padding-right: 5px; /* Space for the scrollbar */
-            border-bottom: 1px solid #004d00; /* Separator line */
+            overflow-y: auto;
+            min-height: 40px;
+            flex-shrink: 1;
+            padding-right: 5px;
+            border-bottom: 1px solid #004d00;
             padding-bottom: 10px;
             margin-bottom: 10px;
         }
 
-        /* --- NEW: Custom scrollbar styling to match the theme --- */
         #queue-list::-webkit-scrollbar, #status-display::-webkit-scrollbar {
           width: 8px;
         }
@@ -69,21 +77,25 @@
           background-color: #008800;
           border: 1px solid #00ff00;
         }
+
         .command-button {
             display: block; color: #00ff00; text-decoration: none;
             text-align: center; border: 1px solid #00ff00;
             padding: 8px; margin-bottom: 10px; background-color: #002a00;
             transition: background-color 0.2s, color 0.2s;
         }
+
         .command-button:hover {
             background-color: #004d00; color: #99ff99; cursor: pointer;
         }
+
         #buffer-bar {
             display: flex;
             flex-wrap: nowrap;
             margin-top: 5px;
             width: 100%;
         }
+
         .buffer-slot {
             border: 1px solid #008800;
             margin-right: 4px;
@@ -96,30 +108,35 @@
             justify-content: center;
             align-items: center;
         }
+
         .buffer-slot:last-child {
             margin-right: 0;
         }
+
         .buffer-slot.filled {
             background-color: #00ff00;
             color: #001a00;
             border-color: #00ff00;
         }
+
         .buffer-slot.executing {
             background-color: #008800;
             color: #99ff99;
             border-color: #00ff00;
         }
-        /* --- NEW STYLE FOR SPENT SLOTS --- */
+        
         .buffer-slot.spent {
-            background-color: #333; /* Dark grey background */
-            color: #888; /* Dim text color */
-            border-color: #555; /* Dim border color */
+            background-color: #333;
+            color: #888;
+            border-color: #555;
         }
+
         .queue-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
         }
+
         #undo-button {
             font-size: 12px;
             color: #ffdd00;
@@ -128,19 +145,22 @@
             padding: 2px 5px;
             transition: background-color 0.2s, color 0.2s;
         }
+
         #undo-button:hover {
             background-color: #332d00;
             cursor: pointer;
         }
+
         #undo-button.disabled {
             color: #555;
             border-color: #555;
             background-color: transparent;
             cursor: not-allowed;
         }
+
         #reset-button {
             font-size: 12px;
-            color: #ff4444; /* Red for reset */
+            color: #ff4444;
             text-decoration: none;
             border: 1px solid #ff4444;
             padding: 2px 5px;
@@ -148,10 +168,12 @@
             display: block;
             text-align: center;
         }
+
         #reset-button:hover {
             background-color: #330000;
             cursor: pointer;
         }
+
         #tutorial-button {
             font-size: 12px;
             color: #44ff44;
@@ -163,19 +185,49 @@
             margin-top: 5px;
             text-align: center;
         }
+
         #tutorial-button:hover {
             background-color: #330000;
             cursor: pointer;
         }
 
-        /* --- NEW MODAL STYLES for Command Unlock --- */
+        #back-to-start-button {
+            font-size: 12px;
+            color: #ffdd00;
+            text-decoration: none;
+            border: 1px solid #ffdd00;
+            padding: 2px 5px;
+            transition: background-color 0.2s, color 0.2s;
+            display: block;
+            text-align: center;
+            margin-bottom: 5px; /* Add space below it */
+        }
+
+        #back-to-start-button:hover {
+            background-color: #332d00;
+            cursor: pointer;
+        }
+
+        #game-hud {
+            padding: 8px 10px;
+            color: #00ff00;
+            background-color: #001a00;
+            border-top: 1px solid #00ff00;
+            text-align: center;
+            font-size: 14px;
+        }
+
+        .targeting-cursor {
+            cursor: crosshair;
+        }
+
         .modal-overlay {
             position: absolute;
             top: 0;
             left: 0;
             width: 100%;
             height: 100%;
-            background-color: rgba(0, 26, 0, 0.85); /* Darker green overlay */
+            background-color: rgba(0, 26, 0, 0.85);
             z-index: 999;
             display: flex;
             justify-content: center;
@@ -221,7 +273,7 @@
             color: #fff;
             font-size: 14px;
             margin-top: 5px;
-            display: block; /* Ensure it takes its own line */
+            display: block;
         }
 
         .unlock-modal li .cmd-cost {
@@ -229,7 +281,7 @@
             font-size: 12px;
             margin-top: 8px;
             text-align: right;
-            display: block; /* Ensure it takes its own line */
+            display: block;
         }
 
         .unlock-modal .modal-button {
@@ -273,15 +325,7 @@
             color: #888;
         }
 
-        #game-hud {
-            padding: 8px 10px;
-            color: #00ff00;
-            background-color: #001a00;
-            border-top: 1px solid #00ff00;
-            text-align: center;
-            font-size: 14px;
-        }
-
+        /* --- STYLES FOR THE NEW START SCREEN --- */
         #start-screen-container {
             position: absolute;
             top: 0; left: 0;
@@ -290,81 +334,173 @@
             flex-direction: column;
             justify-content: center;
             align-items: center;
-            background-color: #000;
             color: #00ff00;
-            z-index: 2000; /* Ensure it's on top */
+            z-index: 2000;
+            padding: 40px;
+            box-sizing: border-box;
+            overflow-y: auto;
         }
-        #start-screen-container h1 {
+
+        #level-select-panel {
+            width: 100%;
+            max-width: 700px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+        }
+        
+        #level-select-panel .main-title {
             font-size: 48px;
             letter-spacing: 8px;
-            margin-bottom: 50px;
+            margin: 0 0 10px 0;
             text-shadow: 0 0 10px #00ff00;
         }
-        .form-group {
-            margin-bottom: 30px;
-            text-align: center;
-        }
-        .form-group label {
-            display: block;
-            margin-bottom: 10px;
-            font-size: 16px;
-        }
-        .form-group input {
-            width: 250px;
-            padding: 8px;
-            background-color: #001a00;
-            border: 1px solid #00ff00;
+        #level-select-panel .sub-title {
+            margin-bottom: 20px;
+            font-size: 20px;
             color: #00ff00;
-            text-align: center;
-            font-family: "Courier New", Courier, monospace;
-            font-size: 18px;
         }
+        
+        #level-grid {
+            display: grid;
+            grid-template-columns: repeat(8, 1fr);
+            gap: 10px;
+            width: 100%;
+            max-width: 450px; /* MODIFIED */
+        }
+
+        .level-button {
+            width: 100%;
+            aspect-ratio: 1 / 1;
+            background-color: #111;
+            border: 1px solid #005500;
+            color: #008800;
+            cursor: pointer;
+            font-family: "Courier New", Courier, monospace;
+            font-size: 20px;
+            font-weight: bold;
+            transition: all 0.2s;
+        }
+
+        .level-button.disabled {
+            background-color: #080808;
+            border-color: #222;
+            color: #333;
+            cursor: not-allowed;
+        }
+
+        .level-button:not(.disabled):hover {
+            background-color: #222;
+            border-color: #00ff00;
+        }
+        .level-button.completed {
+            background-color: #002a00;
+            color: #00ff00;
+            border-color: #00ff00;
+        }
+        .level-button.selected {
+            background-color: #00ff00;
+            color: #000;
+            box-shadow: 0 0 15px #00ff00;
+        }
+        
+        #details-panel {
+            width: 100%; /* MODIFIED */
+            max-width: 450px; /* MODIFIED */
+            padding: 20px;
+            border: 1px solid #008800;
+            margin-top: 30px;
+            transition: opacity 0.3s;
+            box-sizing: border-box; /* ADDED */
+        }
+        #details-panel hr {
+            border: none;
+            border-top: 1px solid #008800;
+        }
+        .detail-item {
+            font-size: 16px;
+            margin-bottom: 12px;
+        }
+        .detail-item span {
+            color: #fff;
+        }
+
         #start-button {
+            margin-top: 30px;
             padding: 12px 30px;
             font-size: 18px;
             background-color: transparent;
-            color: #00ff00;
-            border: 2px solid #00ff00;
-            cursor: pointer;
-            transition: background-color 0.2s, color 0.2s;
+            color: #008800;
+            border: 2px solid #008800;
+            cursor: not-allowed;
+            transition: all 0.2s;
+            width: 100%; /* MODIFIED */
+            max-width: 450px; /* MODIFIED */
+            box-sizing: border-box; /* ADDED */
         }
-        #start-button:hover {
+        #start-button:not(.disabled) {
+            color: #00ff00;
+            border-color: #00ff00;
+            cursor: pointer;
+        }
+        #start-button:not(.disabled):hover {
             background-color: #00ff00;
             color: #000;
         }
-        #error-message {
-            margin-top: 30px;
-            color: #ff0000;
-            transition: opacity 0.3s;
-        }
-        .hidden {
-            opacity: 0;
+
+        #start-screen-tutorial-link {
+            margin-top: 25px;
+            color: #ffff00;
+            text-decoration: none;
+            border: 1px solid #ffff00;
+            padding: 8px 15px;
+            font-size: 14px;
+            transition: background-color 0.2s;
+            display: block; /* ADDED */
+            width: 100%; /* ADDED */
+            max-width: 450px; /* ADDED */
+            box-sizing: border-box; /* ADDED */
+            text-align: center; /* ADDED */
         }
 
-        .targeting-cursor {
-            cursor: crosshair;
+        #start-screen-tutorial-link:hover {
+            background-color: #332d00;
         }
     </style>
 </head>
 <body>
     <div id="app-container">
-        <div id="main-container">
-            <div id="game-container"></div>
-            <div id="ui-panel"></div>
-        </div>
-        <!-- New dedicated footer element -->
-        <div id="game-hud">OPERATOR v1.0 | NETWORK_NODE: ... | TICKS: 0</div>
+        <!-- Phaser and UI will be built here -->
     </div>
   
     <script src="block-config.js"></script>
-    <script src="command-config.js"></script> 
+    <script src="command-config.js"></script>
+    <script src="persistence.js"></script>
     <script src="start-screen.js"></script>
     <script src="game.js"></script>
 
+    <!-- This final script block configures and starts Phaser -->
     <script>
         const TILE_SIZE = 32;
         const GRID_WIDTH = 24;
         const GRID_HEIGHT = 24;
+        const appContainer = document.getElementById('app-container');
+        appContainer.style.display = 'none';
+
+        const mainGameContainer = document.createElement('div');
+        mainGameContainer.id = 'main-container';
+        const gameContainer = document.createElement('div');
+        gameContainer.id = 'game-container';
+        const uiPanel = document.createElement('div');
+        uiPanel.id = 'ui-panel';
+        const hud = document.createElement('div');
+        hud.id = 'game-hud';
+
+        mainGameContainer.appendChild(gameContainer);
+        mainGameContainer.appendChild(uiPanel);
+        appContainer.appendChild(mainGameContainer);
+        appContainer.appendChild(hud);
         
         const config = {
             type: Phaser.AUTO,
@@ -372,7 +508,6 @@
             height: TILE_SIZE * GRID_HEIGHT,
             parent: 'game-container',
             backgroundColor: '#001a00',
-            // --- NEW: Add both scenes and set the starting scene ---
             scene: [StartScreenScene, GameScene]
         };
 

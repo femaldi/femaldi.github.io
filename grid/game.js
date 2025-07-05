@@ -1150,8 +1150,12 @@ class GameScene extends Phaser.Scene {
 
     createUIPanel() {
         this.uiPanel = document.getElementById('ui-panel');
-        let html = `<h3>INDEX</h3><div class="ui-section"><a href="#" id="reset-button">[RESTART LEVEL]</a></div>`;
-        html += `<div class="ui-section"><a id="tutorial-button" target="_blank" href="tutorial.html">[OPERATOR MANUAL]</a></div>`;
+        let html = `<h3>INDEX</h3><div class="ui-section">
+                        <a href="#" id="back-to-start-button">[ BACK TO LEVEL SELECT ]</a>
+                        <a href="#" id="reset-button">[ RESTART LEVEL ]</a>
+                        <a href="#" id="tutorial-button">[ OPERATOR MANUAL ]</a>
+                    </div>`;
+
         html += `<h3>COMMANDS</h3><div id="command-list" class="ui-section">`;
         
         for (const key in COMMAND_TYPES) {
@@ -1197,6 +1201,13 @@ class GameScene extends Phaser.Scene {
         document.getElementById('reset-button').addEventListener('click', (e) => {
             e.preventDefault();
             this.resetLevel(true);
+        });
+
+        // --- ADDED event listener for the new button ---
+        document.getElementById('back-to-start-button').addEventListener('click', (e) => {
+            e.preventDefault();
+            document.getElementById('app-container').style.display = 'none';
+            this.scene.start('StartScreenScene');
         });
 
         this.statusLog = {
@@ -1498,6 +1509,9 @@ class GameScene extends Phaser.Scene {
     }
 
     levelComplete() {
+        // Save completion status and time before proceeding.
+        Progress.saveLevelCompletion(this.currentLevel, this.ticks);
+
         // --- NEW: Clean up sentinels on win ---
         this.sentinels.forEach(s => s.sprite.destroy());
         this.sentinels = [];
@@ -1522,13 +1536,15 @@ class GameScene extends Phaser.Scene {
     }
 
     handleNoMoreLevels() {
-        this.add.text(this.game.config.width / 2, this.game.config.height / 2, 'YOU HAVE INFILTRATED THE SYSTEM.\n\n-- CONNECTION TERMINATED --', { ...FONT_STYLE,
-            fontSize: '24px',
-            align: 'center',
-            lineSpacing: 15
-        }).setOrigin(0.5);
+        // This function can now transition back to the start screen.
+        this.add.text(this.game.config.width / 2, this.game.config.height / 2, 'ALL NODES ACCESSED.\n\n-- DISCONNECTING --', { /* ... */ }).setOrigin(0.5);
         if (this.player) this.player.setVisible(false);
         this.setGameState('FINISHED');
+
+        this.time.delayedCall(3000, () => {
+            document.getElementById('app-container').style.display = 'none';
+            this.scene.start('StartScreenScene');
+        });
     }
 
     drawGridLines() {

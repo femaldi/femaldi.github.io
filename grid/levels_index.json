@@ -1,0 +1,10 @@
+[
+    { "levelContent": "levels/level1.json" },
+    { "levelContent": "levels/level2.json" },
+    { "levelContent": "levels/level3.json" },
+    { "levelContent": "levels/level4.json" },
+    { "levelContent": "levels/level5.json" },
+    { "levelContent": "levels/level6.json" },
+    { "levelContent": "levels/level7.json" },
+    { "levelContent": "levels/level8.json" }
+]
