@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Digital Operator - Manual</title>
+    <title>Digital Vibes - Operator Manual</title>
     <style>
         body {
             background-color: #000;
@@ -32,19 +32,6 @@
             font-size: 2.5em;
         }
 
-        a {
-            color: #ffff00;
-            text-decoration: none;
-            border: 1px solid #ffff00;
-            padding: 5px 10px;
-            display: inline-block;
-            margin-top: 20px;
-            transition: background-color 0.2s;
-        }
-        a:hover {
-            background-color: #332d00;
-        }
-
         .key {
             color: #ffff00;
             background-color: #222;
@@ -54,7 +41,7 @@
             font-weight: bold;
         }
 
-        .block-legend {
+        .block-legend, .command-legend {
             display: flex;
             align-items: center;
             margin-bottom: 15px;
@@ -72,14 +59,18 @@
             align-items: center;
             font-size: 24px;
             border: 1px solid #008800;
+            font-weight: bold;
         }
         
         /* Mimicking game sprites with CSS */
         .sprite-wall { background-color: #008800; }
+        .sprite-hardwall { background-color: #005500; color: #00bb00; border-color: #00bb00;}
         .sprite-door { background-color: rgba(255, 255, 0, 0.2); border-color: #ffff00; color: #ffff00; }
         .sprite-data { background-color: rgba(0, 255, 255, 0.2); border-color: #00ffff; color: #00ffff; border-radius: 50%; }
         .sprite-exec { background-color: rgba(255, 136, 0, 0.2); border-color: #ff8800; color: #ff8800; }
         .sprite-player { background-color: #222; color: #fff; border-color: #fff; }
+        .sprite-sentinel { background-color: rgba(255, 0, 0, 0.2); border-color: #ff0000; color: #ff0000; }
+        .sprite-arrow { background-color: #222; border-color: #ffff00; color: #ffff00; }
 
     </style>
 </head>
@@ -99,25 +90,54 @@
             <li><span class="key">ESCAPE</span> - Cancel the current command selection process.</li>
             <li><span class="key">[UNDO]</span> - Removes the last command from the Execution Queue.</li>
             <li><span class="key">[RESTART LEVEL]</span> - Aborts the current attempt and restarts the level from the beginning.</li>
+            <li><span class="key">[BACK TO LEVEL SELECT]</span> - Disconnects and returns to the node selection screen.</li>
         </ul>
 
         <h2>CORE MECHANICS</h2>
 
-        <h3>The Tick System</h3>
+        <h3>The Tick System & Execution Queue</h3>
         <p>
-            The system operates in discrete time units called 'ticks'. Every action you take, whether moving with the <span class="key">ARROW KEYS</span> or waiting with the <span class="key">SPACEBAR</span>, advances the system by one tick. Time is a critical resource.
-        </p>
-
-        <h3>The Execution Queue & Buffer</h3>
-        <p>
-            You cannot alter the grid directly. You must queue commands to be executed.
+            The system operates in discrete time units called 'ticks'. Every action you take, whether moving or waiting, advances the system by one tick.
         </p>
         <ol>
-            <li><strong>Select a Command:</strong> Choose a command like <span class="key">[DELETE]</span> or <span class="key">[COPY]</span> from the side panel.</li>
-            <li><strong>Allocate Buffer:</strong> Each command has a base cost. This cost is multiplied by the <span class="key">COMMAND MULTIPLIER</span> of the target tile. Queuing a command consumes a corresponding amount of your <span class="key">BUFFER</span>. You cannot queue a command if its final cost exceeds your available buffer space.</li>
-            <li><strong>Execute the Program:</strong> Move your Operator onto an Execution Point (<span style="color: #ff8800;">X</span>) to enter <span class="key">EXECUTION MODE</span>.</li>
-            <li><strong>Advance the Queue:</strong> While in <span class="key">EXECUTION MODE</span>, every subsequent move or wait action (which still costs 1 tick) will process the next command in your queue.</li>
+            <li><strong>Queue Commands:</strong> Select a command from the side panel. Some commands require you to select target tiles on the grid. Queuing a command consumes a corresponding amount of your <span class="key">BUFFER</span>.</li>
+            <li><strong>Enter Execution Mode:</strong> Move your Operator onto an Execution Point (<span style="color: #ff8800;">X</span>).</li>
+            <li><strong>Process the Queue:</strong> While in <span class="key">EXECUTION MODE</span>, every subsequent move or wait action (which still costs 1 tick) will process the next command in your queue.</li>
         </ol>
+
+        <h3>System Instability & Reset</h3>
+        <p>
+            Executing certain commands (like <span class="key">DELETE</span> or <span class="key">COPY</span>) destabilizes the local node. When this happens, a <span class="key">SYSTEM_RESET</span> timer will appear. If the timer reaches zero, the level's layout will reset to its original state. Your Operator, queued commands, and buffer usage will remain unchanged. Be warned: if the system reset causes you to be inside a wall or on a Sentinel's spawn point, you will be crushed, resulting in a full level restart.
+        </p>
+
+        <h3>Target Validation & Mobile Entities</h3>
+        <p>
+            The system is volatile. A command's target must be in a valid state at the moment of execution. If a mobile entity (like a <span class="key">SENTINEL</span>) moves onto a tile you targeted for deletion or a copy *destination*, the command will <span style="color: #888;">fizzle</span> and fail, consuming the buffer but having no effect. This is a critical security feature.
+        </p>
+
+        <h2>COMMANDS</h2>
+
+        <div class="command-legend">
+            <div>
+                <h3>DELETE</h3>
+                <p>Targets 1 tile. Deletes the highest-priority object on that tile. Triggers a System Reset.</p>
+            </div>
+        </div>
+
+        <div class="command-legend">
+            <div>
+                <h3>COPY</h3>
+                <p>Targets 2 tiles: a <span class="key">SOURCE</span> then a <span class="key">DESTINATION</span>. The state of the source tile is "snapshotted" when you select it. The command then attempts to replicate that snapshot at the destination. The destination tile is completely cleared before the copy occurs. Triggers a System Reset.</p>
+                <p><strong>NOTE:</strong> Because the copy destination is validated at execution time, a <span class="key">SENTINEL</span> moving onto the destination tile will cause the command to fail. Plan accordingly.</p>
+            </div>
+        </div>
+
+        <div class="command-legend">
+            <div>
+                <h3>WAIT</h3>
+                <p>No target. Pauses the execution of the queue for a set number of ticks. Does NOT trigger a System Reset. Useful for timing your actions around moving Sentinels.</p>
+            </div>
+        </div>
 
         <h2>BLOCK IDENTIFIERS</h2>
 
@@ -128,12 +148,27 @@
 
         <div class="block-legend">
             <div class="sprite-placeholder sprite-wall">#</div>
-            <div><strong>Wall</strong><br>Blocks all movement. Walls have a high command multiplier (x2), making them very expensive to modify.</div>
+            <div><strong>Wall</strong><br>Blocks all movement. Expensive to modify (x2 multiplier).</div>
+        </div>
+        
+        <div class="block-legend">
+            <div class="sprite-placeholder sprite-hardwall">█</div>
+            <div><strong>Hard Wall</strong><br>Blocks all movement. Very expensive to modify (x4 multiplier).</div>
         </div>
 
         <div class="block-legend">
             <div class="sprite-placeholder sprite-door">|</div>
-            <div><strong>Door / Gate</strong><br>Blocks all movement. Doors have a standard command multiplier (x1).</div>
+            <div><strong>Door / Gate</strong><br>Blocks all movement. Standard command multiplier (x1).</div>
+        </div>
+        
+        <div class="block-legend">
+            <div class="sprite-placeholder sprite-sentinel">O</div>
+            <div><strong>Sentinel</strong><br>A mobile security program. Moves one tile per tick. Collision with a Sentinel results in a full level restart. Sentinels are affected by Arrow Tiles.</div>
+        </div>
+        
+        <div class="block-legend">
+            <div class="sprite-placeholder sprite-arrow">»</div>
+            <div><strong>Arrow Tile</strong><br>Forces any entity (Operator or Sentinel) that stands on it to move in the indicated direction on the next tick, overriding any other movement input.</div>
         </div>
 
         <div class="block-legend">

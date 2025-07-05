@@ -19,7 +19,7 @@
             display: flex;
             flex-direction: column;
         }
-
+        
         #app-container.in-game {
             border: 1px solid #00ff00;
         }
@@ -140,75 +140,28 @@
             align-items: center;
         }
 
-        #undo-button {
+        #back-to-start-button, #undo-button, #reset-button, #tutorial-button {
             font-size: 12px;
-            color: #ffdd00;
             text-decoration: none;
-            border: 1px solid #ffdd00;
             padding: 2px 5px;
             transition: background-color 0.2s, color 0.2s;
+            display: block;
+            text-align: center;
         }
+        #back-to-start-button { color: #ffdd00; border: 1px solid #ffdd00; margin-bottom: 5px; }
+        #undo-button { color: #ffdd00; border: 1px solid #ffdd00; }
+        #reset-button { color: #ff4444; border: 1px solid #ff4444; }
+        #tutorial-button { color: #44ff44; border: 1px solid #44ff44; margin-top: 5px; }
 
-        #undo-button:hover {
-            background-color: #332d00;
-            cursor: pointer;
-        }
+        #back-to-start-button:hover, #undo-button:hover { background-color: #332d00; cursor: pointer; }
+        #reset-button:hover { background-color: #330000; cursor: pointer; }
+        #tutorial-button:hover { background-color: #003300; cursor: pointer; }
 
         #undo-button.disabled {
             color: #555;
             border-color: #555;
             background-color: transparent;
             cursor: not-allowed;
-        }
-
-        #reset-button {
-            font-size: 12px;
-            color: #ff4444;
-            text-decoration: none;
-            border: 1px solid #ff4444;
-            padding: 2px 5px;
-            transition: background-color 0.2s, color 0.2s;
-            display: block;
-            text-align: center;
-        }
-
-        #reset-button:hover {
-            background-color: #330000;
-            cursor: pointer;
-        }
-
-        #tutorial-button {
-            font-size: 12px;
-            color: #44ff44;
-            text-decoration: none;
-            border: 1px solid #44ff44;
-            padding: 2px 5px;
-            transition: background-color 0.2s, color 0.2s;
-            display: block;
-            margin-top: 5px;
-            text-align: center;
-        }
-
-        #tutorial-button:hover {
-            background-color: #330000;
-            cursor: pointer;
-        }
-
-        #back-to-start-button {
-            font-size: 12px;
-            color: #ffdd00;
-            text-decoration: none;
-            border: 1px solid #ffdd00;
-            padding: 2px 5px;
-            transition: background-color 0.2s, color 0.2s;
-            display: block;
-            text-align: center;
-            margin-bottom: 5px; /* Add space below it */
-        }
-
-        #back-to-start-button:hover {
-            background-color: #332d00;
-            cursor: pointer;
         }
 
         #game-hud {
@@ -225,129 +178,59 @@
         }
 
         .modal-overlay {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
+            position: absolute; top: 0; left: 0;
+            width: 100%; height: 100%;
             background-color: rgba(0, 26, 0, 0.85);
             z-index: 999;
-            display: flex;
-            justify-content: center;
-            align-items: center;
+            display: flex; justify-content: center; align-items: center;
         }
-
         .unlock-modal {
-            width: 500px;
-            background-color: #001a00;
-            border: 2px solid #ffff00;
-            color: #ffff00;
-            padding: 25px;
-            z-index: 1000;
+            width: 500px; background-color: #001a00; border: 2px solid #ffff00;
+            color: #ffff00; padding: 25px; z-index: 1000;
             box-shadow: 0 0 20px rgba(255, 255, 0, 0.5);
         }
-
         .unlock-modal h4 {
-            margin: 0 0 20px 0;
-            font-size: 24px;
-            border-bottom: 2px solid #ffff00;
-            padding-bottom: 10px;
-            text-align: center;
+            margin: 0 0 20px 0; font-size: 24px; border-bottom: 2px solid #ffff00;
+            padding-bottom: 10px; text-align: center;
         }
-
-        .unlock-modal ul {
-            list-style: none;
-            padding: 0;
-            margin: 0 0 25px 0;
-        }
-
-        .unlock-modal li {
-            padding: 10px;
-            border: 1px dashed #008800;
-            margin-bottom: 10px;
-        }
-        
-        .unlock-modal li .cmd-name {
-            font-size: 18px;
-            font-weight: bold;
-        }
-
-        .unlock-modal li .cmd-desc {
-            color: #fff;
-            font-size: 14px;
-            margin-top: 5px;
-            display: block;
-        }
-
-        .unlock-modal li .cmd-cost {
-            color: #aaa;
-            font-size: 12px;
-            margin-top: 8px;
-            text-align: right;
-            display: block;
-        }
-
+        .unlock-modal ul { list-style: none; padding: 0; margin: 0 0 25px 0; }
+        .unlock-modal li { padding: 10px; border: 1px dashed #008800; margin-bottom: 10px; }
+        .unlock-modal li .cmd-name { font-size: 18px; font-weight: bold; }
+        .unlock-modal li .cmd-desc { color: #fff; font-size: 14px; margin-top: 5px; display: block; }
+        .unlock-modal li .cmd-cost { color: #aaa; font-size: 12px; margin-top: 8px; text-align: right; display: block; }
         .unlock-modal .modal-button {
-            display: block;
-            width: 120px;
-            margin: 0 auto;
-            padding: 10px;
-            border: 1px solid #00ff00;
-            background-color: #002a00;
-            color: #00ff00;
-            text-align: center;
-            cursor: pointer;
-            font-size: 16px;
+            display: block; width: 120px; margin: 0 auto; padding: 10px;
+            border: 1px solid #00ff00; background-color: #002a00; color: #00ff00;
+            text-align: center; cursor: pointer; font-size: 16px;
             transition: background-color 0.2s;
         }
+        .unlock-modal .modal-button:hover { background-color: #004d00; }
+        .unlock-modal li.wait-option { cursor: pointer; transition: background-color 0.2s; }
+        .unlock-modal li.wait-option:hover { background-color: #004d00; }
+        .unlock-modal li.wait-option.disabled { cursor: not-allowed; color: #888; border-color: #555; }
+        .unlock-modal li.wait-option.disabled:hover { background-color: transparent; }
+        .unlock-modal li.wait-option.disabled .cmd-name { color: #888; }
 
-        .unlock-modal .modal-button:hover {
-            background-color: #004d00;
-        }
-
-        .unlock-modal li.wait-option {
-            cursor: pointer;
-            transition: background-color 0.2s;
-        }
-
-        .unlock-modal li.wait-option:hover {
-            background-color: #004d00;
-        }
-
-        .unlock-modal li.wait-option.disabled {
-            cursor: not-allowed;
-            color: #888;
-            border-color: #555;
-        }
-
-        .unlock-modal li.wait-option.disabled:hover {
-            background-color: transparent;
-        }
-
-        .unlock-modal li.wait-option.disabled .cmd-name {
-            color: #888;
-        }
-
-        /* --- STYLES FOR THE NEW START SCREEN --- */
+        /* --- STYLES FOR THE START SCREEN --- */
         #start-screen-container {
             position: absolute;
             top: 0; left: 0;
             width: 100%; height: 100%;
             display: flex;
             flex-direction: column;
-            justify-content: center;
+            justify-content: flex-start;
             align-items: center;
-            background-color: transparent; 
+            background-color: transparent;
             color: #00ff00;
             z-index: 2000;
-            padding: 40px;
+            padding: 20px;
             box-sizing: border-box;
             overflow-y: auto;
         }
 
         #level-select-panel {
             width: 100%;
-            max-width: 700px;
+            max-width: 450px;
             display: flex;
             flex-direction: column;
             justify-content: center;
@@ -357,8 +240,9 @@
         #level-select-panel .main-title {
             font-size: 48px;
             letter-spacing: 8px;
-            margin: 0 0 10px 0;
+            margin: 20px 0 20px 0; /* Added top margin */
             text-shadow: 0 0 10px #00ff00;
+            text-align: center;
         }
         #level-select-panel .sub-title {
             margin-bottom: 20px;
@@ -371,7 +255,7 @@
             grid-template-columns: repeat(8, 1fr);
             gap: 10px;
             width: 100%;
-            max-width: 450px; /* MODIFIED */
+            max-width: 300px;
         }
 
         .level-button {
@@ -382,76 +266,47 @@
             color: #008800;
             cursor: pointer;
             font-family: "Courier New", Courier, monospace;
-            font-size: 20px;
+            font-size: 16px;
             font-weight: bold;
             transition: all 0.2s;
         }
 
-        .level-button.disabled {
-            background-color: #080808;
-            border-color: #222;
-            color: #333;
-            cursor: not-allowed;
-        }
-
-        .level-button:not(.disabled):hover {
-            background-color: #222;
-            border-color: #00ff00;
-        }
-        .level-button.completed {
-            background-color: #002a00;
-            color: #00ff00;
-            border-color: #00ff00;
-        }
-        .level-button.selected {
-            background-color: #00ff00;
-            color: #000;
-            box-shadow: 0 0 15px #00ff00;
-        }
+        .level-button.disabled { background-color: #080808; border-color: #222; color: #333; cursor: not-allowed; }
+        .level-button:not(.disabled):hover { background-color: #222; border-color: #00ff00; }
+        .level-button.completed { background-color: #002a00; color: #00ff00; border-color: #00ff00; }
+        .level-button.selected { background-color: #00ff00; color: #000; box-shadow: 0 0 15px #00ff00; }
         
         #details-panel {
-            width: 100%; /* MODIFIED */
-            max-width: 450px; /* MODIFIED */
-            padding: 20px;
+            width: 100%;
+            max-width: 300px;
+            padding: 15px; /* MODIFIED: Reduced padding */
             border: 1px solid #008800;
             margin-top: 30px;
             transition: opacity 0.3s;
-            box-sizing: border-box; /* ADDED */
+            box-sizing: border-box;
         }
-        #details-panel hr {
-            border: none;
-            border-top: 1px solid #008800;
-        }
+        #details-panel hr { border: none; border-top: 1px solid #008800; margin: 8px 0; }
         .detail-item {
-            font-size: 16px;
-            margin-bottom: 12px;
+            font-size: 13px; /* MODIFIED: Reduced font size */
+            margin-bottom: 8px; /* MODIFIED: Reduced margin */
         }
-        .detail-item span {
-            color: #fff;
-        }
+        .detail-item span { color: #fff; }
 
         #start-button {
             margin-top: 30px;
             padding: 12px 30px;
-            font-size: 18px;
+            font-size: 16px;
             background-color: transparent;
             color: #008800;
             border: 2px solid #008800;
             cursor: not-allowed;
             transition: all 0.2s;
-            width: 100%; /* MODIFIED */
-            max-width: 450px; /* MODIFIED */
-            box-sizing: border-box; /* ADDED */
+            width: 100%;
+            max-width: 300px;
+            box-sizing: border-box;
         }
-        #start-button:not(.disabled) {
-            color: #00ff00;
-            border-color: #00ff00;
-            cursor: pointer;
-        }
-        #start-button:not(.disabled):hover {
-            background-color: #00ff00;
-            color: #000;
-        }
+        #start-button:not(.disabled) { color: #00ff00; border-color: #00ff00; cursor: pointer; }
+        #start-button:not(.disabled):hover { background-color: #00ff00; color: #000; }
 
         #start-screen-tutorial-link {
             margin-top: 25px;
@@ -461,11 +316,11 @@
             padding: 8px 15px;
             font-size: 14px;
             transition: background-color 0.2s;
-            display: block; /* ADDED */
-            width: 100%; /* ADDED */
-            max-width: 450px; /* ADDED */
-            box-sizing: border-box; /* ADDED */
-            text-align: center; /* ADDED */
+            display: block;
+            width: 100%;
+            max-width: 300px;
+            box-sizing: border-box;
+            text-align: center;
         }
 
         #start-screen-tutorial-link:hover {
@@ -484,6 +339,7 @@
     <script src="start-screen.js"></script>
     <script src="game.js"></script>
 
+    <!-- This final script block configures and starts Phaser -->
     <script>
         const TILE_SIZE = 32;
         const GRID_WIDTH = 24;
@@ -504,7 +360,6 @@
         appContainer.appendChild(mainGameContainer);
         appContainer.appendChild(hud);
         
-        // --- THIS IS THE FIX: Keep the app visible, but hide the in-game UI elements ---
         uiPanel.style.display = 'none';
         hud.style.display = 'none';
         
@@ -513,7 +368,7 @@
             width: TILE_SIZE * GRID_WIDTH,
             height: TILE_SIZE * GRID_HEIGHT,
             parent: 'game-container',
-            backgroundColor: '#000', // Set a black background for the canvas
+            backgroundColor: '#000',
             scene: [StartScreenScene, GameScene]
         };
 
