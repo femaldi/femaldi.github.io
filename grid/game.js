@@ -1203,10 +1203,13 @@ class GameScene extends Phaser.Scene {
             this.resetLevel(true);
         });
 
-        // --- ADDED event listener for the new button ---
         document.getElementById('back-to-start-button').addEventListener('click', (e) => {
             e.preventDefault();
-            document.getElementById('app-container').style.display = 'none';
+            
+            // --- NEW: Hide the in-game UI before switching scenes ---
+            document.getElementById('ui-panel').style.display = 'none';
+            document.getElementById('game-hud').style.display = 'none';
+
             this.scene.start('StartScreenScene');
         });
 
@@ -1542,7 +1545,8 @@ class GameScene extends Phaser.Scene {
         this.setGameState('FINISHED');
 
         this.time.delayedCall(3000, () => {
-            document.getElementById('app-container').style.display = 'none';
+            document.getElementById('ui-panel').style.display = 'none';
+            document.getElementById('game-hud').style.display = 'none';
             this.scene.start('StartScreenScene');
         });
     }

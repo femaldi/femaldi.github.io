@@ -18,6 +18,9 @@
         #app-container {
             display: flex;
             flex-direction: column;
+        }
+
+        #app-container.in-game {
             border: 1px solid #00ff00;
         }
 
@@ -334,6 +337,7 @@
             flex-direction: column;
             justify-content: center;
             align-items: center;
+            background-color: transparent; 
             color: #00ff00;
             z-index: 2000;
             padding: 40px;
@@ -480,13 +484,11 @@
     <script src="start-screen.js"></script>
     <script src="game.js"></script>
 
-    <!-- This final script block configures and starts Phaser -->
     <script>
         const TILE_SIZE = 32;
         const GRID_WIDTH = 24;
         const GRID_HEIGHT = 24;
         const appContainer = document.getElementById('app-container');
-        appContainer.style.display = 'none';
 
         const mainGameContainer = document.createElement('div');
         mainGameContainer.id = 'main-container';
@@ -502,12 +504,16 @@
         appContainer.appendChild(mainGameContainer);
         appContainer.appendChild(hud);
         
+        // --- THIS IS THE FIX: Keep the app visible, but hide the in-game UI elements ---
+        uiPanel.style.display = 'none';
+        hud.style.display = 'none';
+        
         const config = {
             type: Phaser.AUTO,
             width: TILE_SIZE * GRID_WIDTH,
             height: TILE_SIZE * GRID_HEIGHT,
             parent: 'game-container',
-            backgroundColor: '#001a00',
+            backgroundColor: '#000', // Set a black background for the canvas
             scene: [StartScreenScene, GameScene]
         };
 

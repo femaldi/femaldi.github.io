@@ -13,6 +13,9 @@ class StartScreenScene extends Phaser.Scene {
     create() {
         const levelIndex = this.cache.json.get('levels_index');
         this.levelIndexData = levelIndex;
+
+        // --- NEW: Remove the .in-game class when the start screen is created ---
+        document.getElementById('app-container').classList.remove('in-game');
         
         this.createDigitalRain(); // Create rain effect on the canvas
         
@@ -123,43 +126,44 @@ class StartScreenScene extends Phaser.Scene {
     startGame() {
         if (this.selectedLevelIndex === -1) return;
 
+        // Remove the start screen overlay
         document.getElementById('start-screen-container').remove();
-        document.getElementById('app-container').style.display = 'flex';
+        
+        // --- NEW: Add the .in-game class to show the border ---
+        document.getElementById('app-container').classList.add('in-game');
+
+        // --- NEW: Show the in-game UI elements ---
+        document.getElementById('ui-panel').style.display = 'flex';
+        document.getElementById('game-hud').style.display = 'block';
+        
+        // Start the game scene
         this.scene.start('GameScene', { startLevel: this.selectedLevelIndex + 1 });
     }
 
-    // --- MODIFIED: Rain is now constrained to the sides ---
     createDigitalRain() {
-        const screenWidth = this.cameras.main.width;
-        const screenHeight = this.cameras.main.height;
-
-        // Define a clear zone in the middle (70% of the screen width)
-        const sideWidth = screenWidth * 0.15; // 15% on each side
-        const leftZoneEnd = sideWidth;
-        const rightZoneStart = screenWidth - sideWidth;
+        const screenWidth = this.sys.game.config.width;
+        const screenHeight = this.sys.game.config.height;
 
         this.rainGroup = this.add.group();
         const rainChars = '01';
-        const streamCount = 50; // Slightly reduced density
+        const streamCount = 80; // More streams
 
         for (let i = 0; i < streamCount; i++) {
-            let x;
-            // 50% chance to be on the left, 50% on the right
-            if (Phaser.Math.RND.frac() < 0.5) {
-                x = Phaser.Math.Between(0, leftZoneEnd);
-            } else {
-                x = Phaser.Math.Between(rightZoneStart, screenWidth);
-            }
-
+            // Generate rain across the ENTIRE width
+            const x = Phaser.Math.Between(0, screenWidth);
             const y = Phaser.Math.Between(-screenHeight, 0);
+            
             const char = Phaser.Math.RND.pick(rainChars.split(''));
             const text = this.add.text(x, y, char, {
                 fontFamily: '"Courier New", Courier, monospace',
                 fontSize: '20px',
                 color: '#00ff00'
             });
-            text.setAlpha(0.25);
-            text.setData('velocity', Phaser.Math.Between(2, 5));
+            
+            // --- INCREASED VISIBILITY ---
+            text.setAlpha(0.4); // More opaque
+            text.setData('velocity', Phaser.Math.Between(3, 7)); // Faster
+            
             this.rainGroup.add(text);
         }
     }
