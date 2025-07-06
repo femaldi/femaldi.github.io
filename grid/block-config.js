@@ -24,7 +24,7 @@ const BLOCK_TYPES = {
         name: 'Data Node',
         char: 'D',
         color: '#00ffff',
-        command_multiplier: 8,
+        command_multiplier: 15,
         renderPriority: 1 // Data is critical and very expensive
     },
     door: {
@@ -33,7 +33,17 @@ const BLOCK_TYPES = {
         char: '|',
         color: '#ffff00',
         command_multiplier: 1,
-        renderPriority: 1 // Doors are standard
+        renderPriority: 1, // Doors are standard
+        isStateful: true
+    },
+    secured_door: {
+        id: 'secured_door',
+        name: 'Secured Door',
+        char: '||',
+        color: '#ffff00', // Same color as door, sprite is different
+        command_multiplier: 12, // Higher cost
+        renderPriority: 1,
+        isStateful: true // NEW: Also has a state
     },
     player: {
         id: 'player',
@@ -87,21 +97,53 @@ const DYNAMIC_BLOCK_TYPES = {
         renderPriority: 5,
         command_multiplier: 1,
         isMobile: false,
+        isStateful: true, // NEW: Arrows can be disabled
         parameters: {
             direction: {
                 label: 'Direction',
                 options: ['up', 'down', 'left', 'right'],
                 default: 'right'
+            },
+            // NEW: Parameter for initial state
+            initial_state: {
+                label: 'Initial State',
+                options: ['enabled', 'disabled'],
+                default: 'enabled'
             }
         },
         getDisplayChar: function(params) {
+            // NEW: Show a different char if disabled
+            if (params.initial_state === 'disabled') {
+                return 'x';
+            }
             switch (params.direction) {
                 case 'up': return '/\\';
                 case 'down': return '\\/';
                 case 'left': return '<';
-                case 'right': return '>';
-                default: return '?';
+                case 'right': '>';
+                default: return '>';
             }
+        }
+    },
+    // --- NEW: Button Block ---
+    button: {
+        id: 'button',
+        name: 'Button',
+        char: 'B',
+        color: '#ffff00', // Yellow like doors/arrows
+        renderPriority: 4,
+        command_multiplier: 2,
+        isMobile: false,
+        parameters: {
+            // This parameter is special and will be handled by custom editor UI
+            linked_positions: {
+                label: 'Linked Positions',
+                type: 'positions_array', // Custom type for editor logic
+                default: []
+            }
+        },
+        getDisplayChar: function(params) {
+            return 'B';
         }
     }
 };

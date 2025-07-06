@@ -6,5 +6,9 @@
     { "levelContent": "levels/level5.json" },
     { "levelContent": "levels/level6.json" },
     { "levelContent": "levels/level7.json" },
-    { "levelContent": "levels/level8.json" }
+    { "levelContent": "levels/level8.json" },
+    { "levelContent": "levels/level9.json" },
+    { "levelContent": "levels/level10.json" },
+    { "levelContent": "levels/level11.json" },
+    { "levelContent": "levels/level12.json" }
 ]

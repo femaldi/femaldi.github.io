@@ -10,13 +10,18 @@ class EditorScene extends Phaser.Scene {
         super('EditorScene');
         this.gridData = []; // 2D array holding the level data (block IDs)
         this.gridObjects = []; // 2D array holding the Phaser Text objects for visuals
-        this.dynamicBlocks = []; // --- NEW: Array to hold dynamic block objects
-        this.selectedBlock = { id: 'wall', isDynamic: false }; // --- MODIFIED: Start with wall selected
+        this.dynamicBlocks = []; // Array to hold dynamic block objects
+        this.selectedBlock = { id: 'wall', isDynamic: false };
         this.paletteHighlight = null;
-        this.parameterEditor = null; // --- NEW: To hold the parameter editor UI
+        this.parameterEditor = null; // To hold the parameter editor UI
         this.networkNode = null;
         this.buffer_size = null;
         this.reset_timer = null;
+        // --- NEW: Editor state for special modes ---
+        this.editorMode = 'NORMAL'; // 'NORMAL' or 'LINKING'
+        this.linkingButton = null; // The button we are currently linking
+        this.linkVisuals = []; // Array for temporary line objects
+        this.finishLinkButton = null; // The button to exit linking mode
     }
     
     preload() {
@@ -39,10 +44,10 @@ class EditorScene extends Phaser.Scene {
         this.reset_timer = null;
         for (let y = 0; y < GRID_HEIGHT; y++) {
             this.gridData[y] = [];
-            this.gridObjects[y] = []; // It creates a new array for gridObjects...
+            this.gridObjects[y] = [];
             for (let x = 0; x < GRID_WIDTH; x++) {
                 this.gridData[y][x] = null;
-                this.gridObjects[y][x] = null; // ... and fills it with `null`!
+                this.gridObjects[y][x] = null;
             }
         }
     }
@@ -101,12 +106,13 @@ class EditorScene extends Phaser.Scene {
                 this.selectedBlock = { id: block.id, isDynamic: false };
                 this.paletteHighlight.y = currentButtonY - 5;
                 this.closeParameterEditor();
+                 if (this.editorMode === 'LINKING') this.stopLinkingMode();
             });
 
             paletteY += 50;
         }
 
-        // --- NEW: Draw Dynamic Blocks ---
+        // --- Draw Dynamic Blocks ---
         paletteY += 20; // Add some space
         this.add.line(paletteX - 10, paletteY - 10, paletteX + PALETTE_WIDTH - 30, paletteY - 10, 0x00ff00).setOrigin(0);
 
@@ -129,6 +135,7 @@ class EditorScene extends Phaser.Scene {
                 this.selectedBlock = { id: block.id, isDynamic: true };
                 this.paletteHighlight.y = currentButtonY - 5;
                 this.closeParameterEditor();
+                 if (this.editorMode === 'LINKING') this.stopLinkingMode();
             });
             paletteY += 50;
         }
@@ -137,6 +144,17 @@ class EditorScene extends Phaser.Scene {
         // --- Save & Load Buttons ---
         const saveButtonY = this.game.config.height - 60;
         const loadButtonY = saveButtonY - 50;
+        const finishLinkButtonY = loadButtonY - 50;
+
+        // --- NEW: Finish Linking Button ---
+        this.finishLinkButton = this.add.group();
+        const finishBtnRect = this.add.rectangle(paletteX - 10, finishLinkButtonY - 5, PALETTE_WIDTH - 20, 40, 0x00ff00)
+             .setOrigin(0).setInteractive({ useHandCursor: true });
+        const finishBtnText = this.add.text(paletteX + 15, finishLinkButtonY + 5, 'FINISH LINKING', { color: '#000000', fontSize: '16px' });
+        finishBtnRect.on('pointerdown', () => this.stopLinkingMode());
+        this.finishLinkButton.add(finishBtnRect);
+        this.finishLinkButton.add(finishBtnText);
+        this.finishLinkButton.setVisible(false); // Initially hidden
 
         const loadButton = this.add.rectangle(paletteX - 10, loadButtonY - 5, PALETTE_WIDTH - 20, 40, 0x00ff00)
             .setOrigin(0).setInteractive({ useHandCursor: true });
@@ -159,7 +177,7 @@ class EditorScene extends Phaser.Scene {
         });
     }
 
-        handleGridClick(pointer) {
+    handleGridClick(pointer) {
         if (this.parameterEditor && this.parameterEditor.active) {
             const bg = this.parameterEditor.getChildren()[0];
             if (!bg.getBounds().contains(pointer.x, pointer.y)) {
@@ -172,6 +190,12 @@ class EditorScene extends Phaser.Scene {
         const gridY = Math.floor(pointer.y / TILE_SIZE);
 
         if (gridX < 0 || gridX >= GRID_WIDTH || gridY < 0 || gridY >= GRID_HEIGHT) return;
+
+        // --- NEW: Handle special "LINKING" mode ---
+        if (this.editorMode === 'LINKING') {
+            this.handleLinkingClick(gridX, gridY);
+            return;
+        }
 
         const selectedToolId = this.selectedBlock.id;
         const isSelectedToolDynamic = this.selectedBlock.isDynamic;
@@ -212,9 +236,8 @@ class EditorScene extends Phaser.Scene {
         }
     }
 
-    // --- NEW: A modal to choose which DYNAMIC block to erase from a stack ---
     showEraseSelectorModal(blocks, pointer) {
-        this.closeParameterEditor(); // Use the same mechanism to ensure only one modal is open
+        this.closeParameterEditor(); 
 
         this.parameterEditor = this.add.group();
         const startX = pointer.x + 10;
@@ -222,7 +245,7 @@ class EditorScene extends Phaser.Scene {
         const boxWidth = 180;
         const boxHeight = 20 + blocks.length * 40 + 10;
 
-        const bg = this.add.rectangle(startX, startY, boxWidth, boxHeight, 0x000000, 0.9).setOrigin(0).setStrokeStyle(1, '#ff0000'); // Red border for erase
+        const bg = this.add.rectangle(startX, startY, boxWidth, boxHeight, 0x000000, 0.9).setOrigin(0).setStrokeStyle(1, '#ff0000');
         this.parameterEditor.add(bg);
 
         let currentY = startY + 10;
@@ -233,7 +256,6 @@ class EditorScene extends Phaser.Scene {
                 .setInteractive({ useHandCursor: true });
             
             optionText.on('pointerdown', () => {
-                // Remove only the selected block from the main array
                 const index = this.dynamicBlocks.findIndex(b => b === block);
                 if (index > -1) {
                     this.dynamicBlocks.splice(index, 1);
@@ -257,13 +279,13 @@ class EditorScene extends Phaser.Scene {
         const blockType = DYNAMIC_BLOCK_TYPES[this.selectedBlock.id];
         if (!blockType) return;
         
-        // Prevent adding the same type of block twice to the same tile.
         const existingBlocks = this.findDynamicBlocksAt(x, y);
         if (existingBlocks.some(b => b.type === blockType.id)) {
+            const blockToEdit = existingBlocks.find(b => b.type === blockType.id);
+            this.showParameterEditor(blockToEdit, {x: x * TILE_SIZE, y: y * TILE_SIZE});
             return;
         }
         
-        // Clear any underlying STATIC block before adding a dynamic one.
         if (this.gridData[y][x] !== null) {
             this.gridData[y][x] = null;
         }
@@ -279,14 +301,16 @@ class EditorScene extends Phaser.Scene {
 
         this.dynamicBlocks.push(newBlock);
         this.updateGridVisual(x, y);
+        this.showParameterEditor(newBlock, {x: x * TILE_SIZE, y: y * TILE_SIZE});
     }
     
     updateGridVisual(x, y) {
         const visualObject = this.gridObjects[y][x];
         const dynamicBlocksOnTile = this.findDynamicBlocksAt(x, y);
         
+        visualObject.setAlpha(1.0); // Reset alpha
+
         if (dynamicBlocksOnTile.length > 0) {
-            // Find the block with the highest render priority
             let topBlock = dynamicBlocksOnTile.reduce((prev, current) => {
                 const prevPrio = DYNAMIC_BLOCK_TYPES[prev.type].renderPriority || 0;
                 const currPrio = DYNAMIC_BLOCK_TYPES[current.type].renderPriority || 0;
@@ -296,6 +320,10 @@ class EditorScene extends Phaser.Scene {
             const blockType = DYNAMIC_BLOCK_TYPES[topBlock.type];
             visualObject.setText(blockType.getDisplayChar(topBlock.parameters));
             visualObject.setColor(blockType.color);
+
+            if (blockType.isStateful && topBlock.parameters.initial_state === 'disabled') {
+                visualObject.setAlpha(0.4);
+            }
         } else {
             const staticBlockId = this.gridData[y][x];
             const blockType = BLOCK_TYPES[staticBlockId] || BLOCK_TYPES.erase;
@@ -309,9 +337,7 @@ class EditorScene extends Phaser.Scene {
     }
 
     clearTile(x, y) {
-        // Remove from static grid data
         this.gridData[y][x] = null;
-        // Remove all dynamic blocks at this position
         this.dynamicBlocks = this.dynamicBlocks.filter(b => b.position[0] !== x || b.position[1] !== y);
         this.updateGridVisual(x, y);
     }
@@ -367,37 +393,44 @@ class EditorScene extends Phaser.Scene {
         reader.readAsText(file);
     }
     
-    /**
-     * Validates the loaded data and updates the grid.
-     * @param {object} levelData The parsed level data from the JSON file.
-     */
     applyLevelData(levelData) {
-        // Basic validation
         if (!levelData.tiles || levelData.width !== GRID_WIDTH || levelData.height !== GRID_HEIGHT) {
             console.error("Invalid or incompatible level file format.");
             alert("Incompatible level file. Make sure it's a 24x24 level.");
             return;
         }
-
         console.log("Applying loaded level data...");
         
-        // --- THIS IS THE FIX ---
-        // Do NOT call initializeGridData() as it nulls our visual objects.
-        // Instead, just reset the data arrays before loading new data.
         this.dynamicBlocks = [];
         this.gridData = [];
         
-        // Load data from file
         this.gridData = levelData.tiles;
         this.networkNode = levelData.network_node || null;
         this.buffer_size = levelData.buffer_size || null;
         this.reset_timer = levelData.reset_timer || null;
+        
         if (levelData.dynamic_blocks && Array.isArray(levelData.dynamic_blocks)) {
+            // Ensure all dynamic blocks have a parameters object and all default values
+            levelData.dynamic_blocks.forEach(block => {
+                const blockType = DYNAMIC_BLOCK_TYPES[block.type];
+                if (!blockType) return; // Skip if it's an unknown type
+
+                // Ensure parameters object exists
+                if (!block.parameters) {
+                    block.parameters = {};
+                }
+
+                // Loop through the DEFINED parameters in the config
+                for (const paramKey in blockType.parameters) {
+                    // If the loaded block is MISSING a defined parameter, add it with its default value
+                    if (block.parameters[paramKey] === undefined) {
+                        block.parameters[paramKey] = blockType.parameters[paramKey].default;
+                    }
+                }
+            });
             this.dynamicBlocks = levelData.dynamic_blocks;
         }
 
-        // Redraw the entire grid based on new data.
-        // This works now because this.gridObjects still holds the text objects.
         for (let y = 0; y < GRID_HEIGHT; y++) {
             for (let x = 0; x < GRID_WIDTH; x++) {
                 this.updateGridVisual(x, y);
@@ -412,50 +445,129 @@ class EditorScene extends Phaser.Scene {
         }
     }
 
-    // This function is now more generic.
     showParameterEditor(block, pointer) {
         this.closeParameterEditor(); 
 
         const blockType = DYNAMIC_BLOCK_TYPES[block.type];
         if (!blockType || !blockType.parameters) return;
 
+        // --- NEW: Special handling for buttons and their linking UI ---
+        if (block.type === 'button') {
+            this.startLinkingMode(block);
+            return; // Exit here, don't show the generic modal
+        }
+
         this.parameterEditor = this.add.group();
 
-        // Assume one parameter for now, but this could be looped
-        const paramKey = Object.keys(blockType.parameters)[0];
-        const paramConfig = blockType.parameters[paramKey];
-
-        const options = paramConfig.options;
+        const paramEntries = Object.entries(blockType.parameters);
+        const boxWidth = 180;
+        const boxHeight = 20 + paramEntries.reduce((acc, [, p]) => acc + (p.options.length * 30 + 15), 0);
         const startX = pointer.x + 10;
         const startY = pointer.y + 10;
-        const boxWidth = 150;
-        const boxHeight = 20 + options.length * 30 + 10;
-
+        
         const bg = this.add.rectangle(startX, startY, boxWidth, boxHeight, 0x000000, 0.9).setOrigin(0).setStrokeStyle(1, blockType.color);
         this.parameterEditor.add(bg);
 
         let currentY = startY + 10;
         
-        options.forEach(option => {
-            const optionText = this.add.text(startX + 10, currentY, `Set: ${option}`, { fontSize: '16px' })
-                .setInteractive({ useHandCursor: true });
-            
-            if (block.parameters[paramKey] === option) {
-                optionText.setColor('#ffff00');
-            }
+        paramEntries.forEach(([paramKey, paramConfig]) => {
+            if (!paramConfig.options) return; // Skip non-selectable params like button links
 
-            optionText.on('pointerdown', () => {
-                // Use the generic paramKey to set the parameter
-                block.parameters[paramKey] = option;
-                this.updateGridVisual(block.position[0], block.position[1]);
-                this.closeParameterEditor();
+            const labelText = this.add.text(startX + 10, currentY, `${paramConfig.label}:`, { fontSize: '14px', fontStyle: 'italic', color: '#aaaaaa' });
+            this.parameterEditor.add(labelText);
+            currentY += 20;
+
+            paramConfig.options.forEach(option => {
+                const optionText = this.add.text(startX + 20, currentY, `> ${option}`, { fontSize: '16px' })
+                    .setInteractive({ useHandCursor: true });
+                
+                if (block.parameters[paramKey] === option) {
+                    optionText.setColor('#ffff00');
+                }
+
+                optionText.on('pointerdown', () => {
+                    block.parameters[paramKey] = option;
+                    this.updateGridVisual(block.position[0], block.position[1]);
+                    this.closeParameterEditor();
+                });
+
+                this.parameterEditor.add(optionText);
+                currentY += 30;
             });
-
-            this.parameterEditor.add(optionText);
-            currentY += 30;
+            currentY += 5; // spacing between parameter groups
         });
     }
 
+    // --- NEW: Functions to manage Button Linking mode ---
+    
+    startLinkingMode(buttonBlock) {
+        this.closeParameterEditor();
+        this.editorMode = 'LINKING';
+        this.linkingButton = buttonBlock;
+        this.finishLinkButton.setVisible(true);
+        console.log(`Started linking for button at ${buttonBlock.position}`);
+        this.drawLinksForButton(buttonBlock);
+    }
+
+    stopLinkingMode() {
+        this.editorMode = 'NORMAL';
+        this.linkingButton = null;
+        this.finishLinkButton.setVisible(false);
+        this.clearLinkVisuals();
+        console.log('Stopped linking mode.');
+    }
+
+    handleLinkingClick(gridX, gridY) {
+        if (!this.linkingButton) return;
+        
+        const buttonPos = this.linkingButton.position;
+        if (gridX === buttonPos[0] && gridY === buttonPos[1]) {
+            return; // Can't link a button to itself
+        }
+        
+        const staticBlockId = this.gridData[gridY][gridX];
+        const dynamicBlockOnTile = this.findDynamicBlocksAt(gridX, gridY).find(b => DYNAMIC_BLOCK_TYPES[b.type]?.isStateful);
+        const staticBlockType = BLOCK_TYPES[staticBlockId];
+
+        if (!dynamicBlockOnTile && !(staticBlockType && staticBlockType.isStateful)) {
+            console.log("Cannot link: target is not a stateful block (door, arrow, etc).");
+            return;
+        }
+
+        const links = this.linkingButton.parameters.linked_positions;
+        const linkIndex = links.findIndex(pos => pos[0] === gridX && pos[1] === gridY);
+
+        if (linkIndex > -1) {
+            links.splice(linkIndex, 1);
+        } else {
+            links.push([gridX, gridY]);
+        }
+        
+        this.drawLinksForButton(this.linkingButton);
+    }
+    
+    clearLinkVisuals() {
+        this.linkVisuals.forEach(v => v.destroy());
+        this.linkVisuals = [];
+    }
+
+    drawLinksForButton(buttonBlock) {
+        this.clearLinkVisuals();
+        const startX = buttonBlock.position[0] * TILE_SIZE + TILE_SIZE / 2;
+        const startY = buttonBlock.position[1] * TILE_SIZE + TILE_SIZE / 2;
+
+        if (!buttonBlock.parameters.linked_positions) {
+             buttonBlock.parameters.linked_positions = [];
+        }
+
+        buttonBlock.parameters.linked_positions.forEach(pos => {
+            const endX = pos[0] * TILE_SIZE + TILE_SIZE / 2;
+            const endY = pos[1] * TILE_SIZE + TILE_SIZE / 2;
+            
+            const line = this.add.line(0, 0, startX, startY, endX, endY, 0xffff00, 0.7).setOrigin(0).setLineWidth(2).setDepth(100);
+            this.linkVisuals.push(line);
+        });
+    }
 }
 
 

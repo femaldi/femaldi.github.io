@@ -25,10 +25,14 @@ class GameScene extends Phaser.Scene {
         this.currentLevel = 1;
         this.networkNode = 'UNKNOWN';
         this.scanlineGroup = null;
+        this.blockStates = new Map(); // Key: "x,y", Value: { enabled: bool, initialState: bool }
+        this.initialBlockStates = new Map(); // A snapshot of the original states for resets
 
         // --- NEW: Dynamic Objects ---
         this.sentinels = [];
         this.arrows = [];
+        this.buttons = []; // NEW
+        this.circuits = []; // NEW: For visuals
 
         // Input & State
         this.cursors = null;
@@ -43,6 +47,7 @@ class GameScene extends Phaser.Scene {
         this.bufferSize = PLAYER_BUFFER_SIZE;
         this.currentBufferUsed = 0;
         this.waitTicksRemaining = 0;
+        this.revertQueue = [];
 
         // Reset Timer
         this.levelResetTimerDuration = -1;
@@ -87,6 +92,9 @@ class GameScene extends Phaser.Scene {
         this.spentCommands = [];
         this.sentinels = []; // Clear sentinels on create
         this.arrows = [];
+        this.buttons = []; // NEW: Clear buttons on create
+        this.circuits.forEach(c => c.destroy()); // NEW: Clear circuit visuals
+        this.revertQueue = []; // NEW
         this.waitTicksRemaining = 0;
         this.setGameState('MOVEMENT');
         const levelData = this.cache.json.get(`level${this.currentLevel}`);
@@ -101,6 +109,8 @@ class GameScene extends Phaser.Scene {
         this.rebuildLevelVisuals();
         this.createPlayer();
         this.createDynamicBlocks(); // --- NEW
+        this.initializeBlockStates(); // NEW: Must happen after blocks are created
+        this.createCircuits(); // NEW
         this.createDigitalRain();
         this.setupInput();
         this.createUIPanel();
@@ -119,6 +129,32 @@ class GameScene extends Phaser.Scene {
         this.updateBufferUI();
         this.updateQueueUI();
         this.time.delayedCall(250, this.checkForUnlocks, [], this);
+    }
+
+    initializeBlockStates() {
+        this.blockStates.clear();
+        this.initialBlockStates.clear();
+
+        // Stateful static blocks (doors)
+        for (let y = 0; y < this.levelLayout.length; y++) {
+            for (let x = 0; x < this.levelLayout[y].length; x++) {
+                const id = this.levelLayout[y][x];
+                const type = BLOCK_TYPES[id];
+                if (type && type.isStateful) {
+                    const key = `${x},${y}`;
+                    this.blockStates.set(key, { enabled: true, initialState: true });
+                    this.initialBlockStates.set(key, { enabled: true, initialState: true });
+                }
+            }
+        }
+        // Stateful dynamic blocks (arrows)
+        this.arrows.forEach(arrow => {
+            const key = `${arrow.gridPos.x},${arrow.gridPos.y}`;
+            const initialState = arrow.initialData.parameters.initial_state !== 'disabled';
+            this.blockStates.set(key, { enabled: initialState, initialState: initialState });
+            this.initialBlockStates.set(key, { enabled: initialState, initialState: initialState });
+            this.updateBlockVisualState(arrow.gridPos.x, arrow.gridPos.y, initialState);
+        });
     }
 
     renderStatusLog() {
@@ -202,6 +238,7 @@ class GameScene extends Phaser.Scene {
 
     update() {
         this.updateDigitalRain();
+        this.circuits.forEach(c => c.update());
     }
     
     createDynamicBlocks() {
@@ -210,13 +247,40 @@ class GameScene extends Phaser.Scene {
         this.sentinels = [];
         this.arrows.forEach(a => a.sprite.destroy());
         this.arrows = [];
+        this.buttons.forEach(b => b.sprite.destroy());
+        this.buttons = [];
 
         this.dynamicBlockData.forEach(blockData => {
-            if (blockData.type === 'sentinel') {
-                this.createSentinel(blockData);
-            } else if (blockData.type === 'arrow') {
-                this.createArrow(blockData);
-            }
+            if (blockData.type === 'sentinel') this.createSentinel(blockData);
+            else if (blockData.type === 'arrow') this.createArrow(blockData);
+            else if (blockData.type === 'button') this.createButton(blockData); // NEW
+        });
+    }
+
+    createButton(data) {
+        const [x, y] = data.position;
+        const sprite = this.add.image(x * TILE_SIZE + TILE_SIZE / 2, y * TILE_SIZE + TILE_SIZE / 2, 'game-sprites', 'button');
+        sprite.setDisplaySize(TILE_SIZE, TILE_SIZE).setDepth(2);
+
+        this.buttons.push({
+            sprite: sprite,
+            gridPos: { x, y },
+            isPressed: false,
+            linked_positions: data.parameters.linked_positions || [],
+            initialData: data
+        });
+    }
+
+    // --- NEW: Create circuit visuals ---
+    createCircuits() {
+        this.circuits.forEach(c => c.destroy());
+        this.circuits = [];
+
+        this.buttons.forEach(button => {
+            button.linked_positions.forEach(linkPos => {
+                const circuit = new CircuitVisual(this, button.gridPos, {x: linkPos[0], y: linkPos[1]});
+                this.circuits.push(circuit);
+            });
         });
     }
 
@@ -259,6 +323,114 @@ class GameScene extends Phaser.Scene {
         return this.arrows.find(a => a.gridPos.x === x && a.gridPos.y === y);
     }
 
+    // In game.js, replace the entire function
+
+    processButtonAndStateChanges() {
+        const allEntityPositions = [
+            this.playerGridPos,
+            ...this.sentinels.map(s => s.gridPos)
+        ];
+
+        // 1. Determine which buttons are currently pressed
+        this.buttons.forEach(button => {
+            const wasPressed = button.isPressed;
+            button.isPressed = allEntityPositions.some(entityPos =>
+                entityPos.x === button.gridPos.x && entityPos.y === button.gridPos.y
+            );
+            
+            // If the button was just released, queue a revert for the *next* tick
+            if (wasPressed && !button.isPressed) {
+                button.linked_positions.forEach(posArr => {
+                    this.revertQueue.push({ pos: { x: posArr[0], y: posArr[1] }, tickToRevert: this.ticks + 1 });
+                });
+            }
+        });
+
+        // 2. Build a map of what's required for each linked tile
+        const pressRequirements = new Map();
+        this.buttons.forEach(button => {
+            button.linked_positions.forEach(posArr => {
+                const key = `${posArr[0]},${posArr[1]}`;
+                if (!pressRequirements.has(key)) {
+                    pressRequirements.set(key, { required: 0, pressed: 0 });
+                }
+                pressRequirements.get(key).required++;
+            });
+        });
+
+        // 3. Tally up the currently pressed buttons
+        this.buttons.filter(b => b.isPressed).forEach(button => {
+            button.linked_positions.forEach(posArr => {
+                const key = `${posArr[0]},${posArr[1]}`;
+                if (pressRequirements.has(key)) {
+                    pressRequirements.get(key).pressed++;
+                }
+            });
+        });
+        
+        // 4. Update states based on requirements (THIS ONLY HANDLES PRESSING NOW)
+        pressRequirements.forEach((reqs, key) => {
+            const state = this.blockStates.get(key);
+            if (state) {
+                const allButtonsPressed = reqs.pressed === reqs.required;
+
+                // Only activate the block if all buttons are pressed
+                if (allButtonsPressed) {
+                    const newState = !state.initialState; // Flip to the active state
+                    if (state.enabled !== newState) {
+                        state.enabled = newState;
+                        const [x,y] = key.split(',').map(Number);
+                        this.updateBlockVisualState(x, y, newState);
+                    }
+                }
+            }
+        });
+        
+        // 5. Update circuit visuals
+        this.circuits.forEach(c => c.updateState());
+    }
+    
+    // In game.js, replace the existing function
+    processRevertQueue() {
+        const remainingReverts = [];
+        this.revertQueue.forEach(revert => {
+            if (this.ticks >= revert.tickToRevert) {
+                const key = `${revert.pos.x},${revert.pos.y}`;
+                const state = this.blockStates.get(key);
+                // Only revert if it's still in the altered state and not being pressed again
+                if(state && !this.isPosBeingPressed(revert.pos.x, revert.pos.y)) {
+                    state.enabled = state.initialState;
+                    this.updateBlockVisualState(revert.pos.x, revert.pos.y, state.enabled);
+                }
+            } else {
+                remainingReverts.push(revert);
+            }
+        });
+        this.revertQueue = remainingReverts;
+    }
+
+    // You will also need to add this new helper function inside the GameScene class
+    isPosBeingPressed(x, y) {
+        for (const button of this.buttons) {
+            if (button.isPressed) {
+                for (const linkedPos of button.linked_positions) {
+                    if (linkedPos[0] === x && linkedPos[1] === y) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+    
+    // --- NEW: Helper to update visuals of a stateful block ---
+    updateBlockVisualState(x, y, isEnabled) {
+        const object = this.levelObjects[y]?.[x] || this.arrows.find(a => a.gridPos.x === x && a.gridPos.y === y)?.sprite;
+        if(object) {
+            object.setAlpha(isEnabled ? 1.0 : 0.4);
+        }
+    }
+
     updateSentinels() {
         if (this.sentinels.length === 0) return;
 
@@ -267,7 +439,9 @@ class GameScene extends Phaser.Scene {
 
             // --- NEW: Check for arrow influence ---
             const arrow = this.findArrowAt(sentinel.gridPos.x, sentinel.gridPos.y);
-            if (arrow) {
+            const arrowState = arrow ? this.blockStates.get(`${arrow.gridPos.x},${arrow.gridPos.y}`) : null;
+
+            if (arrow && arrowState && arrowState.enabled) {
                 switch(arrow.direction) {
                     case 'up': move = { dx: 0, dy: -1 }; break;
                     case 'down': move = { dx: 0, dy: 1 }; break;
@@ -323,7 +497,16 @@ class GameScene extends Phaser.Scene {
             return true; // Grid boundaries are collidable
         }
         const tileId = this.levelLayout[y][x];
-        return tileId === 'wall' || tileId === 'door' || tileId === 'hard_wall';
+        const tileType = BLOCK_TYPES[tileId];
+
+        if (tileType && tileType.isStateful) {
+            const state = this.blockStates.get(`${x},${y}`);
+            if (state && !state.enabled) {
+                return false; // Disabled doors are not collidable
+            }
+        }
+        
+        return tileId === 'wall' || tileId === 'door' || tileId === 'hard_wall' || tileId === 'secured_door';
     }
     
     // --- End of New Sentinel Logic ---
@@ -400,7 +583,7 @@ class GameScene extends Phaser.Scene {
         let topPriority = -1;
 
         // Check dynamic blocks first
-        const dynamicBlocksOnTile = [...this.arrows, ...this.sentinels].filter(b => b.gridPos.x === x && b.gridPos.y === y);
+        const dynamicBlocksOnTile = [...this.arrows, ...this.sentinels, ...this.buttons].filter(b => b.gridPos.x === x && b.gridPos.y === y);
         
         dynamicBlocksOnTile.forEach(block => {
             const blockType = DYNAMIC_BLOCK_TYPES[block.initialData.type];
@@ -441,7 +624,7 @@ class GameScene extends Phaser.Scene {
         this.levelLayout[y][x] = null;
         
         // Clear all dynamic blocks
-        const allDynamic = [...this.arrows, ...this.sentinels];
+        const allDynamic = [...this.arrows, ...this.sentinels, ...this.buttons];
         allDynamic.forEach(block => {
             if (block.gridPos.x === x && block.gridPos.y === y) {
                 block.sprite.destroy();
@@ -449,6 +632,20 @@ class GameScene extends Phaser.Scene {
         });
         this.arrows = this.arrows.filter(a => a.gridPos.x !== x || a.gridPos.y !== y);
         this.sentinels = this.sentinels.filter(s => s.gridPos.x !== x || s.gridPos.y !== y);
+
+        // --- ADD THIS LINE ---
+        this.buttons = this.buttons.filter(b => b.gridPos.x !== x || b.gridPos.y !== y);
+        
+        // --- NEW: Also destroy any circuits connected to the cleared tile ---
+        this.circuits = this.circuits.filter(c => {
+            const isToThisTile = c.toPos.x === x && c.toPos.y === y;
+            const isFromThisTile = c.fromPos.x === x && c.fromPos.y === y;
+            if (isToThisTile || isFromThisTile) {
+                c.destroy();
+                return false; // Remove from array
+            }
+            return true; // Keep in array
+        });
     }
 
     calculateFinalCost(commandType, targetGridX, targetGridY) {
@@ -857,6 +1054,16 @@ class GameScene extends Phaser.Scene {
                 this.arrows = this.arrows.filter(a => a !== topBlock.object);
             } else if (topBlock.id === 'sentinel') {
                 this.sentinels = this.sentinels.filter(s => s !== topBlock.object);
+            } else if (topBlock.id === 'button') { // --- ADD THIS ELSE-IF BLOCK ---
+                this.buttons = this.buttons.filter(b => b !== topBlock.object);
+                // Also destroy circuits originating from this button
+                this.circuits = this.circuits.filter(c => {
+                    if (c.fromPos.x === x && c.fromPos.y === y) {
+                        c.destroy();
+                        return false; // Remove from array
+                    }
+                    return true; // Keep
+                });
             }
         } else { // static
             if (topBlock.object) {
@@ -887,8 +1094,44 @@ class GameScene extends Phaser.Scene {
             const newBlockData = sourceSnapshot.initialData;
             newBlockData.position = [targetPos.x, targetPos.y];
             
-            if (newBlockData.type === 'arrow') this.createArrow(newBlockData);
+            if (newBlockData.type === 'arrow') {
+                this.createArrow(newBlockData);
+
+                // --- NEW: Copy the current state from the source arrow ---
+                const sourcePos = command.targets[0]; // The original arrow's position
+                const sourceState = this.blockStates.get(`${sourcePos.x},${sourcePos.y}`);
+                
+                if (sourceState) {
+                    const destKey = `${targetPos.x},${targetPos.y}`;
+                    this.blockStates.set(destKey, { 
+                        enabled: sourceState.enabled, // Copy the CURRENT enabled state
+                        initialState: sourceState.enabled // The new initial state IS the copied state
+                    });
+                    
+                    // Update the visual to match the logical state immediately
+                    this.updateBlockVisualState(targetPos.x, targetPos.y, sourceState.enabled);
+                }
+            } 
             else if (newBlockData.type === 'sentinel') this.createSentinel(newBlockData);
+            else if (newBlockData.type === 'button') { // --- ADD THIS ELSE-IF BLOCK ---
+                // --- Special logic for copying button links ---
+                const sourcePos = command.targets[0]; // The original button's position
+                const destPos = command.targets[1];   // The new button's position
+                const dx = destPos.x - sourcePos.x;
+                const dy = destPos.y - sourcePos.y;
+
+                // Create a deep copy of the original links to avoid modifying them
+                const originalLinks = JSON.parse(JSON.stringify(newBlockData.parameters.linked_positions || []));
+                
+                // Translate the links relative to the new button's position
+                const newLinks = originalLinks.map(link => [link[0] + dx, link[1] + dy]);
+                
+                // Update the new block data with the translated links before creating it
+                newBlockData.parameters.linked_positions = newLinks;
+                
+                this.createButton(newBlockData);
+                this.createCircuits(); // Re-draw all circuits to include the new ones
+            }
         } else { // static
             const sourceId = sourceSnapshot.id;
             this.levelLayout[targetPos.y][targetPos.x] = sourceId;
@@ -904,12 +1147,15 @@ class GameScene extends Phaser.Scene {
     }
 
     movePlayer(dx, dy) {
+        this.processRevertQueue();
+
         // 1. Check for arrow influence first. This is the highest priority.
         let final_dx = dx;
         let final_dy = dy;
         const arrow = this.findArrowAt(this.playerGridPos.x, this.playerGridPos.y);
+        const arrowState = arrow ? this.blockStates.get(`${arrow.gridPos.x},${arrow.gridPos.y}`) : null;
 
-        if (arrow) {
+        if (arrow && arrowState && arrowState.enabled) {
             // Arrow is present, so we override any player input.
             switch(arrow.direction) {
                 case 'up':    { final_dx = 0;  final_dy = -1; break; }
@@ -983,6 +1229,8 @@ class GameScene extends Phaser.Scene {
         this.ticks++;
         this.updateTickCounter();
 
+        this.processButtonAndStateChanges();
+
         const currentTileId = this.levelLayout[this.playerGridPos.y][this.playerGridPos.x];
         if (currentTileId === 'data') {
             this.levelComplete();
@@ -1031,16 +1279,20 @@ class GameScene extends Phaser.Scene {
             this.levelLayout = JSON.parse(JSON.stringify(this.originalLevelLayout));
             this.resetTimerTicksRemaining = -1;
             this.waitTicksRemaining = 0;
+            this.revertQueue = []; // NEW
 
             // Reset all dynamic objects
             this.sentinels.forEach(s => s.sprite.destroy());
             this.sentinels = [];
             this.arrows.forEach(a => a.sprite.destroy());
             this.arrows = [];
-            this.createDynamicBlocks();
+            this.buttons.forEach(b => b.sprite.destroy());
+            this.buttons = [];
 
-            // Rebuild static tile visuals
             this.rebuildLevelVisuals();
+            this.createDynamicBlocks();
+            this.initializeBlockStates(); // NEW: Re-init states
+            this.createCircuits(); // NEW: Re-draw circuits
             
             // --- Conditional Logic based on reset type ---
             if (fullReset) {
@@ -1325,7 +1577,7 @@ class GameScene extends Phaser.Scene {
 
         const TILE_W = 64;
         const TILE_H = 64;
-        const ATLAS_WIDTH = TILE_W * 12;
+        const ATLAS_WIDTH = TILE_W * 14;
         const ATLAS_HEIGHT = TILE_H;
 
         // The main canvas for our atlas will be a RenderTexture.
@@ -1457,6 +1709,22 @@ class GameScene extends Phaser.Scene {
 
         // --- PHASE 3: Finalize the atlas and define frames ---
         rt.saveTexture(SPRITE_KEY);
+
+        // SECURED_DOOR (tile 12)
+        drawVectorTile(12, (gfx, w, h) => {
+            gfx.lineStyle(4, 0xffff00); gfx.strokeRect(2, 2, w - 4, h - 4);
+            gfx.fillStyle(0xffff00, 0.2); gfx.fillRect(2, 2, w - 4, h - 4);
+            gfx.lineStyle(6, 0xffff00);
+            gfx.lineBetween(w / 2 - 8, 10, w / 2 - 8, h - 10);
+            gfx.lineBetween(w / 2 + 8, 10, w / 2 + 8, h - 10);
+        });
+        
+        // BUTTON (tile 13)
+        drawVectorTile(13, (gfx, w, h) => {
+            gfx.fillStyle(0x888800); gfx.fillRect(0,0,w,h);
+            gfx.fillStyle(0xffff00); gfx.fillRect(8,8,w-16,h-16);
+            gfx.lineStyle(4, 0x555500); gfx.strokeRect(8,8,w-16,h-16);
+        });
         
         const finalTexture = this.textures.get(SPRITE_KEY);
         finalTexture.add('wall', 0, TILE_W * 0, 0, TILE_W, TILE_H);
@@ -1471,6 +1739,8 @@ class GameScene extends Phaser.Scene {
         finalTexture.add('arrow_down', 0, TILE_W * 9, 0, TILE_W, TILE_H);
         finalTexture.add('arrow_left', 0, TILE_W * 10, 0, TILE_W, TILE_H);
         finalTexture.add('arrow_right', 0, TILE_W * 11, 0, TILE_W, TILE_H);
+        finalTexture.add('secured_door', 0, TILE_W * 12, 0, TILE_W, TILE_H);
+        finalTexture.add('button', 0, TILE_W * 13, 0, TILE_W, TILE_H);
 
         // --- PHASE 4: Clean up all temporary assets ---
         rt.destroy();
@@ -1640,14 +1910,113 @@ class GameScene extends Phaser.Scene {
     }
 }
 
-// --- PHASER GAME CONFIGURATION ---
-// const config = {
-//     type: Phaser.AUTO,
-//     width: TILE_SIZE * GRID_WIDTH,
-//     height: TILE_SIZE * GRID_HEIGHT,
-//     parent: 'game-container',
-//     backgroundColor: '#001a00',
-//     scene: [GameScene]
-// };
+class CircuitVisual {
+    constructor(scene, fromPos, toPos) {
+        this.scene = scene;
+        this.fromPos = fromPos;
+        this.toPos = toPos;
+        this.isActive = false;
+        this.path = [];
+        this.lines = [];
+        this.sparks = [];
 
-// const game = new Phaser.Game(config);
+        this.buildPath();
+        this.createLines();
+        this.createSparks();
+    }
+
+    buildPath() {
+        const start = { x: this.fromPos.x * TILE_SIZE + TILE_SIZE / 2, y: this.fromPos.y * TILE_SIZE + TILE_SIZE / 2 };
+        const end = { x: this.toPos.x * TILE_SIZE + TILE_SIZE / 2, y: this.toPos.y * TILE_SIZE + TILE_SIZE / 2 };
+        const corner = { x: end.x, y: start.y };
+        this.path = [start, corner, end];
+    }
+
+    createLines() {
+        const color = 0xffff00; // Inactive yellow
+        
+        const line1 = this.scene.add.line(0, 0, this.path[0].x, this.path[0].y, this.path[1].x, this.path[1].y, color, 0.4).setOrigin(0).setLineWidth(2).setDepth(0);
+        const line2 = this.scene.add.line(0, 0, this.path[1].x, this.path[1].y, this.path[2].x, this.path[2].y, color, 0.4).setOrigin(0).setLineWidth(2).setDepth(0);
+
+        this.lines.push(line1, line2);
+    }
+    
+    createSparks() {
+        for (let i = 0; i < 3; i++) { // 3 sparks per circuit
+            const spark = this.scene.add.rectangle(0, 0, 8, 8, 0xffff00).setDepth(1);
+            this.sparks.push(spark);
+            this.startSparkTween(spark, i * 1000); // Stagger the start times
+        }
+    }
+    
+    // In game.js, inside the CircuitVisual class
+
+    startSparkTween(spark, delay) {
+        // Reset the spark's position
+        spark.setPosition(this.path[0].x, this.path[0].y);
+
+        // Calculate durations for each segment of the path
+        const duration1 = Phaser.Math.Distance.Between(this.path[0].x, this.path[0].y, this.path[1].x, this.path[1].y) * 5;
+        const duration2 = Phaser.Math.Distance.Between(this.path[1].x, this.path[1].y, this.path[2].x, this.path[2].y) * 5;
+
+        // Create the FIRST tween in the chain
+        this.scene.tweens.add({
+            targets: spark,
+            x: this.path[1].x,
+            y: this.path[1].y,
+            duration: duration1,
+            delay: delay,
+            ease: 'Linear', // Use Linear easing for constant speed
+            onComplete: () => {
+                // Safety check: ensure the spark hasn't been destroyed
+                if (!spark || !spark.active) {
+                    return;
+                }
+
+                // When the first tween completes, create and start the SECOND one
+                this.scene.tweens.add({
+                    targets: spark,
+                    x: this.path[2].x,
+                    y: this.path[2].y,
+                    duration: duration2,
+                    ease: 'Linear',
+                    onComplete: () => {
+                        // Safety check before restarting the loop
+                        if (!spark || !spark.active) {
+                            return;
+                        }
+                        
+                        // When the second tween completes, call this function again to loop it
+                        // after a brief pause.
+                        this.startSparkTween(spark, 500);
+                    }
+                });
+            }
+        });
+    }
+
+    updateState() {
+        const button = this.scene.buttons.find(b => b.gridPos.x === this.fromPos.x && b.gridPos.y === this.fromPos.y);
+        const wasActive = this.isActive;
+        this.isActive = button ? button.isPressed : false;
+
+        if (this.isActive !== wasActive) {
+            const color = this.isActive ? 0x00ff00 : 0x888800;
+            const sparkColor = this.isActive ? 0x99ff99 : 0xffff00;
+            this.lines.forEach(l => l.setStrokeStyle(2, color));
+            this.sparks.forEach(s => s.setFillStyle(sparkColor));
+        }
+    }
+    
+    update() {
+        // This could be used for more complex animations in the future
+    }
+
+    destroy() {
+        this.lines.forEach(l => l.destroy());
+        this.sparks.forEach(s => {
+            this.scene.tweens.killTweensOf(s);
+            s.destroy();
+        });
+    }
+}
