@@ -40,7 +40,7 @@
             border-radius: 3px;
             font-weight: bold;
         }
-
+        
         .block-legend, .command-legend {
             display: flex;
             align-items: center;
@@ -66,11 +66,13 @@
         .sprite-wall { background-color: #008800; }
         .sprite-hardwall { background-color: #005500; color: #00bb00; border-color: #00bb00;}
         .sprite-door { background-color: rgba(255, 255, 0, 0.2); border-color: #ffff00; color: #ffff00; }
+        .sprite-secured-door { background-color: rgba(255, 255, 0, 0.2); border-color: #ffff00; color: #ffff00; }
         .sprite-data { background-color: rgba(0, 255, 255, 0.2); border-color: #00ffff; color: #00ffff; border-radius: 50%; }
         .sprite-exec { background-color: rgba(255, 136, 0, 0.2); border-color: #ff8800; color: #ff8800; }
         .sprite-player { background-color: #222; color: #fff; border-color: #fff; }
         .sprite-sentinel { background-color: rgba(255, 0, 0, 0.2); border-color: #ff0000; color: #ff0000; }
         .sprite-arrow { background-color: #222; border-color: #ffff00; color: #ffff00; }
+        .sprite-button { background-color: #888800; border-color: #555500; color: #ffff00; }
 
     </style>
 </head>
@@ -153,27 +155,43 @@
         
         <div class="block-legend">
             <div class="sprite-placeholder sprite-hardwall">█</div>
-            <div><strong>Hard Wall</strong><br>Blocks all movement. Very expensive to modify (x4 multiplier).</div>
+            <div><strong>Hard Wall</strong><br>Blocks all movement. Very expensive to modify (x8 multiplier).</div>
         </div>
 
         <div class="block-legend">
             <div class="sprite-placeholder sprite-door">|</div>
-            <div><strong>Door / Gate</strong><br>Blocks all movement. Standard command multiplier (x1).</div>
+            <div><strong>Door / Gate</strong><br>Blocks movement when enabled. Can be disabled by a Button.</div>
+        </div>
+
+        <div class="block-legend">
+            <div class="sprite-placeholder sprite-secured-door">||</div>
+            <div><strong>Secured Door</strong><br>A more expensive Door (x4 multiplier). Blocks movement when enabled. Can be disabled by a Button.</div>
         </div>
         
         <div class="block-legend">
             <div class="sprite-placeholder sprite-sentinel">O</div>
-            <div><strong>Sentinel</strong><br>A mobile security program. Moves one tile per tick. Collision with a Sentinel results in a full level restart. Sentinels are affected by Arrow Tiles.</div>
+            <div><strong>Sentinel</strong><br>A mobile security program. Moves one tile per tick. Collision with a Sentinel results in a full level restart. Sentinels are affected by Arrow Tiles and can press Buttons.</div>
         </div>
         
         <div class="block-legend">
             <div class="sprite-placeholder sprite-arrow">»</div>
-            <div><strong>Arrow Tile</strong><br>Forces any entity (Operator or Sentinel) that stands on it to move in the indicated direction on the next tick, overriding any other movement input.</div>
+            <div><strong>Arrow Tile</strong><br>Forces any entity (Operator or Sentinel) that stands on it to move in the indicated direction on the next tick, overriding any other movement input. Can be enabled or disabled by Buttons.</div>
+        </div>
+
+        <div class="block-legend">
+            <div class="sprite-placeholder sprite-button">B</div>
+            <div><strong>Button</strong><br>A pressure plate that interacts with other blocks. When an entity (Operator or Sentinel) stands on it, the Button sends an "ON" signal to all linked blocks.
+            <ul>
+                <li>When a linked block receives an "ON" signal from ALL of its connected buttons, its state is flipped (e.g., an enabled Door becomes disabled).</li>
+                <li>When an entity steps off a Button, the "ON" signal is turned off. The linked block will remain in its activated state for <strong>1 extra tick</strong> before reverting to its normal state.</li>
+            </ul>
+            Buttons can be targeted by <span class="key">COPY</span> and <span class="key">DELETE</span> commands.
+            </div>
         </div>
 
         <div class="block-legend">
             <div class="sprite-placeholder sprite-data">●</div>
-            <div><strong>Data Node</strong><br>The objective. Move onto this tile to acquire the data and complete the level. Data nodes have the highest command multiplier (x5).</div>
+            <div><strong>Data Node</strong><br>The objective. Move onto this tile to acquire the data and complete the level. Data nodes have the highest command multiplier (x15).</div>
         </div>
         
         <div class="block-legend">
