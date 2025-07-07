@@ -1,7 +1,7 @@
 {
   "width": 24,
   "height": 24,
-  "reset_timer": 16,
+  "reset_timer": 28,
   "buffer_size": 16,
   "tiles": [
     [
@@ -169,19 +169,19 @@
       null,
       null,
       null,
-      "hard_wall",
-      "hard_wall",
-      "hard_wall",
-      "hard_wall",
-      "hard_wall",
-      "hard_wall",
-      "hard_wall",
       null,
       null,
       null,
-      null,
-      null,
-      null,
+      "hard_wall",
+      "hard_wall",
+      "hard_wall",
+      "hard_wall",
+      "hard_wall",
+      "hard_wall",
+      "hard_wall",
+      "hard_wall",
+      "hard_wall",
+      "hard_wall",
       null,
       null,
       null
@@ -195,133 +195,10 @@
       null,
       null,
       null,
-      "hard_wall",
-      null,
-      "hard_wall",
       null,
       null,
       null,
       "hard_wall",
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null
-    ],
-    [
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      "hard_wall",
-      null,
-      "hard_wall",
-      null,
-      "hard_wall",
-      null,
-      "hard_wall",
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null
-    ],
-    [
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      "hard_wall",
-      null,
-      "hard_wall",
-      "hard_wall",
-      "hard_wall",
-      null,
-      "hard_wall",
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null
-    ],
-    [
-      null,
-      null,
-      null,
-      null,
-      "hard_wall",
-      "hard_wall",
-      "hard_wall",
-      "hard_wall",
-      "hard_wall",
-      null,
-      null,
-      null,
-      null,
-      null,
-      "hard_wall",
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null
-    ],
-    [
-      null,
-      null,
-      null,
-      "hard_wall",
-      "hard_wall",
-      null,
-      "execution_point",
-      null,
-      "hard_wall",
-      "hard_wall",
-      "hard_wall",
-      "hard_wall",
-      "hard_wall",
-      "hard_wall",
-      "hard_wall",
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null
-    ],
-    [
-      null,
-      null,
-      null,
-      "hard_wall",
-      "player",
       null,
       null,
       null,
@@ -330,30 +207,124 @@
       null,
       "secured_door",
       null,
+      "hard_wall",
+      null,
+      null,
+      null
+    ],
+    [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      "hard_wall",
+      "hard_wall",
+      "hard_wall",
+      null,
+      null,
+      "hard_wall",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      "hard_wall",
+      "hard_wall",
+      "hard_wall",
+      null,
+      null,
+      null
+    ],
+    [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      "hard_wall",
+      null,
+      "hard_wall",
+      null,
+      null,
+      "hard_wall",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      "hard_wall",
+      null,
+      null,
+      null,
+      null
+    ],
+    [
+      null,
+      null,
+      "hard_wall",
+      "hard_wall",
+      "hard_wall",
+      "hard_wall",
+      "hard_wall",
+      null,
+      "hard_wall",
+      "hard_wall",
+      "hard_wall",
+      "hard_wall",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      "hard_wall",
+      "hard_wall",
+      "hard_wall",
+      "hard_wall",
+      null
+    ],
+    [
+      null,
+      null,
+      "hard_wall",
+      "player",
+      null,
+      "secured_door",
+      null,
+      null,
+      null,
+      "secured_door",
+      null,
+      null,
+      null,
+      null,
+      null,
+      "execution_point",
+      null,
+      null,
+      null,
+      "secured_door",
+      null,
       "data",
       "hard_wall",
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
       null
     ],
     [
       null,
       null,
-      null,
+      "hard_wall",
+      "hard_wall",
+      "hard_wall",
       "hard_wall",
       "hard_wall",
       null,
-      null,
-      null,
-      "hard_wall",
-      "hard_wall",
-      "hard_wall",
       "hard_wall",
       "hard_wall",
       "hard_wall",
@@ -365,7 +336,10 @@
       null,
       null,
       null,
-      null,
+      "hard_wall",
+      "hard_wall",
+      "hard_wall",
+      "hard_wall",
       null
     ],
     [
@@ -373,12 +347,14 @@
       null,
       null,
       null,
-      "hard_wall",
-      "hard_wall",
-      "hard_wall",
-      "hard_wall",
+      null,
+      null,
       "hard_wall",
       null,
+      "hard_wall",
+      null,
+      null,
+      "hard_wall",
       null,
       null,
       null,
@@ -386,9 +362,7 @@
       null,
       null,
       null,
-      null,
-      null,
-      null,
+      "hard_wall",
       null,
       null,
       null,
@@ -401,6 +375,12 @@
       null,
       null,
       null,
+      "hard_wall",
+      "hard_wall",
+      "hard_wall",
+      null,
+      null,
+      "hard_wall",
       null,
       null,
       null,
@@ -408,13 +388,7 @@
       null,
       null,
       null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
+      "hard_wall",
       null,
       null,
       null,
@@ -432,6 +406,7 @@
       null,
       null,
       null,
+      "hard_wall",
       null,
       null,
       null,
@@ -439,8 +414,7 @@
       null,
       null,
       null,
-      null,
-      null,
+      "hard_wall",
       null,
       null,
       null,
@@ -458,15 +432,15 @@
       null,
       null,
       null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
+      "hard_wall",
+      "hard_wall",
+      "hard_wall",
+      "hard_wall",
+      "secured_door",
+      "hard_wall",
+      "hard_wall",
+      "hard_wall",
+      "hard_wall",
       null,
       null,
       null,
@@ -487,9 +461,9 @@
       null,
       null,
       null,
+      "hard_wall",
       null,
-      null,
-      null,
+      "hard_wall",
       null,
       null,
       null,
@@ -513,9 +487,35 @@
       null,
       null,
       null,
+      "hard_wall",
+      null,
+      "hard_wall",
       null,
       null,
       null,
+      null,
+      null,
+      null,
+      null
+    ],
+    [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      "hard_wall",
+      "hard_wall",
+      "hard_wall",
       null,
       null,
       null,
@@ -629,13 +629,13 @@
       null
     ]
   ],
-  "network_node": "79.FC.8",
+  "network_node": "1A.B6.8",
   "dynamic_blocks": [
     {
       "type": "button",
       "position": [
-        6,
-        12
+        7,
+        11
       ],
       "parameters": {
         "linked_positions": [
@@ -645,15 +645,11 @@
           ],
           [
             7,
+            13
+          ],
+          [
+            9,
             11
-          ],
-          [
-            5,
-            13
-          ],
-          [
-            7,
-            13
           ]
         ]
       }
@@ -662,28 +658,6 @@
       "type": "arrow",
       "position": [
         7,
-        11
-      ],
-      "parameters": {
-        "direction": "down",
-        "initial_state": "disabled"
-      }
-    },
-    {
-      "type": "arrow",
-      "position": [
-        7,
-        13
-      ],
-      "parameters": {
-        "direction": "left",
-        "initial_state": "disabled"
-      }
-    },
-    {
-      "type": "arrow",
-      "position": [
-        5,
         13
       ],
       "parameters": {
@@ -692,10 +666,66 @@
       }
     },
     {
+      "type": "sentinel",
+      "position": [
+        7,
+        9
+      ],
+      "parameters": {
+        "direction": "vertical"
+      }
+    },
+    {
       "type": "arrow",
       "position": [
-        5,
-        11
+        17,
+        14
+      ],
+      "parameters": {
+        "direction": "up",
+        "initial_state": "disabled"
+      }
+    },
+    {
+      "type": "button",
+      "position": [
+        19,
+        7
+      ],
+      "parameters": {
+        "linked_positions": [
+          [
+            19,
+            11
+          ]
+        ]
+      }
+    },
+    {
+      "type": "sentinel",
+      "position": [
+        15,
+        7
+      ],
+      "parameters": {
+        "direction": "vertical"
+      }
+    },
+    {
+      "type": "sentinel",
+      "position": [
+        13,
+        7
+      ],
+      "parameters": {
+        "direction": "vertical"
+      }
+    },
+    {
+      "type": "arrow",
+      "position": [
+        13,
+        14
       ],
       "parameters": {
         "direction": "right",
@@ -705,26 +735,16 @@
     {
       "type": "button",
       "position": [
-        11,
-        8
+        15,
+        18
       ],
       "parameters": {
         "linked_positions": [
           [
-            11,
-            12
+            19,
+            11
           ]
         ]
-      }
-    },
-    {
-      "type": "sentinel",
-      "position": [
-        9,
-        7
-      ],
-      "parameters": {
-        "direction": "vertical"
       }
     }
   ]

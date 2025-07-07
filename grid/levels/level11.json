@@ -1,7 +1,7 @@
 {
   "width": 24,
   "height": 24,
-  "reset_timer": 60,
+  "reset_timer": 48,
   "buffer_size": 16,
   "tiles": [
     [
@@ -286,7 +286,7 @@
       "hard_wall",
       "hard_wall",
       "hard_wall",
-      null,
+      "hard_wall",
       null,
       null
     ],
@@ -310,10 +310,10 @@
       "secured_door",
       null,
       "secured_door",
+      null,
       "data",
       "hard_wall",
       null,
-      null,
       null
     ],
     [
@@ -338,7 +338,7 @@
       "hard_wall",
       "hard_wall",
       "hard_wall",
-      null,
+      "hard_wall",
       null,
       null
     ],
@@ -352,37 +352,11 @@
       null,
       null,
       "hard_wall",
-      "hard_wall",
-      "hard_wall",
       null,
       "hard_wall",
       "hard_wall",
       "hard_wall",
       null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null
-    ],
-    [
-      null,
-      "hard_wall",
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      "hard_wall",
-      "hard_wall",
-      "hard_wall",
-      null,
-      "hard_wall",
-      "hard_wall",
       "hard_wall",
       null,
       null,
@@ -404,11 +378,11 @@
       null,
       null,
       "hard_wall",
-      "hard_wall",
-      "hard_wall",
       null,
       "hard_wall",
       "hard_wall",
+      "hard_wall",
+      null,
       "hard_wall",
       null,
       null,
@@ -434,7 +408,33 @@
       "hard_wall",
       "hard_wall",
       "hard_wall",
+      null,
       "hard_wall",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    [
+      null,
+      "hard_wall",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      "hard_wall",
+      "hard_wall",
+      "hard_wall",
+      "hard_wall",
+      "hard_wall",
+      null,
       "hard_wall",
       null,
       null,
@@ -632,6 +632,51 @@
   "network_node": "2F.3B.8",
   "dynamic_blocks": [
     {
+      "type": "button",
+      "position": [
+        9,
+        14
+      ],
+      "parameters": {
+        "linked_positions": [
+          [
+            14,
+            11
+          ]
+        ]
+      }
+    },
+    {
+      "type": "button",
+      "position": [
+        11,
+        7
+      ],
+      "parameters": {
+        "linked_positions": [
+          [
+            16,
+            11
+          ]
+        ]
+      }
+    },
+    {
+      "type": "button",
+      "position": [
+        13,
+        16
+      ],
+      "parameters": {
+        "linked_positions": [
+          [
+            18,
+            11
+          ]
+        ]
+      }
+    },
+    {
       "type": "arrow",
       "position": [
         2,
@@ -678,6 +723,26 @@
     {
       "type": "sentinel",
       "position": [
+        7,
+        16
+      ],
+      "parameters": {
+        "direction": "horizontal"
+      }
+    },
+    {
+      "type": "sentinel",
+      "position": [
+        2,
+        16
+      ],
+      "parameters": {
+        "direction": "horizontal"
+      }
+    },
+    {
+      "type": "sentinel",
+      "position": [
         2,
         6
       ],
@@ -693,44 +758,6 @@
       ],
       "parameters": {
         "direction": "horizontal"
-      }
-    },
-    {
-      "type": "button",
-      "position": [
-        11,
-        7
-      ],
-      "parameters": {
-        "linked_positions": [
-          [
-            14,
-            11
-          ],
-          [
-            18,
-            11
-          ]
-        ]
-      }
-    },
-    {
-      "type": "button",
-      "position": [
-        11,
-        15
-      ],
-      "parameters": {
-        "linked_positions": [
-          [
-            14,
-            11
-          ],
-          [
-            16,
-            11
-          ]
-        ]
       }
     }
   ]
