@@ -1072,6 +1072,13 @@
 
             ctx.putImageData(imageData, 0, 0);
 
+            const aimDX = mouse.worldX - (player.x + player.width / 2);
+            const aimDY = (player.y + 9) - mouse.worldY;
+            const aimAngle = Math.atan2(aimDY, aimDX);
+            const wandDir = angleToDir16(aimAngle);
+
+            playerFacingRight = aimDX >= 0;
+
             // --- PLAYER (SNAPPED FOR SHARPNESS) ---
             const playerScreenX = Math.round(player.x - camera.x);
             const playerScreenY = Math.round(player.y - camera.y);
@@ -1094,9 +1101,6 @@
                 // --- Face ---
                 ctx.fillStyle = faceColor;
                 ctx.fillRect(playerScreenX + 4, playerScreenY + 2, 2, 4);
-                // --- Hand & Wand ---
-                ctx.fillStyle = handColor;
-                ctx.fillRect(playerScreenX + 8, playerScreenY + 8, 4, 2);
                 // Set aim origin
                 wandScreenX = playerScreenX + 11;
                 wandScreenY = playerScreenY + 9;
@@ -1109,13 +1113,42 @@
                 // --- Face ---
                 ctx.fillStyle = faceColor;
                 ctx.fillRect(playerScreenX + 2, playerScreenY + 2, 2, 4);
-                // --- Hand & Wand ---
-                ctx.fillStyle = handColor;
-                ctx.fillRect(playerScreenX - 4, playerScreenY + 8, 4, 2);
                 // Set aim origin
                 wandScreenX = playerScreenX - 3;
                 wandScreenY = playerScreenY + 9;
             }
+
+            // --- Wand ---
+            const handX = playerFacingRight
+                ? playerScreenX + 8
+                : playerScreenX - 1;
+
+            const handY = playerScreenY + 9;
+
+            const wandLen = 3;
+
+            const dx = wandDir.x;
+            const dy = wandDir.y;
+            const mag = Math.max(Math.abs(dx), Math.abs(dy));
+
+            ctx.fillStyle = '#bfa76a';
+            for (let i = 0; i < wandLen; i++) {
+                ctx.fillRect(
+                    handX + Math.round(dx * i / mag),
+                    handY + Math.round(dy * i / mag),
+                    1,
+                    1
+                );
+            }
+
+            // Tip
+            ctx.fillStyle = '#ffcc66';
+            ctx.fillRect(
+                handX + Math.round(dx * wandLen / mag),
+                handY + Math.round(dy * wandLen / mag),
+                1,
+                1
+            );
 
 
             // --- PROJECTILES (also snapped) ---
@@ -1138,6 +1171,32 @@
             ctx.stroke();
         }
 
+        function angleToDir16(a) {
+            const step = Math.PI / 8;
+            const i = Math.round(a / step) & 15;
+            return WAND_DIRS_16[i];
+        }
+
+
+        const WAND_DIRS_16 = [
+            { x: 1,  y: 0 },
+            { x: 2,  y: -1 },
+            { x: 1,  y: -1 },
+            { x: 1,  y: -2 },
+            { x: 0,  y: -1 },
+            { x: -1, y: -2 },
+            { x: -1, y: -1 },
+            { x: -2, y: -1 },
+            { x: -1, y: 0 },
+            { x: -2, y: 1 },
+            { x: -1, y: 1 },
+            { x: -1, y: 2 },
+            { x: 0,  y: 1 },
+            { x: 1,  y: 2 },
+            { x: 1,  y: 1 },
+            { x: 2,  y: 1 },
+        ];
+
         function animateLiquidColor(r, g, b, x, y, type, time) {
             // Static grain (same as solids)
             const baseNoise = (hashCell(x, y, type) / 255 - 0.5) * 12;
@@ -1154,12 +1213,10 @@
             ];
         }
 
-
         function liquidWave(x, y, t) {
             return Math.sin(x * 0.15 + t) * 0.5 +
                 Math.sin(y * 0.1  + t * 1.3) * 0.5;
         }
-
 
         function hashCell(x, y, type) {
             // Fast, deterministic hash
