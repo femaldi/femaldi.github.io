@@ -262,6 +262,12 @@
             );
         }
 
+        const LIQUIDS = new Set([
+            MAT.WATER,
+            MAT.OIL,
+            MAT.OIL_BURNING
+        ]);
+
         function tryIgniteAt(x, y, probability = 1.0) {
             const idx = getIdx(x, y);
             if (idx === -1) return;
@@ -971,7 +977,7 @@
         function render() {
             // --- WORLD ---
             pixels.fill(0);
-
+            const time = frameCount * 0.04;
             const startX = Math.floor(camera.x);
             const endX   = startX + viewWidth;
 
@@ -981,15 +987,23 @@
                     if (idx === -1 || grid[idx] === MAT.EMPTY) continue;
 
                     const type = grid[idx];
+
                     let [r, g, b] = COLORS[type];
 
                     if (type === MAT.FIRE) {
                         r = 255;
-                        g = 50 + Math.random() * 100;
+                        g = 80 + Math.random() * 80;
                         b = 0;
                     }
-
+                    else if (type === MAT.WATER || type === MAT.OIL || type === MAT.OIL_BURNING) {
+                        [r, g, b] = animateLiquidColor(r, g, b, x, y, type, time);
+                    }
+                    else {
+                        [r, g, b] = varyColor(r, g, b, x, y, type, 16);
+                    }
+                    
                     setPixel(x - startX, y, r, g, b);
+
                 }
             }
 
@@ -1061,52 +1075,50 @@
             ctx.stroke();
         }
 
-        // function render() {
-        //     ctx.fillStyle = '#000';
-        //     ctx.fillRect(0, 0, canvas.width, canvas.height);
-        //     const startX = Math.floor(camera.x);
-        //     const endX = Math.ceil(camera.x + viewWidth);
-        //     for (let y = 0; y < viewHeight; y++) {
-        //         for (let x = startX; x < endX; x++) {
-        //             const idx = getIdx(x, y);
-        //             if (idx === -1 || grid[idx] === MAT.EMPTY) continue;
-        //             const type = grid[idx];
-        //             const screenX = (x - camera.x) * scale;
-        //             const screenY = y * scale;
-        //             let [r, g, b] = COLORS[type];
-        //             if (type === MAT.FIRE) { r = 255; g = 50 + Math.random() * 100; b = 0; }
-        //             ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
-        //             ctx.fillRect(screenX, screenY, scale, scale);
-        //         }
-        //     }
+        function animateLiquidColor(r, g, b, x, y, type, time) {
+            // Static grain (same as solids)
+            const baseNoise = (hashCell(x, y, type) / 255 - 0.5) * 12;
 
-        //     const playerScreenX = (player.x - camera.x) * scale;
-        //     const playerScreenY = (player.y - camera.y) * scale;
-			
-        //     ctx.fillStyle = 'lime';
-        //     ctx.fillRect(playerScreenX, playerScreenY, player.width * scale, player.height * scale);
-            
-        //     ctx.fillStyle = 'black';
-        //     const eyeX = playerScreenX + (playerFacingRight ? player.width * scale * 0.6 : player.width * scale * 0.1);
-        //     const eyeY = playerScreenY + player.height * scale * 0.25;
-        //     ctx.fillRect(eyeX, eyeY, scale, scale); // Eye size remains 1 cell
-			
-        //     ctx.fillStyle = 'orange';
-        //     projectiles.forEach(p => {
-        //         const screenX = (p.x - camera.x) * scale;
-        //         const screenY = (p.y - camera.y) * scale;
-        //         ctx.fillRect(screenX - scale/2, screenY - scale/2, scale, scale);
-        //     });
+            // Animated wave
+            const wave = liquidWave(x, y, time) * 10;
 
-        //     ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
-        //     ctx.lineWidth = 2;
-        //     ctx.beginPath();
-        //     ctx.moveTo(eyeX, eyeY);
-        //     ctx.lineTo(mouse.x, mouse.y);
-        //     ctx.stroke();
-        // }
+            const delta = baseNoise + wave;
 
-        // --- SCENE GENERATION ---
+            return [
+                Math.max(0, Math.min(255, r + delta)),
+                Math.max(0, Math.min(255, g + delta)),
+                Math.max(0, Math.min(255, b + delta))
+            ];
+        }
+
+
+        function liquidWave(x, y, t) {
+            return Math.sin(x * 0.15 + t) * 0.5 +
+                Math.sin(y * 0.1  + t * 1.3) * 0.5;
+        }
+
+
+        function hashCell(x, y, type) {
+            // Fast, deterministic hash
+            let h = x * 374761393 + y * 668265263 + type * 1442695041;
+            h = (h ^ (h >> 13)) * 1274126177;
+            return (h ^ (h >> 16)) & 0xff; // 0..255
+        }
+
+        function varyColor(r, g, b, x, y, type, strength = 18) {
+            // strength = max brightness change (try 12–24)
+            const n = hashCell(x, y, type) / 255; // 0..1
+            const delta = (n - 0.5) * strength * 2;
+
+            return [
+                Math.max(0, Math.min(255, r + delta)),
+                Math.max(0, Math.min(255, g + delta)),
+                Math.max(0, Math.min(255, b + delta))
+            ];
+        }
+
+
+
         function findGroundSurfaceY(x) {
             for (let y = 0; y < worldHeight; y++) { if (grid[getIdx(x, y)] !== MAT.EMPTY) return y; }
             return worldHeight - 1;
@@ -1125,33 +1137,9 @@
         function loadInitialScene() {
             for (let x = 0; x < worldWidth; x++) {
                 // Scaled terrain generation
-                const groundHeight = Math.floor(worldHeight - 40 + Math.sin(x / 60) * 16 + Math.cos(x / 24) * 8);
+                const groundHeight = Math.floor(worldHeight - 40 + Math.sin(x / 60) * 16 + Math.cos(x / 24) * 8) - 60;
                 for (let y = groundHeight; y < worldHeight; y++) {
-                    grid[getIdx(x, y)] = (Math.random() < 0.8) ? MAT.SOIL : MAT.SAND;
-                }
-            }
-            for (let i = 200; i < worldWidth - 200; i += 200 + Math.random() * 100) { // Scaled spacing
-                 drawTree(i, findGroundSurfaceY(i) - 1);
-            }
-			
-            const numReservoirs = 5;
-            const reservoirWidth = 40; // Scaled
-            const reservoirHeight = 80; // Scaled
-            for (let i = 0; i < numReservoirs; i++) {
-                // Scaled positioning
-                const startX = Math.floor(100 + Math.random() * (worldWidth - 200 - reservoirWidth));
-                const startY = Math.floor(80 + Math.random() * (worldHeight - 100 - reservoirHeight));
-
-                for (let y = 0; y < reservoirHeight; y++) {
-                    for (let x = 0; x < reservoirWidth; x++) {
-                        const currentX = startX + x;
-                        const currentY = startY + y;
-                        if (x === 0 || x === reservoirWidth - 1 || y === reservoirHeight - 1) {
-                            grid[getIdx(currentX, currentY)] = MAT.WOOD;
-                        } else {
-                            grid[getIdx(currentX, currentY)] = MAT.WATER;
-                        }
-                    }
+                    grid[getIdx(x, y)] = y > (groundHeight + worldHeight) / 2 ? MAT.SOIL : MAT.SAND;
                 }
             }
 			
