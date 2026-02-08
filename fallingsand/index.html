@@ -647,10 +647,14 @@
                 {x:0,y:1},{x:0,y:-1},{x:1,y:0},{x:-1,y:0}
             ]) {
                 const nIdx = getIdx(x + n.x, y + n.y);
+                if (Math.random() < 0.35) { // 35% chance per frame to spread
+                const nIdx = getIdx(x + n.x, y + n.y);
                 if (nIdx !== -1 && grid[nIdx] === MAT.GUNPOWDER) {
                     grid[nIdx] = MAT.GUNPOWDER_IGNITED;
-                    ignitionTimer[nIdx] = 3 + Math.floor(Math.random() * 5);
+                    // Increased fuse time for a slower burn
+                    ignitionTimer[nIdx] = 8 + Math.floor(Math.random() * 6);
                 }
+            }
             }
 
             if (ignitionTimer[idx] <= 0) {
@@ -716,9 +720,11 @@
                 const nType = grid[nIdx];
 
                 if (nType === MAT.GUNPOWDER) {
-                    grid[nIdx] = MAT.GUNPOWDER_IGNITED;
-                    ignitionTimer[nIdx] = 3 + Math.floor(Math.random() * 5); // frames
-                    return;
+                    if (Math.random() < 0.5) { // 50% chance to be ignited by fire
+                        grid[nIdx] = MAT.GUNPOWDER_IGNITED;
+                        ignitionTimer[nIdx] = 8 + Math.floor(Math.random() * 6); // Use same slower fuse
+                        return;
+                    }
                 }
 
                 if (nType === MAT.OIL) {
@@ -878,7 +884,12 @@
 
         function updateGas(x, y, idx, moved) {
             const aboveIdx = getIdx(x, y - 1);
-            if (aboveIdx === -1) return;
+            
+            if (y === 0) {
+                grid[idx] = MAT.EMPTY;
+                return;
+            }
+
             const above = grid[aboveIdx];
             if ([MAT.EMPTY, MAT.WATER, MAT.SAND, MAT.SOIL, MAT.GUNPOWDER].includes(above)) {
                 grid[idx] = above; grid[aboveIdx] = MAT.GAS; moved[aboveIdx] = 1; return;
@@ -1280,14 +1291,14 @@
             }
 
             createCircle({
-                x: worldWidth / 2 + 50,
+                x: worldWidth / 2 + 100,
                 y: 250,
-                radius: 25,
+                radius: 40,
                 type: MAT.WATER
             });
 
             createReservoir({
-                x: worldWidth / 2 + 200,
+                x: worldWidth / 2 + 350,
                 y: 50,
                 width: 60,
                 height: 100,
@@ -1295,7 +1306,7 @@
             });
 
             createReservoir({
-                x: worldWidth / 2 - 200,
+                x: worldWidth / 2 - 150,
                 y: 50,
                 width: 60,
                 height: 100,
@@ -1303,7 +1314,7 @@
             });
 
             createReservoir({
-                x: worldWidth / 2 + 300,
+                x: worldWidth / 2 + 500,
                 y: 50,
                 width: 60,
                 height: 100,
