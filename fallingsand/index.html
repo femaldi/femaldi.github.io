@@ -68,31 +68,18 @@
             cursor: crosshair;
             image-rendering: pixelated; 
         }
-        #fpsCounter {
-            position: absolute;
+        #controls_ui {
+            position: fixed;
             top: 10px;
-            right: 15px;
-            padding: 6px 10px;
-            background: rgba(0, 0, 0, 0.6);
-            color: #00ff90;
+            left: 10px;
+            color: white;
             font-family: monospace;
             font-size: 14px;
+            background: rgba(0,0,0,0.5);
+            padding: 8px 10px;
             border-radius: 6px;
             pointer-events: none;
         }
-        #controls_ui {
-        position: fixed;
-        top: 10px;
-        left: 10px;
-        color: white;
-        font-family: monospace;
-        font-size: 14px;
-        background: rgba(0,0,0,0.5);
-        padding: 8px 10px;
-        border-radius: 6px;
-        pointer-events: none;
-        }
-
     </style>
 </head>
 <body>
@@ -124,15 +111,13 @@
         Middle Click – Paint brush
     </div>
 
-
     <canvas id="canvas"></canvas>
-    <div id="fpsCounter">FPS: --</div>
-
 
     <script>
         // --- CONFIGURATION ---
         const canvas = document.getElementById('canvas');
         const ctx = canvas.getContext('2d');
+
         
         // NEW: Increased view area and reduced scale
         const viewWidth = 600;
@@ -166,24 +151,35 @@
             EMPTY: 0, WALL: 1, SAND: 2, WATER: 3, SOIL: 4, GAS: 5, 
             WOOD: 10, FIRE: 11, GUNPOWDER: 12, GUNPOWDER_IGNITED: 13,
             OIL: 14, OIL_BURNING: 15,
-            COAL:16, COAL_BURNING:17,
-            SRC_SAND: 20, SRC_WATER: 21, SRC_FIRE: 22, SRC_GUNPOWDER: 23
+            COAL:16, COAL_BURNING:17
         };
-        const GENERATES = {
-            [MAT.SRC_SAND]: MAT.SAND, [MAT.SRC_WATER]: MAT.WATER,
-            [MAT.SRC_FIRE]: MAT.FIRE, [MAT.SRC_GUNPOWDER]: MAT.GUNPOWDER,
 
-        };
         const COLORS = {
             [MAT.WALL]: [100, 100, 100], [MAT.SAND]: [246, 215, 176],
             [MAT.WATER]: [79, 164, 244], [MAT.SOIL]: [93, 64, 55],
             [MAT.GAS]: [200, 200, 200], [MAT.WOOD]: [139, 69, 19],
             [MAT.FIRE]: [255, 69, 0], [MAT.GUNPOWDER]: [60, 60, 60],
-            [MAT.SRC_SAND]: [255, 235, 200], [MAT.SRC_WATER]: [150, 220, 255], 
-            [MAT.SRC_FIRE]: [255, 150, 100], [MAT.SRC_GUNPOWDER]: [100, 100, 100], 
             [MAT.GUNPOWDER_IGNITED]: [120, 80, 80], [MAT.OIL]: [90, 70, 30], [MAT.OIL_BURNING]: [255, 69, 0],
             [MAT.COAL]: [30, 30, 30], [MAT.COAL_BURNING]: [255, 69, 0]
         };
+
+        const MATERIAL_NAME = {
+            [MAT.EMPTY]: 'Empty',
+            [MAT.WALL]: 'Wall',
+            [MAT.SAND]: 'Sand',
+            [MAT.WATER]: 'Water',
+            [MAT.SOIL]: 'Soil',
+            [MAT.GAS]: 'Gas',
+            [MAT.WOOD]: 'Wood',
+            [MAT.FIRE]: 'Fire',
+            [MAT.GUNPOWDER]: 'Gunpowder',
+            [MAT.GUNPOWDER_IGNITED]: 'Gunpowder (Ignited)',
+            [MAT.OIL]: 'Oil',
+            [MAT.OIL_BURNING]: 'Burning Oil',
+            [MAT.COAL]: 'Coal',
+            [MAT.COAL_BURNING]: 'Burning Coal',
+        };
+
 
         const LIQUID_DENSITY = {
             [MAT.WATER]: 2,
@@ -209,7 +205,10 @@
         let fps = 0;
         let leftToRight = true;
 
-        const fpsCounter = document.getElementById('fpsCounter');
+        let hudFPS = 0;
+        let hudMaterial = '--';
+        let hudTimer = 0;
+
 
         // --- PLAYER AND CAMERA ---
         const player = {
@@ -1117,6 +1116,15 @@
             ];
         }
 
+        function updateHoverMaterial() {
+            const idx = getIdx(mouse.worldX, mouse.worldY);
+            if (idx === -1) {
+                hudMaterial = '--';
+            } else {
+                const type = grid[idx];
+                hudMaterial = MATERIAL_NAME[type] || 'Unknown';
+            }
+        }
 
 
         function findGroundSurfaceY(x) {
@@ -1150,8 +1158,15 @@
                 grid[getIdx(worldWidth - 2, y)] = MAT.WALL;
             }
 
+            createCircle({
+                x: worldWidth / 2 + 50,
+                y: 250,
+                radius: 25,
+                type: MAT.WATER
+            });
+
             createReservoir({
-                x: worldWidth / 2 + 150,
+                x: worldWidth / 2 + 200,
                 y: 50,
                 width: 60,
                 height: 100,
@@ -1159,7 +1174,7 @@
             });
 
             createReservoir({
-                x: worldWidth / 2 - 150,
+                x: worldWidth / 2 - 200,
                 y: 50,
                 width: 60,
                 height: 100,
@@ -1167,7 +1182,7 @@
             });
 
             createReservoir({
-                x: worldWidth / 2 + 250,
+                x: worldWidth / 2 + 300,
                 y: 50,
                 width: 60,
                 height: 100,
@@ -1184,7 +1199,6 @@
                 fps = framesThisSecond;
                 framesThisSecond = 0;
                 lastFpsTime = now;
-                fpsCounter.textContent = `FPS: ${fps}`;
             }
 
             updatePlayer();
@@ -1198,7 +1212,47 @@
             updateCamera();
             render();
             requestAnimationFrame(gameLoop);
+
+            updateUI();
+            drawHUD();
         }
+
+        function updateUI()
+        {
+            if ((hudTimer++ & 1) === 0) { // ~30 Hz
+                updateHoverMaterial();
+            }
+            hudFPS = fps;
+
+        }
+
+        function drawHUD() {
+            const padding = 6;
+            const x = renderWidth - 6;
+            const y = 6;
+
+            ctx.imageSmoothingEnabled = false;
+            ctx.font = '12px monospace';
+            ctx.textAlign = 'right';
+            ctx.textBaseline = 'top';
+
+            // Background
+            ctx.fillStyle = 'rgba(0,0,0,0.6)';
+            ctx.fillRect(
+                renderWidth - 150,
+                4,
+                146,
+                34
+            );
+
+            // Text
+            ctx.fillStyle = '#00ff90';
+            ctx.fillText(`FPS: ${hudFPS}`, x, y);
+
+            ctx.fillStyle = '#ffd966';
+            ctx.fillText(`MAT: ${hudMaterial}`, x, y + 14);
+        }
+
 
         loadInitialScene();
         gameLoop();
