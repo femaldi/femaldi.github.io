@@ -1,0 +1,1219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Falling Sand Platformer</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #222;
+            color: white;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin: 0;
+            padding: 10px;
+            user-select: none;
+            overflow: hidden;
+        }
+        h1 { margin-bottom: 10px; }
+        .controls {
+            margin-bottom: 10px;
+            background: #333;
+            padding: 8px;
+            border-radius: 8px;
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            justify-content: center;
+            align-items: center;
+        }
+        button {
+            padding: 8px 12px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+            font-size: 14px;
+            transition: transform 0.1s;
+        }
+        button:active { transform: scale(0.95); }
+        .btn-sand { background-color: #f6d7b0; color: #333; }
+        .btn-water { background-color: #4fa4f4; color: white; }
+        .btn-soil { background-color: #5d4037; color: white; }
+        .btn-wall { background-color: #888; color: white; }
+        .btn-gas { background-color: #e0e0e0; color: #333; }
+        .btn-fire { background-color: #ff4500; color: white; }
+        .btn-oil {
+            background-color: #5a4622;
+            color: #fff;
+        }
+        .btn-coal {
+            background-color: #111111;
+            color: #fff;
+        }
+        .btn-wood { background-color: #8b4513; color: white; }
+        .btn-gunpowder { background-color: #444; color: #fff; border: 1px solid #777; }
+        .btn-eraser { background-color: #000; color: white; border: 1px solid #555; }
+        button.active {
+            outline: 2px solid white;
+            box-shadow: 0 0 8px rgba(255,255,255,0.6);
+        }
+        .info-bar { font-size: 14px; color: #ccc; }
+        .info-bar strong { color: white; }
+        canvas {
+            border: 2px solid #555;
+            background-color: #000;
+            cursor: crosshair;
+            image-rendering: pixelated; 
+        }
+        #fpsCounter {
+            position: absolute;
+            top: 10px;
+            right: 15px;
+            padding: 6px 10px;
+            background: rgba(0, 0, 0, 0.6);
+            color: #00ff90;
+            font-family: monospace;
+            font-size: 14px;
+            border-radius: 6px;
+            pointer-events: none;
+        }
+        #controls_ui {
+        position: fixed;
+        top: 10px;
+        left: 10px;
+        color: white;
+        font-family: monospace;
+        font-size: 14px;
+        background: rgba(0,0,0,0.5);
+        padding: 8px 10px;
+        border-radius: 6px;
+        pointer-events: none;
+        }
+
+    </style>
+</head>
+<body>
+
+    <h1>Falling Sand Platformer</h1>
+    <div class="info-bar">
+        Use <strong>A/D</strong> to Move, <strong>W</strong> to Jump. Use the mouse to build and destroy.
+    </div>
+
+    <div class="controls">
+        <button class="btn-sand active" onclick="setMaterial('sand')">Sand</button>
+        <button class="btn-soil" onclick="setMaterial('soil')">Soil</button>
+        <button class="btn-water" onclick="setMaterial('water')">Water</button>
+        <button class="btn-gas" onclick="setMaterial('gas')">Gas</button>
+        <button class="btn-wall" onclick="setMaterial('wall')">Wall</button>
+        <button class="btn-wood" onclick="setMaterial('wood')">Wood</button>
+        <button class="btn-fire" onclick="setMaterial('fire')">Fire</button>
+        <button class="btn-gunpowder" onclick="setMaterial('gunpowder')">Gunpowder</button>
+        <button class="btn-oil" onclick="setMaterial('oil')">Oil</button>
+        <button class="btn-coal" onclick="setMaterial('coal')">Coal</button>
+        <button class="btn-eraser" onclick="setMaterial('empty')">Eraser</button>
+    </div>
+
+    <div id="controls_ui">
+        <b>Controls</b><br>
+        A / D – Move<br>
+        W – Jump<br>
+        Left Click – Shoot fire<br>
+        Middle Click – Paint brush
+    </div>
+
+
+    <canvas id="canvas"></canvas>
+    <div id="fpsCounter">FPS: --</div>
+
+
+    <script>
+        // --- CONFIGURATION ---
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        
+        // NEW: Increased view area and reduced scale
+        const viewWidth = 600;
+        const viewHeight = 400;
+        const scale = 2; // Smaller pixels
+
+        const SIMULATION_STEPS_PER_FRAME = 2;
+
+        // canvas.width = viewWidth * scale; // Same canvas size: 300*4 = 1200
+        // canvas.height = viewHeight * scale; // Same canvas size: 200*4 = 800
+        canvas.width = viewWidth;
+        canvas.height = viewHeight;
+
+        canvas.style.width = viewWidth * scale + "px";
+        canvas.style.height = viewHeight * scale + "px";
+
+        canvas.style.imageRendering = "pixelated";
+
+
+        const worldWidth = viewWidth * 30;
+        const worldHeight = viewHeight;
+
+        const renderWidth = viewWidth;
+        const renderHeight = viewHeight;
+
+        const imageData = ctx.createImageData(renderWidth, renderHeight);
+        const pixels = imageData.data; // Uint8ClampedArray
+
+        // --- MATERIAL DEFINITIONS ---
+        const MAT = {
+            EMPTY: 0, WALL: 1, SAND: 2, WATER: 3, SOIL: 4, GAS: 5, 
+            WOOD: 10, FIRE: 11, GUNPOWDER: 12, GUNPOWDER_IGNITED: 13,
+            OIL: 14, OIL_BURNING: 15,
+            COAL:16, COAL_BURNING:17,
+            SRC_SAND: 20, SRC_WATER: 21, SRC_FIRE: 22, SRC_GUNPOWDER: 23
+        };
+        const GENERATES = {
+            [MAT.SRC_SAND]: MAT.SAND, [MAT.SRC_WATER]: MAT.WATER,
+            [MAT.SRC_FIRE]: MAT.FIRE, [MAT.SRC_GUNPOWDER]: MAT.GUNPOWDER,
+
+        };
+        const COLORS = {
+            [MAT.WALL]: [100, 100, 100], [MAT.SAND]: [246, 215, 176],
+            [MAT.WATER]: [79, 164, 244], [MAT.SOIL]: [93, 64, 55],
+            [MAT.GAS]: [200, 200, 200], [MAT.WOOD]: [139, 69, 19],
+            [MAT.FIRE]: [255, 69, 0], [MAT.GUNPOWDER]: [60, 60, 60],
+            [MAT.SRC_SAND]: [255, 235, 200], [MAT.SRC_WATER]: [150, 220, 255], 
+            [MAT.SRC_FIRE]: [255, 150, 100], [MAT.SRC_GUNPOWDER]: [100, 100, 100], 
+            [MAT.GUNPOWDER_IGNITED]: [120, 80, 80], [MAT.OIL]: [90, 70, 30], [MAT.OIL_BURNING]: [255, 69, 0],
+            [MAT.COAL]: [30, 30, 30], [MAT.COAL_BURNING]: [255, 69, 0]
+        };
+
+        const LIQUID_DENSITY = {
+            [MAT.WATER]: 2,
+            [MAT.OIL]: 1,
+            [MAT.OIL_BURNING]: 1
+        };
+
+
+        const MAX_STEP_HEIGHT = 2;
+        const GRAVITY = 0.1;
+        const MAX_FALL_SPEED = 4;
+        
+        let grid = new Array(worldWidth * worldHeight).fill(MAT.EMPTY);
+        let ignitionTimer = new Uint8Array(worldWidth * worldHeight);
+        let currentMaterial = MAT.SAND;
+        let isDrawing = false;
+        let frameCount = 0;
+        let playerFacingRight = true;
+		let projectiles = [];
+
+        let lastFpsTime = performance.now();
+        let framesThisSecond = 0;
+        let fps = 0;
+        let leftToRight = true;
+
+        const fpsCounter = document.getElementById('fpsCounter');
+
+        // --- PLAYER AND CAMERA ---
+        const player = {
+            x: worldWidth / 2, y: 50, vx: 0, vy: 0,
+            width: 8, height: 16, speed: 1, jumpForce: 2.5, onGround: false // Scaled player size
+        };
+        const camera = { x: player.x - viewWidth / 2, y: 0 };
+		const mouse = { x: 0, y: 0, worldX: 0, worldY: 0 };
+        
+        // --- INPUT HANDLING ---
+        const keys = {};
+        window.addEventListener('keydown', (e) => keys[e.code] = true);
+        window.addEventListener('keyup', (e) => keys[e.code] = false);
+
+        function setMaterial(name) {
+            const map = {
+                sand: MAT.SAND,
+                water: MAT.WATER,
+                oil: MAT.OIL,
+                coal: MAT.COAL,
+                soil: MAT.SOIL,
+                wall: MAT.WALL,
+                gas: MAT.GAS,
+                wood: MAT.WOOD,
+                fire: MAT.FIRE,
+                gunpowder: MAT.GUNPOWDER,
+                empty: MAT.EMPTY
+            };
+
+            if (map[name] === undefined) {
+                console.warn('Unknown material:', name);
+                return;
+            }
+
+            currentMaterial = map[name];
+
+            document.querySelectorAll('.controls button')
+                .forEach(btn => btn.classList.remove('active'));
+
+            const btn = document.querySelector(`.btn-${name}`);
+            if (btn) btn.classList.add('active');
+        }
+
+        function isFlammable(type) {
+            return (
+                type === MAT.WOOD ||
+                type === MAT.GUNPOWDER ||
+                type === MAT.OIL ||
+                type === MAT.COAL
+            );
+        }
+
+        function tryIgniteAt(x, y, probability = 1.0) {
+            const idx = getIdx(x, y);
+            if (idx === -1) return;
+
+            const type = grid[idx];
+
+            if (!isFlammable(type)) return;
+            if (Math.random() > probability) return;
+
+            switch (type) {
+                case MAT.GUNPOWDER:
+                    grid[idx] = MAT.GUNPOWDER_IGNITED;
+                    ignitionTimer[idx] = 3 + Math.floor(Math.random() * 5);
+                    break;
+
+                case MAT.OIL:
+                    grid[idx] = MAT.OIL_BURNING;
+                    break;
+
+                case MAT.COAL:
+                    grid[idx] = MAT.COAL_BURNING;
+                    break;
+
+                case MAT.WOOD:
+                    grid[idx] = MAT.FIRE;
+                    break;
+            }
+        }
+
+
+        const getMousePos = (evt) => {
+            const rect = canvas.getBoundingClientRect();
+            mouse.x = evt.clientX - rect.left;
+            mouse.y = evt.clientY - rect.top;
+            mouse.worldX = Math.floor(camera.x + mouse.x / scale);
+            mouse.worldY = Math.floor(camera.y + mouse.y / scale);
+        };
+
+        function draw(x, y) {
+            const brushSize = 10; // Scaled brush size
+            const r = Math.floor(brushSize / 2);
+            for (let dy = -r; dy <= r; dy++) {
+                for (let dx = -r; dx <= r; dx++) {
+                    if (dx*dx + dy*dy <= r*r) {
+                        const px = x + dx; const py = y + dy;
+                        const idx = getIdx(px, py);
+                        if (idx !== -1 && grid[idx] !== MAT.WALL) {
+                            grid[idx] = currentMaterial;
+                        }
+                    }
+                }
+            }
+        }
+        canvas.addEventListener('mousemove', getMousePos);
+        canvas.addEventListener('contextmenu', e => e.preventDefault());
+        
+        canvas.addEventListener('mousedown', (e) => {
+            if (e.button === 0) { shootFire(); } 
+            else if (e.button === 1) { isDrawing = true; draw(mouse.worldX, mouse.worldY); }
+        });
+        canvas.addEventListener('mouseup', (e) => {
+            if (e.button === 1) isDrawing = false;
+        });
+        canvas.addEventListener('mousemove', (e) => {
+             if (isDrawing) draw(mouse.worldX, mouse.worldY);
+        });
+
+        // --- CORE PHYSICS ENGINE ---
+        const getIdx = (x, y) => {
+            x = Math.floor(x); y = Math.floor(y);
+            if (x < 0 || x >= worldWidth || y < 0 || y >= worldHeight) return -1;
+            return y * worldWidth + x;
+        };
+
+        const isSolidForPlayer = (type) => [MAT.WALL, MAT.SOIL, MAT.WOOD, MAT.SAND, MAT.GUNPOWDER].includes(type);
+
+        function collidesAt(x, y) {
+            for (let iy = 0; iy < player.height; iy++) {
+                for (let ix = 0; ix < player.width; ix++) {
+                    const idx = getIdx(Math.floor(x + ix), Math.floor(y + iy));
+                    if (idx !== -1 && isSolidForPlayer(grid[idx])) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        function collidesAtSides(x, y, dir) {
+            const edgeX = dir > 0
+                ? Math.floor(x + player.width - 1) // right edge
+                : Math.floor(x);                   // left edge
+
+            for (let iy = 0; iy < player.height - 1; iy++) { // ignore feet
+                const idx = getIdx(edgeX, Math.floor(y + iy));
+                if (idx !== -1 && isSolidForPlayer(grid[idx])) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        function updatePlayer() {
+            // --- INPUT ---
+            if (keys['KeyA']) {
+                player.vx = -player.speed;
+                playerFacingRight = false; // Set direction
+            } else if (keys['KeyD']) {
+                player.vx = player.speed;
+                playerFacingRight = true; // Set direction
+            } else {
+                player.vx = 0;
+            }
+
+            if (keys['KeyW'] && player.onGround) {
+                player.vy = -player.jumpForce;
+                player.onGround = false;
+            }
+
+            // --- GRAVITY ---
+            player.vy += GRAVITY;
+            if (player.vy > MAX_FALL_SPEED) player.vy = MAX_FALL_SPEED;
+
+            let nextX = player.x + player.vx;
+            let nextY = player.y + player.vy;
+
+            player.onGround = false;
+
+            // --- HORIZONTAL MOVE + STEP UP ---
+            let movedHorizontally = false;
+
+            if (player.vx !== 0) {
+                const dir = Math.sign(player.vx);
+
+                if (!collidesAtSides(nextX, player.y, dir)) {
+                    player.x = nextX;
+                    movedHorizontally = true;
+                } else {
+                    // Try stepping up
+                    for (let step = 1; step <= MAX_STEP_HEIGHT; step++) {
+                        const stepY = player.y - step;
+
+                        if (
+                            !collidesAt(player.x, stepY) &&
+                            !collidesAtSides(nextX, stepY, dir)
+                        ) {
+                            player.y = stepY;
+                            player.x = nextX;
+                            player.onGround = true;
+                            movedHorizontally = true;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if (!movedHorizontally) {
+                player.vx = 0;
+            }
+
+            // --- VERTICAL MOVE ---
+            if (!collidesAt(player.x, nextY)) {
+                player.y = nextY;
+            } else {
+                if (player.vy !== 0) {
+                    const dir = Math.sign(player.vy);
+
+                    // Step until just before collision
+                    while (!collidesAt(player.x, player.y + dir)) {
+                        player.y += dir;
+                    }
+
+                    if (dir > 0) {
+                        player.onGround = true;
+                    }
+                }
+
+                player.vy = 0;
+            }
+        }
+
+        function shootFire() {
+            const projectileSpeed = 1.0; 
+            
+            // Calculate wand tip position in world coordinates for the larger sprite
+            const wandTipX = player.x + (playerFacingRight ? player.width + 2 : -4);
+            const wandTipY = player.y + 9; // Centered on the new wand vertically
+
+            const angle = Math.atan2(mouse.worldY - wandTipY, mouse.worldX - wandTipX);
+            projectiles.push({
+                x: wandTipX, y: wandTipY,
+                vx: Math.cos(angle) * projectileSpeed, vy: Math.sin(angle) * projectileSpeed
+            });
+        }
+		
+		function updateProjectiles() {
+            projectiles = projectiles.filter(p => {
+                p.x += p.vx; p.y += p.vy;
+                const idx = getIdx(p.x, p.y);
+                if (idx === -1) return false; 
+                if (grid[idx] !== MAT.EMPTY) {
+                    grid[idx] = MAT.FIRE; return false;
+                }
+                return true;
+            });
+        }
+
+        const moved = new Uint8Array(worldWidth * worldHeight);
+        
+        function updateSimulation() {
+            moved.fill(0);
+
+            leftToRight = frameCount % 2 === 0;
+
+            const centerX = Math.floor(player.x);
+            const halfW = Math.floor(viewWidth * 0.6);
+            const startX = centerX - halfW;
+            const endX   = centerX + halfW;
+
+            /*for (let y = worldHeight - 1; y >= 0; y--) {
+                if (leftToRight) {
+                    for (let x = startX; x <= endX; x++) {
+                        stepAll(x, y, moved);
+                    }
+                } else {
+                    for (let x = endX; x >= startX; x--) {
+                        stepAll(x, y, moved);
+                    }
+                }
+            }*/
+
+            // ---------- PASS 1: solids, gas, fire ----------
+            for (let y = worldHeight - 1; y >= 0; y--) {
+                if (leftToRight) {
+                    for (let x = startX; x <= endX; x++) {
+                        stepNonLiquid(x, y, moved);
+                    }
+                } else {
+                    for (let x = endX; x >= startX; x--) {
+                        stepNonLiquid(x, y, moved);
+                    }
+                }
+            }
+
+            // ---------- PASS 2: liquids (ALWAYS bottom → top) ----------
+            for (let y = worldHeight - 1; y >= 0; y--) {
+                if (leftToRight) {
+                    for (let x = startX; x <= endX; x++) {
+                        stepLiquid(x, y, moved);
+                    }
+                } else {
+                    for (let x = endX; x >= startX; x--) {
+                        stepLiquid(x, y, moved);
+                    }
+                }
+            }
+
+            frameCount++;
+        }
+
+        function stepAll(x, y, moved) {
+            const idx = getIdx(x, y);
+            if (idx === -1 || moved[idx]) return;
+
+            const type = grid[idx];
+            if ([MAT.EMPTY, MAT.WALL, MAT.WOOD].includes(type)) return;
+            if (type === MAT.WATER) updateLiquid(x, y, idx, moved);
+            if (type === MAT.FIRE) updateFire(x, y, idx, moved);
+            else if ([MAT.SAND, MAT.SOIL, MAT.GUNPOWDER].includes(type))
+                updateSolid(x, y, idx, type, moved);
+            else if (type === MAT.GAS) updateGas(x, y, idx, moved);
+            else if (type >= 20) updateSource(x, y, idx, type);
+        }
+
+        function stepNonLiquid(x, y, moved) {
+            const idx = getIdx(x, y);
+            if (idx === -1 || moved[idx]) return;
+
+            const type = grid[idx];
+            if (type === MAT.WATER) return;
+            if ([MAT.EMPTY, MAT.WALL, MAT.WOOD].includes(type)) return;
+
+            if (type === MAT.FIRE) updateFire(x, y, idx, moved);
+
+            else if ([MAT.SAND, MAT.SOIL, MAT.GUNPOWDER, MAT.COAL, MAT.COAL_BURNING].includes(type))
+                updateSolid(x, y, idx, type, moved);
+            else if (type === MAT.GAS) updateGas(x, y, idx, moved);
+            else if (type === MAT.GUNPOWDER_IGNITED)
+                updateIgnitedGunpowder(x, y, idx, moved);
+            else if (type >= 20) updateSource(x, y, idx, type);
+        }
+
+        function stepLiquid(x, y, moved) {
+            const idx = getIdx(x, y);
+            if (idx === -1 || moved[idx]) return;
+            if (![MAT.WATER, MAT.OIL, MAT.OIL_BURNING].includes(grid[idx])) return;
+
+            updateLiquid(x, y, idx, moved);
+        }
+
+
+        function updateCamera() {
+            const targetCamX = player.x - viewWidth / 2;
+            camera.x += (targetCamX - camera.x) * 0.1;
+            if (camera.x < 0) camera.x = 0;
+            if (camera.x > worldWidth - viewWidth) camera.x = worldWidth - viewWidth;
+        }
+
+        function updateIgnitedGunpowder(x, y, idx, moved) {
+            ignitionTimer[idx]--;
+
+            // spread ignition BEFORE exploding
+            for (let n of [
+                {x:0,y:1},{x:0,y:-1},{x:1,y:0},{x:-1,y:0}
+            ]) {
+                const nIdx = getIdx(x + n.x, y + n.y);
+                if (nIdx !== -1 && grid[nIdx] === MAT.GUNPOWDER) {
+                    grid[nIdx] = MAT.GUNPOWDER_IGNITED;
+                    ignitionTimer[nIdx] = 3 + Math.floor(Math.random() * 5);
+                }
+            }
+
+            if (ignitionTimer[idx] <= 0) {
+                grid[idx] = MAT.EMPTY;
+                triggerExplosion(x, y, 6);
+            }
+        }
+
+
+        function triggerExplosion(centerX, centerY, radius) {
+            const maxRadius = 100; // Scaled max radius
+            if (radius > maxRadius) radius = maxRadius;
+            const rSquared = radius * radius;
+            for (let dy = -radius; dy <= radius; dy++) {
+                for (let dx = -radius; dx <= radius; dx++) {
+                    if (dx*dx + dy*dy > rSquared) continue;
+                    const ex = Math.floor(centerX + dx);
+                    const ey = Math.floor(centerY + dy);
+                    const idx = getIdx(ex, ey);
+                    if (idx === -1 || ex === 0 || ex === worldWidth - 1 || ey === 0 || ey === worldHeight - 1) continue;
+                    
+                    if (grid[idx] !== MAT.WALL) {
+                        const rand = Math.random();
+                        if (rand < 0.3) grid[idx] = MAT.FIRE;
+                        else if (rand < 0.7) grid[idx] = MAT.GAS; 
+                        else grid[idx] = MAT.EMPTY;
+                    } else if (radius > 20 && Math.random() < 0.5) { // Scaled check
+                        grid[idx] = MAT.GAS;
+                    }
+                }
+            }
+        }
+
+        function explodeCluster(startX, startY) {
+            let queue = [{x: startX, y: startY}];
+            let cluster = [{x: startX, y: startY}]; 
+            let visited = new Set([`${startX},${startY}`]);
+            grid[getIdx(startX, startY)] = MAT.EMPTY;
+            let iterations = 0; const maxIterations = 3000;
+            while (queue.length > 0 && iterations++ < maxIterations) {
+                let current = queue.shift();
+                for (let d of [{x:0,y:1},{x:0,y:-1},{x:1,y:0},{x:-1,y:0}]) {
+                    const nx = current.x + d.x, ny = current.y + d.y;
+                    const key = `${nx},${ny}`;
+                    const nIdx = getIdx(nx, ny);
+                    if (nIdx !== -1 && !visited.has(key) && grid[nIdx] === MAT.GUNPOWDER) {
+                        visited.add(key); queue.push({x: nx, y: ny});
+                        cluster.push({x: nx, y: ny}); grid[nIdx] = MAT.EMPTY;
+                    }
+                }
+            }
+            let sumX = 0, sumY = 0;
+            for (let p of cluster) { sumX += p.x; sumY += p.y; }
+            triggerExplosion(sumX / cluster.length, sumY / cluster.length, 5 + Math.sqrt(cluster.length));
+        }
+
+        function updateFire(x, y, idx, moved) {
+            let nearbyFuel = false;
+            for (let n of [{x:0,y:-1},{x:0,y:1},{x:-1,y:0},{x:1,y:0},{x:-1,y:-1},{x:1,y:-1},{x:-1,y:1},{x:1,y:1}]) {
+                const nx = x + n.x, ny = y + n.y;
+                const nIdx = getIdx(nx, ny);
+                if (nIdx === -1) continue;
+                const nType = grid[nIdx];
+
+                if (nType === MAT.GUNPOWDER) {
+                    grid[nIdx] = MAT.GUNPOWDER_IGNITED;
+                    ignitionTimer[nIdx] = 3 + Math.floor(Math.random() * 5); // frames
+                    return;
+                }
+
+                if (nType === MAT.OIL) {
+                    grid[nIdx] = MAT.OIL_BURNING;
+                    return;
+                }
+
+                if (nType === MAT.COAL) {
+                    grid[nIdx] = MAT.COAL_BURNING;
+                    return;
+                }
+
+                if (nType === MAT.WOOD) {
+                    nearbyFuel = true;
+                    if (Math.random() < 0.01) { grid[nIdx] = MAT.FIRE; moved[nIdx] = 1; }
+                }
+                if (nType === MAT.WATER) { grid[nIdx] = MAT.GAS; grid[idx] = MAT.GAS; return; }
+            }
+            let targetIdx = idx;
+            if (!nearbyFuel && y > 0) {
+                let nextX = x, nextY = y - 1;
+                if (Math.random() < 0.5) nextX += Math.random() < 0.5 ? -1 : 1;
+                const nextIdx = getIdx(nextX, nextY);
+                if (nextIdx !== -1 && (grid[nextIdx] === MAT.EMPTY || grid[nextIdx] === MAT.GAS)) {
+                    grid[idx] = grid[nextIdx]; grid[nextIdx] = MAT.FIRE;
+                    moved[nextIdx] = 1; targetIdx = nextIdx;
+                }
+            }
+            if (Math.random() < (nearbyFuel ? 0.0 : 0.15)) grid[targetIdx] = MAT.GAS;
+        }
+
+        function updateBurningCoal(x, y, idx, moved) {
+
+            // --- DIRECT CONTACT IGNITION (cardinal only) ---
+            for (const n of [
+                {x:0,y:1},{x:0,y:-1},{x:1,y:0},{x:-1,y:0}
+            ]) {
+                tryIgniteAt(x + n.x, y + n.y, 0.02);
+            }
+
+            // --- Weak fire emission (secondary effect) ---
+            if (Math.random() < 0.02) {
+                const aboveIdx = getIdx(x, y - 1);
+                if (aboveIdx !== -1 && grid[aboveIdx] === MAT.EMPTY) {
+                    grid[aboveIdx] = MAT.FIRE;
+                }
+            }
+
+            // --- Burn out slowly ---
+            if (Math.random() < 0.003) {
+                grid[idx] = MAT.GAS;
+            }
+        }
+
+        function updateBurningOil(x, y, idx, moved) {
+
+            // --- DIRECT CONTACT IGNITION (all neighbors) ---
+            for (const n of [
+                {x:0,y:1},{x:0,y:-1},{x:1,y:0},{x:-1,y:0},
+                {x:1,y:1},{x:-1,y:1},{x:1,y:-1},{x:-1,y:-1}
+            ]) {
+                tryIgniteAt(x + n.x, y + n.y, 0.05);
+            }
+
+            // --- Strong fire emission ---
+            if (Math.random() < 0.05) {
+                const aboveIdx = getIdx(x, y - 1);
+                if (aboveIdx !== -1 && grid[aboveIdx] === MAT.EMPTY) {
+                    grid[aboveIdx] = MAT.FIRE;
+                }
+            }
+
+            // --- Burn away faster than coal ---
+            if (Math.random() < 0.008) {
+                grid[idx] = MAT.GAS;
+            }
+        }
+
+        
+        function updateSource(x, y, idx, type) { /* ... */ }
+
+        function updateSolid(x, y, idx, type, moved) {
+            const belowIdx = getIdx(x, y + 1);
+            if (belowIdx === -1) return;
+            if (type === MAT.COAL_BURNING) {updateBurningCoal(x, y, idx, moved)}
+            if (grid[belowIdx] === MAT.FIRE && type === MAT.COAL) {
+                grid[idx] = MAT.COAL_BURNING;
+                return;
+            }
+            const below = grid[belowIdx];
+            
+            if ([MAT.WATER, MAT.OIL, MAT.OIL_BURNING].includes(below)) {
+                // Push entire liquid row sideways
+                if (pushLiquidRowSideways(x, y + 1, below)) {
+                    grid[belowIdx] = type;
+                    grid[idx] = MAT.EMPTY;
+                    moved[belowIdx] = 1;
+                    return;
+                }
+
+                // Absolute last resort fallback
+                grid[idx] = below;
+                grid[belowIdx] = type;
+                moved[belowIdx] = 1;
+                return;
+            }
+
+            const dir = Math.random() < 0.5 ? -1 : 1;
+            for (let dx of [dir, -dir]) {
+                const dIdx = getIdx(x + dx, y + 1);
+                if (dIdx !== -1 && [MAT.EMPTY, MAT.WATER, MAT.OIL, MAT.OIL_BURNING, MAT.GAS, MAT.FIRE].includes(grid[dIdx])) {
+                    grid[idx] = grid[dIdx]; grid[dIdx] = type; moved[dIdx] = 1; return;
+                }
+            }
+        }
+
+        function updateLiquid(x, y, idx, moved) {
+            const belowIdx = getIdx(x, y + 1);
+            const type = grid[idx];
+            if (belowIdx === -1) return;
+            
+            if (grid[belowIdx] === MAT.FIRE) {
+                if (grid[idx] === MAT.OIL) {
+                    grid[idx] = MAT.OIL_BURNING;
+                } else {
+                    grid[idx] = MAT.GAS;
+                    grid[belowIdx] = MAT.GAS;
+                }
+                return;
+            }
+
+            const below = grid[belowIdx];
+
+            // Fall into empty / gas
+            if ([MAT.EMPTY, MAT.GAS].includes(below)) {
+                grid[idx] = below;
+                grid[belowIdx] = type;
+                moved[belowIdx] = 1;
+                return;
+            }
+
+            // Liquid-on-liquid density swap
+            if (LIQUID_DENSITY[type] > LIQUID_DENSITY[below]) {
+                grid[idx] = below;
+                grid[belowIdx] = type;
+                moved[belowIdx] = 1;
+                return;
+            }
+
+            tryMoveLiquidSide(x, y, idx, type, moved, Math.random() < 0.5 ? -1 : 1, 20, 1); // Scaled limit
+
+            if (grid[idx] === MAT.OIL_BURNING) {
+                updateBurningOil(x, y, idx, moved);
+            }
+
+        }
+
+        function updateGas(x, y, idx, moved) {
+            const aboveIdx = getIdx(x, y - 1);
+            if (aboveIdx === -1) return;
+            const above = grid[aboveIdx];
+            if ([MAT.EMPTY, MAT.WATER, MAT.SAND, MAT.SOIL, MAT.GUNPOWDER].includes(above)) {
+                grid[idx] = above; grid[aboveIdx] = MAT.GAS; moved[aboveIdx] = 1; return;
+            }
+            tryMoveLiquidSide(x, y, idx, MAT.GAS, moved, Math.random() < 0.5 ? -1 : 1, 4, -1); // Scaled limit
+        }
+
+        function tryMoveLiquidSide(x, y, currentIdx, type, moved, dir, limit, vDir) {
+            let targetX = x;
+            for (let i = 1; i <= limit; i++) {
+                const nextX = x + (dir * i);
+                const nextIdx = getIdx(nextX, y);
+                if (nextIdx === -1) break;
+                const content = grid[nextIdx];
+                const canMove = (type === MAT.WATER) ? ([MAT.EMPTY, MAT.GAS, MAT.FIRE, MAT.OIL].includes(content)) : (content === MAT.EMPTY);
+                if (canMove) {
+                    targetX = nextX;
+                    const vIdx = getIdx(nextX, y + vDir);
+                    if (vIdx !== -1 && [MAT.EMPTY, MAT.GAS, MAT.FIRE].includes(grid[vIdx])) break;
+                } else break;
+            }
+            if (targetX !== x) {
+                const tIdx = getIdx(targetX, y);
+                grid[currentIdx] = grid[tIdx]; grid[tIdx] = type; moved[tIdx] = 1;
+                return true; // Return success
+            }
+            return false; // Return failure
+        }
+
+        function pushLiquidRowSideways(x, y, liquidType, maxPush = 10) {
+            const dirs = Math.random() < 0.5 ? [-1, 1] : [1, -1];
+
+            for (const dir of dirs) {
+                // find empty space
+                for (let i = 1; i <= maxPush; i++) {
+                    const targetIdx = getIdx(x + dir * i, y);
+                    if (targetIdx === -1) break;
+
+                    if (grid[targetIdx] === MAT.EMPTY) {
+                        // shift liquid toward empty space
+                        for (let j = i; j > 0; j--) {
+                            const fromIdx = getIdx(x + dir * (j - 1), y);
+                            const toIdx   = getIdx(x + dir * j, y);
+
+                            if (grid[fromIdx] !== liquidType) break;
+                            grid[toIdx] = grid[fromIdx];
+                            grid[fromIdx] = MAT.EMPTY;
+                        }
+                        return true;
+                    }
+
+                    // stop if blocked by solid
+                    if (![MAT.WATER, MAT.OIL, MAT.OIL_BURNING].includes(grid[targetIdx])) {
+                        break;
+                    }
+                }
+            }
+            return false;
+        }
+
+
+        function tryDisplaceLiquidSide(x, y, liquidType) {
+            const dirs = Math.random() < 0.5 ? [-1, 1] : [1, -1];
+
+            for (const dx of dirs) {
+                const sideIdx = getIdx(x + dx, y);
+                if (sideIdx !== -1 && grid[sideIdx] === MAT.EMPTY) {
+                    grid[sideIdx] = liquidType;
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        function findGroundBelow(x, startY) {
+            for (let y = startY; y < worldHeight; y++) {
+                const idx = getIdx(x, y);
+                if (idx !== -1 && grid[idx] !== MAT.EMPTY) {
+                    return y;
+                }
+            }
+            return worldHeight - 1;
+        }
+
+        function createReservoir({
+            x,
+            y,
+            width,
+            height,
+            fillType,
+            wallType = MAT.WOOD
+        }) {
+            const groundY = findGroundBelow(x, y);
+            const topY = Math.max(0, groundY - height);
+            const leftX = Math.floor(x - width / 2);
+            const rightX = Math.floor(x + width / 2);
+
+            for (let iy = topY; iy <= groundY; iy++) {
+                for (let ix = leftX; ix <= rightX; ix++) {
+                    const idx = getIdx(ix, iy);
+                    if (idx === -1) continue;
+
+                    const isWall =
+                        ix === leftX ||
+                        ix === rightX ||
+                        iy === groundY;
+
+                    grid[idx] = isWall ? wallType : fillType;
+                }
+            }
+        }
+
+        function createCircle({
+            x,
+            y,
+            radius,
+            type
+        }) {
+            const r2 = radius * radius;
+
+            for (let dy = -radius; dy <= radius; dy++) {
+                for (let dx = -radius; dx <= radius; dx++) {
+                    if (dx * dx + dy * dy > r2) continue;
+
+                    const px = Math.floor(x + dx);
+                    const py = Math.floor(y + dy);
+                    const idx = getIdx(px, py);
+                    if (idx === -1) continue;
+
+                    grid[idx] = type;
+                }
+            }
+        }
+
+        function createCircleOutline({ x, y, radius, thickness = 1, type }) {
+            const r2 = radius * radius;
+            const inner = (radius - thickness) ** 2;
+
+            for (let dy = -radius; dy <= radius; dy++) {
+                for (let dx = -radius; dx <= radius; dx++) {
+                    const d2 = dx * dx + dy * dy;
+                    if (d2 > r2 || d2 < inner) continue;
+
+                    const idx = getIdx(x + dx, y + dy);
+                    if (idx !== -1) grid[idx] = type;
+                }
+            }
+        }
+
+        // --- RENDERING ---
+        function setPixel(x, y, r, g, b, a = 255) {
+            const i = (y * renderWidth + x) * 4;
+            pixels[i]     = r;
+            pixels[i + 1] = g;
+            pixels[i + 2] = b;
+            pixels[i + 3] = a;
+        }
+
+        function render() {
+            // --- WORLD ---
+            pixels.fill(0);
+
+            const startX = Math.floor(camera.x);
+            const endX   = startX + viewWidth;
+
+            for (let y = 0; y < viewHeight; y++) {
+                for (let x = startX; x < endX; x++) {
+                    const idx = getIdx(x, y);
+                    if (idx === -1 || grid[idx] === MAT.EMPTY) continue;
+
+                    const type = grid[idx];
+                    let [r, g, b] = COLORS[type];
+
+                    if (type === MAT.FIRE) {
+                        r = 255;
+                        g = 50 + Math.random() * 100;
+                        b = 0;
+                    }
+
+                    setPixel(x - startX, y, r, g, b);
+                }
+            }
+
+            ctx.putImageData(imageData, 0, 0);
+
+            // --- PLAYER (SNAPPED FOR SHARPNESS) ---
+            const playerScreenX = Math.round(player.x - camera.x);
+            const playerScreenY = Math.round(player.y - camera.y);
+
+            // Noita-like sprite colors
+            const cloakColor = '#4a2d5e';
+            const faceColor = '#211e20';
+            const handColor = '#9d81a2';
+            let wandScreenX, wandScreenY;
+
+            ctx.imageSmoothingEnabled = false; // Ensure sharp pixels
+
+            // --- 2x SCALED SPRITE DRAWING ---
+            if (playerFacingRight) {
+                // --- Body & Cloak ---
+                ctx.fillStyle = cloakColor;
+                ctx.fillRect(playerScreenX + 2, playerScreenY, 6, 2);     // Hood top
+                ctx.fillRect(playerScreenX, playerScreenY + 2, 8, 12);    // Main body
+                ctx.fillRect(playerScreenX + 2, playerScreenY + 14, 4, 2);    // Feet area
+                // --- Face ---
+                ctx.fillStyle = faceColor;
+                ctx.fillRect(playerScreenX + 4, playerScreenY + 2, 2, 4);
+                // --- Hand & Wand ---
+                ctx.fillStyle = handColor;
+                ctx.fillRect(playerScreenX + 8, playerScreenY + 8, 4, 2);
+                // Set aim origin
+                wandScreenX = playerScreenX + 11;
+                wandScreenY = playerScreenY + 9;
+            } else { // Facing Left
+                // --- Body & Cloak ---
+                ctx.fillStyle = cloakColor;
+                ctx.fillRect(playerScreenX, playerScreenY, 6, 2);         // Hood top
+                ctx.fillRect(playerScreenX, playerScreenY + 2, 8, 12);    // Main body
+                ctx.fillRect(playerScreenX + 2, playerScreenY + 14, 4, 2);    // Feet area
+                // --- Face ---
+                ctx.fillStyle = faceColor;
+                ctx.fillRect(playerScreenX + 2, playerScreenY + 2, 2, 4);
+                // --- Hand & Wand ---
+                ctx.fillStyle = handColor;
+                ctx.fillRect(playerScreenX - 4, playerScreenY + 8, 4, 2);
+                // Set aim origin
+                wandScreenX = playerScreenX - 3;
+                wandScreenY = playerScreenY + 9;
+            }
+
+
+            // --- PROJECTILES (also snapped) ---
+            ctx.fillStyle = 'orange';
+            for (const p of projectiles) {
+                ctx.fillRect(
+                    Math.round(p.x - camera.x),
+                    Math.round(p.y - camera.y),
+                    1,
+                    1
+                );
+            }
+
+            // --- AIM LINE ---
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+            ctx.lineWidth = 0.5;
+            ctx.beginPath();
+            ctx.moveTo(wandScreenX, wandScreenY);
+            ctx.lineTo(mouse.x / scale, mouse.y / scale);
+            ctx.stroke();
+        }
+
+        // function render() {
+        //     ctx.fillStyle = '#000';
+        //     ctx.fillRect(0, 0, canvas.width, canvas.height);
+        //     const startX = Math.floor(camera.x);
+        //     const endX = Math.ceil(camera.x + viewWidth);
+        //     for (let y = 0; y < viewHeight; y++) {
+        //         for (let x = startX; x < endX; x++) {
+        //             const idx = getIdx(x, y);
+        //             if (idx === -1 || grid[idx] === MAT.EMPTY) continue;
+        //             const type = grid[idx];
+        //             const screenX = (x - camera.x) * scale;
+        //             const screenY = y * scale;
+        //             let [r, g, b] = COLORS[type];
+        //             if (type === MAT.FIRE) { r = 255; g = 50 + Math.random() * 100; b = 0; }
+        //             ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
+        //             ctx.fillRect(screenX, screenY, scale, scale);
+        //         }
+        //     }
+
+        //     const playerScreenX = (player.x - camera.x) * scale;
+        //     const playerScreenY = (player.y - camera.y) * scale;
+			
+        //     ctx.fillStyle = 'lime';
+        //     ctx.fillRect(playerScreenX, playerScreenY, player.width * scale, player.height * scale);
+            
+        //     ctx.fillStyle = 'black';
+        //     const eyeX = playerScreenX + (playerFacingRight ? player.width * scale * 0.6 : player.width * scale * 0.1);
+        //     const eyeY = playerScreenY + player.height * scale * 0.25;
+        //     ctx.fillRect(eyeX, eyeY, scale, scale); // Eye size remains 1 cell
+			
+        //     ctx.fillStyle = 'orange';
+        //     projectiles.forEach(p => {
+        //         const screenX = (p.x - camera.x) * scale;
+        //         const screenY = (p.y - camera.y) * scale;
+        //         ctx.fillRect(screenX - scale/2, screenY - scale/2, scale, scale);
+        //     });
+
+        //     ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+        //     ctx.lineWidth = 2;
+        //     ctx.beginPath();
+        //     ctx.moveTo(eyeX, eyeY);
+        //     ctx.lineTo(mouse.x, mouse.y);
+        //     ctx.stroke();
+        // }
+
+        // --- SCENE GENERATION ---
+        function findGroundSurfaceY(x) {
+            for (let y = 0; y < worldHeight; y++) { if (grid[getIdx(x, y)] !== MAT.EMPTY) return y; }
+            return worldHeight - 1;
+        }
+        function drawTree(baseX, baseY) {
+            const trunkHeight = 40 + Math.floor(Math.random() * 12); // Scaled height
+            for (let i = 0; i < trunkHeight; i++) {
+                const y = baseY - i; if (y < 0) continue;
+                grid[getIdx(baseX, y)] = MAT.WOOD;
+                if(i < 30) { // Scaled thickness
+					grid[getIdx(baseX - 1, y)] = MAT.WOOD;
+					grid[getIdx(baseX + 1, y)] = MAT.WOOD;
+				}
+            }
+        }
+        function loadInitialScene() {
+            for (let x = 0; x < worldWidth; x++) {
+                // Scaled terrain generation
+                const groundHeight = Math.floor(worldHeight - 40 + Math.sin(x / 60) * 16 + Math.cos(x / 24) * 8);
+                for (let y = groundHeight; y < worldHeight; y++) {
+                    grid[getIdx(x, y)] = (Math.random() < 0.8) ? MAT.SOIL : MAT.SAND;
+                }
+            }
+            for (let i = 200; i < worldWidth - 200; i += 200 + Math.random() * 100) { // Scaled spacing
+                 drawTree(i, findGroundSurfaceY(i) - 1);
+            }
+			
+            const numReservoirs = 5;
+            const reservoirWidth = 40; // Scaled
+            const reservoirHeight = 80; // Scaled
+            for (let i = 0; i < numReservoirs; i++) {
+                // Scaled positioning
+                const startX = Math.floor(100 + Math.random() * (worldWidth - 200 - reservoirWidth));
+                const startY = Math.floor(80 + Math.random() * (worldHeight - 100 - reservoirHeight));
+
+                for (let y = 0; y < reservoirHeight; y++) {
+                    for (let x = 0; x < reservoirWidth; x++) {
+                        const currentX = startX + x;
+                        const currentY = startY + y;
+                        if (x === 0 || x === reservoirWidth - 1 || y === reservoirHeight - 1) {
+                            grid[getIdx(currentX, currentY)] = MAT.WOOD;
+                        } else {
+                            grid[getIdx(currentX, currentY)] = MAT.WATER;
+                        }
+                    }
+                }
+            }
+			
+            for (let y = 0; y < worldHeight; y++) {
+                grid[getIdx(0, y)] = MAT.WALL;
+                grid[getIdx(1, y)] = MAT.WALL;
+                grid[getIdx(worldWidth - 1, y)] = MAT.WALL;
+                grid[getIdx(worldWidth - 2, y)] = MAT.WALL;
+            }
+
+            createReservoir({
+                x: worldWidth / 2 + 150,
+                y: 50,
+                width: 60,
+                height: 100,
+                fillType: MAT.OIL
+            });
+
+            createReservoir({
+                x: worldWidth / 2 - 150,
+                y: 50,
+                width: 60,
+                height: 100,
+                fillType: MAT.COAL
+            });
+
+            createReservoir({
+                x: worldWidth / 2 + 250,
+                y: 50,
+                width: 60,
+                height: 100,
+                fillType: MAT.GUNPOWDER
+            });
+        }
+
+        // --- GAME LOOP ---
+        function gameLoop(now = performance.now()) {
+            frameCount++; 
+            // --- FPS CALC ---
+            framesThisSecond++;
+            if (now - lastFpsTime >= 1000) {
+                fps = framesThisSecond;
+                framesThisSecond = 0;
+                lastFpsTime = now;
+                fpsCounter.textContent = `FPS: ${fps}`;
+            }
+
+            updatePlayer();
+			updateProjectiles();
+
+            // Run the simulation multiple times per frame for faster physics
+            for (let i = 0; i < SIMULATION_STEPS_PER_FRAME; i++) {
+                updateSimulation();
+            }
+
+            updateCamera();
+            render();
+            requestAnimationFrame(gameLoop);
+        }
+
+        loadInitialScene();
+        gameLoop();
+    </script>
+</body>
+</html>
