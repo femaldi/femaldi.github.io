@@ -209,6 +209,70 @@
         let hudMaterial = '--';
         let hudTimer = 0;
 
+        let skyImageData = null;
+
+        function generateNightSky(width, height) {
+            const img = ctx.createImageData(width, height);
+            const d = img.data;
+
+            const hash = (x, y, s = 0) => {
+                let h = x * 374761393 + y * 668265263 + s * 1442695041;
+                h = (h ^ (h >> 13)) * 1274126177;
+                return (h ^ (h >> 16)) & 255;
+            };
+
+            const lerp = (a, b, t) => a + (b - a) * t;
+
+            for (let y = 0; y < height; y++) {
+                const t = y / height;
+
+                const baseR = lerp(6, 18, t);
+                const baseG = lerp(8, 22, t);
+                const baseB = lerp(18, 42, t);
+
+                for (let x = 0; x < width; x++) {
+                    const i = (y * width + x) * 4;
+
+                    let r = baseR;
+                    let g = baseG;
+                    let b = baseB;
+
+                    // Nebula (very subtle)
+                    const nebula =
+                        hash(x >> 3, y >> 3, 1) * 0.003 +
+                        hash(x >> 4, y >> 4, 2) * 0.002;
+
+                    if (nebula > 1.3) {
+                        r += nebula * 6;
+                        g += nebula * 5;
+                        b += nebula * 10;
+                    }
+
+                    // Stars
+                    const s = hash(x, y, 3);
+
+                    if (s > 252) {
+                        const br = 170 + (s & 31);
+                        r = g = b = br;
+                    } else if (s > 254) {
+                        r = 200; g = 200; b = 220;
+                    } else if (s === 255) {
+                        r = 255; g = 240; b = 200;
+                    }
+
+                    d[i]     = r;
+                    d[i + 1] = g;
+                    d[i + 2] = b;
+                    d[i + 3] = 255;
+                }
+            }
+
+            return img;
+        }
+
+
+
+        skyImageData = generateNightSky(renderWidth, renderHeight);
 
         // --- PLAYER AND CAMERA ---
         const player = {
@@ -975,7 +1039,7 @@
 
         function render() {
             // --- WORLD ---
-            pixels.fill(0);
+            pixels.set(skyImageData.data);
             const time = frameCount * 0.04;
             const startX = Math.floor(camera.x);
             const endX   = startX + viewWidth;
