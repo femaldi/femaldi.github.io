@@ -1039,6 +1039,7 @@
             const topY = Math.max(0, groundY - height);
             const leftX = Math.floor(x - width / 2);
             const rightX = Math.floor(x + width / 2);
+            const wallWidth = 2;
 
             for (let iy = topY; iy <= groundY; iy++) {
                 for (let ix = leftX; ix <= rightX; ix++) {
@@ -1046,9 +1047,9 @@
                     if (idx === -1) continue;
 
                     const isWall =
-                        ix === leftX ||
-                        ix === rightX ||
-                        iy === groundY;
+                        ix <= leftX + wallWidth ||
+                        ix >= rightX - wallWidth ||
+                        iy >= groundY - wallWidth;
 
                     grid[idx] = isWall ? wallType : fillType;
                 }
