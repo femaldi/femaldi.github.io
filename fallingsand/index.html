@@ -211,6 +211,7 @@
         let frameCount = 0;
         let playerFacingRight = true;
 		let projectiles = [];
+        let firePixelsCoords = [];
 
         let lastFpsTime = performance.now();
         let framesThisSecond = 0;
@@ -776,7 +777,7 @@
             }
             if (Math.random() < (nearbyFuel ? 0.0 : 0.15)) grid[targetIdx] = MAT.GAS;
         }
-        
+
         function updateBurningCoal(x, y, idx, moved) {
             // --- DIRECT CONTACT IGNITION & HEATING (cardinal only) ---
             for (const n of [
@@ -1127,6 +1128,7 @@
 
         function render() {
             // --- WORLD ---
+            firePixelsCoords = [];
             pixels.set(skyImageData.data);
             const time = frameCount * 0.04;
             const startX = Math.floor(camera.x);
@@ -1138,6 +1140,11 @@
                     if (idx === -1 || grid[idx] === MAT.EMPTY) continue;
 
                     const type = grid[idx];
+
+                    // NEW: Identify hot materials and record their screen coordinates
+                    if (type === MAT.FIRE || type === MAT.OIL_BURNING || type === MAT.COAL_BURNING) {
+                        firePixelsCoords.push({ x: x - startX, y: y });
+                    }
 
                     let [r, g, b] = COLORS[type];
 
@@ -1159,6 +1166,8 @@
             }
 
             ctx.putImageData(imageData, 0, 0);
+
+            renderBloom();
 
             const aimDX = mouse.worldX - (player.x + player.width / 2);
             const aimDY = (player.y + 9) - mouse.worldY;
@@ -1257,6 +1266,52 @@
             ctx.moveTo(wandScreenX, wandScreenY);
             ctx.lineTo(mouse.x / scale, mouse.y / scale);
             ctx.stroke();
+        }
+
+        function renderBloom() {
+            if (firePixelsCoords.length === 0) return;
+
+            // --- Configuration ---
+            const bloomRadius = 6; // How far the glow extends, in pixels
+            const bloomIntensity = 0.01; // How bright the glow is (0.0 to 1.0)
+            const bloomColor = [180, 100, 50]; // The color of the glow (R, G, B)
+            
+            // Get the current canvas content so we can blend with it
+            const screenData = ctx.getImageData(0, 0, renderWidth, renderHeight);
+            const screenPixels = screenData.data;
+            
+            const r2 = bloomRadius * bloomRadius;
+
+            // Iterate ONLY through the fire pixels we found earlier
+            for (const p of firePixelsCoords) {
+                // For each fire pixel, draw a glow "stamp" around it
+                for (let dy = -bloomRadius; dy <= bloomRadius; dy++) {
+                    for (let dx = -bloomRadius; dx <= bloomRadius; dx++) {
+                        const distSq = dx * dx + dy * dy;
+                        if (distSq > r2) continue;
+
+                        const px = p.x + dx;
+                        const py = p.y + dy;
+
+                        // Bounds check
+                        if (px < 0 || px >= renderWidth || py < 0 || py >= renderHeight) continue;
+                        
+                        // Calculate falloff: glow is strongest at the center
+                        const falloff = (1.0 - (distSq / r2)) * bloomIntensity;
+                        if (falloff <= 0) continue;
+                        
+                        const i = (py * renderWidth + px) * 4;
+
+                        // Additive blending
+                        screenPixels[i]     = Math.min(255, screenPixels[i]     + bloomColor[0] * falloff);
+                        screenPixels[i + 1] = Math.min(255, screenPixels[i + 1] + bloomColor[1] * falloff);
+                        screenPixels[i + 2] = Math.min(255, screenPixels[i + 2] + bloomColor[2] * falloff);
+                    }
+                }
+            }
+
+            // Put the modified pixel data (with bloom) back onto the canvas
+            ctx.putImageData(screenData, 0, 0);
         }
 
         function angleToDir16(a) {
