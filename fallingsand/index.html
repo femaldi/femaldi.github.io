@@ -55,6 +55,8 @@
         }
         .btn-wood { background-color: #8b4513; color: white; }
         .btn-gunpowder { background-color: #444; color: #fff; border: 1px solid #777; }
+        .btn-acid { background-color: #00ff00; color: white; }
+        .btn-glass { background-color: #e0e0ff; color: #333; }
         .btn-eraser { background-color: #000; color: white; border: 1px solid #555; }
         button.active {
             outline: 2px solid white;
@@ -100,6 +102,8 @@
         <button class="btn-gunpowder" onclick="setMaterial('gunpowder')">Gunpowder</button>
         <button class="btn-oil" onclick="setMaterial('oil')">Oil</button>
         <button class="btn-coal" onclick="setMaterial('coal')">Coal</button>
+        <button class="btn-acid" onclick="setMaterial('acid')">Acid</button>
+        <button class="btn-glass" onclick="setMaterial('glass')">Glass</button>
         <button class="btn-eraser" onclick="setMaterial('empty')">Eraser</button>
     </div>
 
@@ -151,7 +155,8 @@
             EMPTY: 0, WALL: 1, SAND: 2, WATER: 3, SOIL: 4, GAS: 5, 
             WOOD: 10, FIRE: 11, GUNPOWDER: 12, GUNPOWDER_IGNITED: 13,
             OIL: 14, OIL_BURNING: 15,
-            COAL:16, COAL_BURNING:17
+            COAL:16, COAL_BURNING:17,
+            ACID:18, GLASS:19
         };
 
         const COLORS = {
@@ -160,7 +165,8 @@
             [MAT.GAS]: [200, 200, 200], [MAT.WOOD]: [139, 69, 19],
             [MAT.FIRE]: [255, 69, 0], [MAT.GUNPOWDER]: [60, 60, 60],
             [MAT.GUNPOWDER_IGNITED]: [120, 80, 80], [MAT.OIL]: [90, 70, 30], [MAT.OIL_BURNING]: [255, 69, 0],
-            [MAT.COAL]: [30, 30, 30], [MAT.COAL_BURNING]: [255, 69, 0]
+            [MAT.COAL]: [30, 30, 30], [MAT.COAL_BURNING]: [255, 69, 0],
+            [MAT.ACID]: [0, 255, 0], [MAT.GLASS]: [200, 200, 255]
         };
 
         const MATERIAL_NAME = {
@@ -178,10 +184,13 @@
             [MAT.OIL_BURNING]: 'Burning Oil',
             [MAT.COAL]: 'Coal',
             [MAT.COAL_BURNING]: 'Burning Coal',
+            [MAT.ACID]: 'Acid',
+            [MAT.GLASS]: 'Glass'
         };
 
 
         const LIQUID_DENSITY = {
+            [MAT.ACID]: 3,
             [MAT.WATER]: 2,
             [MAT.OIL]: 1,
             [MAT.OIL_BURNING]: 1
@@ -299,6 +308,8 @@
                 wood: MAT.WOOD,
                 fire: MAT.FIRE,
                 gunpowder: MAT.GUNPOWDER,
+                acid: MAT.ACID,
+                glass: MAT.GLASS,
                 empty: MAT.EMPTY
             };
 
@@ -328,7 +339,8 @@
         const LIQUIDS = new Set([
             MAT.WATER,
             MAT.OIL,
-            MAT.OIL_BURNING
+            MAT.OIL_BURNING,
+            MAT.ACID
         ]);
 
         function tryIgniteAt(x, y, probability = 1.0) {
@@ -405,7 +417,7 @@
             return y * worldWidth + x;
         };
 
-        const isSolidForPlayer = (type) => [MAT.WALL, MAT.SOIL, MAT.WOOD, MAT.SAND, MAT.GUNPOWDER].includes(type);
+        const isSolidForPlayer = (type) => [MAT.WALL, MAT.SOIL, MAT.WOOD, MAT.SAND, MAT.GUNPOWDER, MAT.COAL, MAT.COAL_BURNING, MAT.GLASS].includes(type);
 
         function collidesAt(x, y) {
             for (let iy = 0; iy < player.height; iy++) {
@@ -615,7 +627,7 @@
 
             if (type === MAT.FIRE) updateFire(x, y, idx, moved);
 
-            else if ([MAT.SAND, MAT.SOIL, MAT.GUNPOWDER, MAT.COAL, MAT.COAL_BURNING].includes(type))
+            else if ([MAT.SAND, MAT.SOIL, MAT.GUNPOWDER, MAT.COAL, MAT.COAL_BURNING, MAT.GLASS].includes(type))
                 updateSolid(x, y, idx, type, moved);
             else if (type === MAT.GAS) updateGas(x, y, idx, moved);
             else if (type === MAT.GUNPOWDER_IGNITED)
@@ -626,7 +638,7 @@
         function stepLiquid(x, y, moved) {
             const idx = getIdx(x, y);
             if (idx === -1 || moved[idx]) return;
-            if (![MAT.WATER, MAT.OIL, MAT.OIL_BURNING].includes(grid[idx])) return;
+            if (![MAT.WATER, MAT.OIL, MAT.OIL_BURNING, MAT.ACID].includes(grid[idx])) return;
 
             updateLiquid(x, y, idx, moved);
         }
@@ -816,7 +828,7 @@
             }
             const below = grid[belowIdx];
             
-            if ([MAT.WATER, MAT.OIL, MAT.OIL_BURNING].includes(below)) {
+            if ([MAT.WATER, MAT.OIL, MAT.OIL_BURNING, MAT.ACID].includes(below)) {
                 // Push entire liquid row sideways
                 if (pushLiquidRowSideways(x, y + 1, below)) {
                     grid[belowIdx] = type;
@@ -835,15 +847,50 @@
             const dir = Math.random() < 0.5 ? -1 : 1;
             for (let dx of [dir, -dir]) {
                 const dIdx = getIdx(x + dx, y + 1);
-                if (dIdx !== -1 && [MAT.EMPTY, MAT.WATER, MAT.OIL, MAT.OIL_BURNING, MAT.GAS, MAT.FIRE].includes(grid[dIdx])) {
+                if (dIdx !== -1 && [MAT.EMPTY, MAT.WATER, MAT.OIL, MAT.OIL_BURNING, MAT.GAS, MAT.FIRE, MAT.ACID].includes(grid[dIdx])) {
                     grid[idx] = grid[dIdx]; grid[dIdx] = type; moved[dIdx] = 1; return;
                 }
             }
         }
 
+        function isLiquid (type) {
+            return LIQUIDS.has(type);
+        }
+
         function updateLiquid(x, y, idx, moved) {
-            const belowIdx = getIdx(x, y + 1);
             const type = grid[idx];
+
+            // --- NEW: Acid Corrosion Logic ---
+            if (type === MAT.ACID) {
+                let consumed = false;
+                // Check cardinal neighbors for things to corrode
+                for (const n of [{x:0,y:1},{x:0,y:-1},{x:1,y:0},{x:-1,y:0}]) {
+                    const nIdx = getIdx(x + n.x, y + n.y);
+                    if (nIdx === -1) continue;
+
+                    const nType = grid[nIdx];
+                    // List of materials immune to acid
+                    const isImmune = [MAT.EMPTY, MAT.WALL, MAT.GLASS, MAT.GAS].includes(nType);
+
+                    if (!isImmune && !isLiquid(nType) && Math.random() < 0.25) { // 25% chance to corrode
+                        grid[nIdx] = MAT.EMPTY;
+                        // Acid has a small chance to be consumed in the reaction
+                        if (Math.random() < 0.1) {
+                            grid[idx] = MAT.EMPTY;
+                            consumed = true;
+                            break; // Stop corroding this frame if consumed
+                        }
+                    }
+                }
+                if (consumed) {
+                    moved[idx] = 1; // Mark as "moved" so it's not processed again
+                    return;
+                }
+            }
+            // --- END: Acid Corrosion Logic ---
+
+
+            const belowIdx = getIdx(x, y + 1);
             if (belowIdx === -1) return;
             
             if (grid[belowIdx] === MAT.FIRE) {
@@ -899,16 +946,18 @@
 
         function tryMoveLiquidSide(x, y, currentIdx, type, moved, dir, limit, vDir) {
             let targetX = x;
+            const movableMaterials = [MAT.EMPTY, MAT.GAS, MAT.FIRE];
+            const allMovableMaterials = [...LIQUIDS, ...movableMaterials];
             for (let i = 1; i <= limit; i++) {
                 const nextX = x + (dir * i);
                 const nextIdx = getIdx(nextX, y);
                 if (nextIdx === -1) break;
                 const content = grid[nextIdx];
-                const canMove = (type === MAT.WATER) ? ([MAT.EMPTY, MAT.GAS, MAT.FIRE, MAT.OIL].includes(content)) : (content === MAT.EMPTY);
+                const canMove = allMovableMaterials.includes(content) && type != content;
                 if (canMove) {
                     targetX = nextX;
                     const vIdx = getIdx(nextX, y + vDir);
-                    if (vIdx !== -1 && [MAT.EMPTY, MAT.GAS, MAT.FIRE].includes(grid[vIdx])) break;
+                    if (vIdx !== -1 && movableMaterials.includes(grid[vIdx])) break;
                 } else break;
             }
             if (targetX !== x) {
@@ -942,7 +991,7 @@
                     }
 
                     // stop if blocked by solid
-                    if (![MAT.WATER, MAT.OIL, MAT.OIL_BURNING].includes(grid[targetIdx])) {
+                    if (![MAT.WATER, MAT.OIL, MAT.OIL_BURNING, MAT.ACID].includes(grid[targetIdx])) {
                         break;
                     }
                 }
@@ -1069,7 +1118,7 @@
                         g = 80 + Math.random() * 80;
                         b = 0;
                     }
-                    else if (type === MAT.WATER || type === MAT.OIL || type === MAT.OIL_BURNING) {
+                    else if (type === MAT.WATER || type === MAT.OIL || type === MAT.OIL_BURNING || type === MAT.ACID) {
                         [r, g, b] = animateLiquidColor(r, g, b, x, y, type, time);
                     }
                     else {
