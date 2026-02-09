@@ -735,6 +735,11 @@
                 if (nIdx === -1) continue;
                 const nType = grid[nIdx];
 
+                // NEW: Check for sand to turn into glass
+                if (nType === MAT.SAND && Math.random() < 0.05) { // 5% chance
+                    grid[nIdx] = MAT.GLASS;
+                }
+
                 if (nType === MAT.GUNPOWDER) {
                     if (Math.random() < 0.5) { // 50% chance to be ignited by fire
                         grid[nIdx] = MAT.GUNPOWDER_IGNITED;
@@ -771,14 +776,23 @@
             }
             if (Math.random() < (nearbyFuel ? 0.0 : 0.15)) grid[targetIdx] = MAT.GAS;
         }
-
+        
         function updateBurningCoal(x, y, idx, moved) {
-
-            // --- DIRECT CONTACT IGNITION (cardinal only) ---
+            // --- DIRECT CONTACT IGNITION & HEATING (cardinal only) ---
             for (const n of [
                 {x:0,y:1},{x:0,y:-1},{x:1,y:0},{x:-1,y:0}
             ]) {
-                tryIgniteAt(x + n.x, y + n.y, 0.02);
+                const nx = x + n.x;
+                const ny = y + n.y;
+                const nIdx = getIdx(nx, ny);
+                if (nIdx === -1) continue;
+
+                // NEW: Turn sand into glass
+                if (grid[nIdx] === MAT.SAND && Math.random() < 0.08) { // 8% chance
+                    grid[nIdx] = MAT.GLASS;
+                }
+
+                tryIgniteAt(nx, ny, 0.02);
             }
 
             // --- Weak fire emission (secondary effect) ---
@@ -796,13 +810,22 @@
         }
 
         function updateBurningOil(x, y, idx, moved) {
-
-            // --- DIRECT CONTACT IGNITION (all neighbors) ---
+            // --- DIRECT CONTACT IGNITION & HEATING (all neighbors) ---
             for (const n of [
                 {x:0,y:1},{x:0,y:-1},{x:1,y:0},{x:-1,y:0},
                 {x:1,y:1},{x:-1,y:1},{x:1,y:-1},{x:-1,y:-1}
             ]) {
-                tryIgniteAt(x + n.x, y + n.y, 0.05);
+                const nx = x + n.x;
+                const ny = y + n.y;
+                const nIdx = getIdx(nx, ny);
+                if (nIdx === -1) continue;
+                
+                // NEW: Turn sand into glass
+                if (grid[nIdx] === MAT.SAND && Math.random() < 0.1) { // 10% chance for hot oil
+                     grid[nIdx] = MAT.GLASS;
+                }
+
+                tryIgniteAt(nx, ny, 0.05);
             }
 
             // --- Strong fire emission ---
