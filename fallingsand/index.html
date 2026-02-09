@@ -58,6 +58,12 @@
         .btn-acid { background-color: #00ff00; color: white; }
         .btn-glass { background-color: #e0e0ff; color: #333; }
         .btn-glass-wall { background-color: #b4b4e0; color: #333; }
+        .btn-adamantium { background-color: #4d5257; color: white; border: 1px solid #aeb5be; }
+        .btn-copper { background-color: #b87333; color: white; }
+        .btn-silver { background-color: #c0c0c0; color: #333; }
+        .btn-gold { background-color: #ffd700; color: #333; }
+        .btn-platinum { background-color: #e5e4e2; color: #333; }
+        .btn-rune-wall { background-color: #2a2a3a; color: #d0c0ff; border: 1px solid #5a4a7a; }
         .btn-eraser { background-color: #000; color: white; border: 1px solid #555; }
         button.active {
             outline: 2px solid white;
@@ -106,6 +112,12 @@
         <button class="btn-acid" onclick="setMaterial('acid')">Acid</button>
         <button class="btn-glass" onclick="setMaterial('glass')">Glass</button>
         <button class="btn-glass-wall" onclick="setMaterial('glass-wall')">Glass Wall</button>
+        <button class="btn-adamantium" onclick="setMaterial('adamantium')">Adamantium</button>
+        <button class="btn-copper" onclick="setMaterial('copper')">Copper</button>
+        <button class="btn-silver" onclick="setMaterial('silver')">Silver</button>
+        <button class="btn-gold" onclick="setMaterial('gold')">Gold</button>
+        <button class="btn-platinum" onclick="setMaterial('platinum')">Platinum</button>
+        <button class="btn-rune-wall" onclick="setMaterial('rune-wall')">Rune Wall</button>
         <button class="btn-eraser" onclick="setMaterial('empty')">Eraser</button>
     </div>
 
@@ -113,8 +125,10 @@
         <b>Controls</b><br>
         A / D – Move<br>
         W – Jump<br>
-        Left Click – Shoot fire<br>
-        Middle Click – Paint brush
+        Q – Switch Container<br>
+        Left Click – Pour<br>
+        Right Click – Store<br>
+        Middle Click – Paint Brush
     </div>
 
     <canvas id="canvas"></canvas>
@@ -124,7 +138,12 @@
         const canvas = document.getElementById('canvas');
         const ctx = canvas.getContext('2d');
 
-        
+        const CHUNK_SIZE = 16; // Chunks will be 16x16 pixels
+        let chunkWidth, chunkHeight;
+        let chunkGrid; // This will hold state for each chunk
+        let activeChunks = new Set(); // A set of active chunk indices for the current frame
+        let nextActiveChunks = new Set(); // A set of chunks to activate for the *next* frame
+
         // NEW: Increased view area and reduced scale
         const viewWidth = 600;
         const viewHeight = 400;
@@ -144,7 +163,7 @@
 
 
         const worldWidth = viewWidth * 30;
-        const worldHeight = viewHeight;
+        const worldHeight = viewHeight * 10;
 
         const renderWidth = viewWidth;
         const renderHeight = viewHeight;
@@ -158,7 +177,8 @@
             WOOD: 10, FIRE: 11, GUNPOWDER: 12, GUNPOWDER_IGNITED: 13,
             OIL: 14, OIL_BURNING: 15,
             COAL:16, COAL_BURNING:17,
-            ACID:18, GLASS:19, GLASS_WALL: 20
+            ACID:18, GLASS:19, GLASS_WALL: 20,
+            ADAMANTIUM: 21, COPPER: 22, SILVER: 23, GOLD: 24, PLATINUM: 25, RUNE_WALL: 26
         };
 
         const COLORS = {
@@ -168,7 +188,10 @@
             [MAT.FIRE]: [255, 69, 0], [MAT.GUNPOWDER]: [60, 60, 60],
             [MAT.GUNPOWDER_IGNITED]: [120, 80, 80], [MAT.OIL]: [90, 70, 30], [MAT.OIL_BURNING]: [255, 69, 0],
             [MAT.COAL]: [30, 30, 30], [MAT.COAL_BURNING]: [255, 69, 0],
-            [MAT.ACID]: [0, 255, 0], [MAT.GLASS]: [200, 200, 255], [MAT.GLASS_WALL]: [180, 180, 235]
+            [MAT.ACID]: [0, 255, 0], [MAT.GLASS]: [200, 200, 255], [MAT.GLASS_WALL]: [180, 180, 235],
+            [MAT.ADAMANTIUM]: [77, 82, 87], [MAT.COPPER]: [184, 115, 51],
+            [MAT.SILVER]: [192, 192, 192], [MAT.GOLD]: [255, 215, 0],
+            [MAT.PLATINUM]: [229, 228, 226], [MAT.RUNE_WALL]: [200, 200, 100]
         };
 
         const MATERIAL_NAME = {
@@ -188,7 +211,83 @@
             [MAT.COAL_BURNING]: 'Burning Coal',
             [MAT.ACID]: 'Acid',
             [MAT.GLASS]: 'Glass',
-            [MAT.GLASS_WALL]: 'Glass Wall'
+            [MAT.GLASS_WALL]: 'Glass Wall',
+            [MAT.ADAMANTIUM]: 'Adamantium', 
+            [MAT.COPPER]: 'Copper',
+            [MAT.SILVER]: 'Silver', 
+            [MAT.GOLD]: 'Gold', 
+            [MAT.PLATINUM]: 'Platinum',
+            [MAT.RUNE_WALL]: 'Rune Wall'
+        };
+
+        // --- RUNE DEFINITIONS ---
+        // A library of rune patterns. 1 represents the rune material, 0 is empty.
+        const DWARVEN_RUNES = {
+            // A simple 7x9 pixel font for the runes
+            RUNE_WIDTH: 7,
+            RUNE_HEIGHT: 9,
+            PATTERNS: [
+                // "Axe"
+                [
+                    [0,1,1,1,1,1,0],
+                    [0,0,1,1,1,0,0],
+                    [0,0,1,1,1,0,0],
+                    [0,0,1,1,1,0,0],
+                    [1,1,1,1,1,1,1],
+                    [0,0,1,1,1,0,0],
+                    [0,0,1,1,1,0,0],
+                    [0,0,1,1,1,0,0],
+                    [0,1,1,0,1,1,0]
+                ],
+                // "Hammer"
+                [
+                    [1,1,1,1,1,1,1],
+                    [1,1,1,1,1,1,1],
+                    [0,0,1,1,1,0,0],
+                    [0,0,1,1,1,0,0],
+                    [0,0,1,1,1,0,0],
+                    [0,0,1,1,1,0,0],
+                    [0,0,1,1,1,0,0],
+                    [0,0,1,1,1,0,0],
+                    [0,0,1,1,1,0,0]
+                ],
+                // "Shield"
+                [
+                    [1,1,1,1,1,1,1],
+                    [1,0,0,1,0,0,1],
+                    [1,0,0,1,0,0,1],
+                    [1,1,1,1,1,1,1],
+                    [0,0,1,1,1,0,0],
+                    [0,0,1,1,1,0,0],
+                    [1,1,1,1,1,1,1],
+                    [1,0,0,0,0,0,1],
+                    [1,1,1,1,1,1,1]
+                ],
+                // "Spear"
+                [
+                    [0,0,0,1,0,0,0],
+                    [0,0,1,1,1,0,0],
+                    [0,1,1,1,1,1,0],
+                    [0,0,0,1,0,0,0],
+                    [0,0,0,1,0,0,0],
+                    [0,0,0,1,0,0,0],
+                    [0,0,0,1,0,0,0],
+                    [0,0,0,1,0,0,0],
+                    [0,0,0,1,0,0,0]
+                ],
+                // "Pickaxe"
+                [
+                    [1,1,0,0,0,1,1],
+                    [0,1,1,0,1,1,0],
+                    [0,0,1,1,1,0,0],
+                    [0,0,0,1,0,0,0],
+                    [0,0,0,1,0,0,0],
+                    [0,0,0,1,0,0,0],
+                    [0,0,0,1,0,0,0],
+                    [0,0,0,1,0,0,0],
+                    [0,0,0,1,0,0,0]
+                ]
+            ]
         };
 
 
@@ -204,14 +303,30 @@
         const GRAVITY = 0.1;
         const MAX_FALL_SPEED = 4;
         
-        let grid = new Array(worldWidth * worldHeight).fill(MAT.EMPTY);
+        let grid = new Uint8Array(worldWidth * worldHeight).fill(MAT.EMPTY);
         let ignitionTimer = new Uint8Array(worldWidth * worldHeight);
         let currentMaterial = MAT.SAND;
         let isDrawing = false;
+        let isStoring = false;
         let frameCount = 0;
         let playerFacingRight = true;
 		let projectiles = [];
+        let alchemyJobs = [];
+
+        // --- Magic Particle System ---
+        const MAX_MAGIC_PARTICLES = 5000;
+        const magicParticlePool = [];
+        for (let i = 0; i < MAX_MAGIC_PARTICLES; i++) {
+            magicParticlePool.push({ x: 0, y: 0, vx: 0, vy: 0, lifespan: 0, color: [0,0,0], active: false });
+        }
+
+        let magicParticles = [];
+        let magicEmitters = [];
+        let nextEmitterId = 0;
         let firePixelsCoords = [];
+        let triggers = [];
+        let nextTriggerId = 0;
+        let isAlchemyUIVisible = false;
 
         let lastFpsTime = performance.now();
         let framesThisSecond = 0;
@@ -223,6 +338,63 @@
         let hudTimer = 0;
 
         let skyImageData = null;
+
+        // --- INVENTORY AND CONTAINERS ---
+        const pouchWidth = 32;
+        const pouchHeight = 32;
+        const flaskWidth = 24;
+        const flaskHeight = 40;
+
+        let pouchGrid = new Array(pouchWidth * pouchHeight).fill(MAT.EMPTY);
+        let flaskGrid = new Array(flaskWidth * flaskHeight).fill(MAT.EMPTY);
+
+        let activeContainer = 'pouch'; // 'pouch' or 'flask'
+        let isPouring = false;
+        let pourCooldown = 0;
+        let pouredParticles = []; // For the pouring stream effect
+
+        const STORABLE_SOLIDS = new Set([MAT.SAND, MAT.SOIL, MAT.GUNPOWDER, MAT.COAL, MAT.GLASS, MAT.COPPER, MAT.SILVER, MAT.GOLD, MAT.PLATINUM]);
+        const STORABLE_LIQUIDS = new Set([MAT.WATER, MAT.OIL, MAT.ACID]);
+
+        function initializeChunks() {
+            chunkWidth = Math.ceil(worldWidth / CHUNK_SIZE);
+            chunkHeight = Math.ceil(worldHeight / CHUNK_SIZE);
+            chunkGrid = new Array(chunkWidth * chunkHeight);
+
+            for (let i = 0; i < chunkGrid.length; i++) {
+                // We can store more chunk-specific data here later if needed
+                chunkGrid[i] = { index: i }; 
+            }
+
+            // Initial activation: Check world grid for any non-empty cells
+            for (let y = 0; y < worldHeight; y++) {
+                for (let x = 0; x < worldWidth; x++) {
+                    if (grid[getIdx(x, y)] !== MAT.EMPTY) {
+                        activateChunkAt(x, y);
+                    }
+                }
+            }
+            // The first frame's active chunks are now in `nextActiveChunks`
+        }
+
+        /**
+         * Activates the chunk at the given world coordinates, as well as its 8 neighbors.
+         * This ensures interactions across chunk borders are always simulated.
+         */
+        function activateChunkAt(worldX, worldY) {
+            const chunkX = Math.floor(worldX / CHUNK_SIZE);
+            const chunkY = Math.floor(worldY / CHUNK_SIZE);
+
+            // Activate the 3x3 grid of chunks around the target
+            for (let cy = chunkY - 1; cy <= chunkY + 1; cy++) {
+                for (let cx = chunkX - 1; cx <= chunkX + 1; cx++) {
+                    if (cx >= 0 && cx < chunkWidth && cy >= 0 && cy < chunkHeight) {
+                        const chunkIndex = cy * chunkWidth + cx;
+                        nextActiveChunks.add(chunkGrid[chunkIndex]);
+                    }
+                }
+            }
+        }
 
         function generateNightSky(width, height) {
             const img = ctx.createImageData(width, height);
@@ -289,33 +461,61 @@
 
         // --- PLAYER AND CAMERA ---
         const player = {
-            x: worldWidth / 2, y: 50, vx: 0, vy: 0,
-            width: 8, height: 16, speed: 1, jumpForce: 2.5, onGround: false // Scaled player size
+            x: 30, y: 80, vx: 0, vy: 0,
+            width: 8, height: 16, speed: 1, jumpForce: 2.5, onGround: false,
+            canInteract: false,
+            currentTrigger: null // Scaled player size
         };
         const camera = { x: player.x - viewWidth / 2, y: 0 };
 		const mouse = { x: 0, y: 0, worldX: 0, worldY: 0 };
         
         // --- INPUT HANDLING ---
         const keys = {};
-        window.addEventListener('keydown', (e) => keys[e.code] = true);
+        window.addEventListener('keydown', (e) => {
+            // If the UI is open, input is handled differently
+            if (isAlchemyUIVisible) {
+                if (e.code === 'Escape') {
+                    isAlchemyUIVisible = false;
+                }
+                // Check if a number key was pressed
+                if (e.code.startsWith('Digit')) {
+                    const index = parseInt(e.code.replace('Digit', ''), 10) - 1;
+                    const reactionKeys = Object.keys(ALCHEMY_REACTIONS);
+                    if (index >= 0 && index < reactionKeys.length) {
+                        const reactionKey = reactionKeys[index];
+                        // Pass the station's geometry to the execute function
+                        ALCHEMY_REACTIONS[reactionKey].execute(player.currentTrigger.associatedData.stationGeometry);
+                        isAlchemyUIVisible = false; // Close UI after executing
+                    }
+                }
+                return; // Stop further input processing
+            }
+
+            keys[e.code] = true;
+
+            if (e.code === 'KeyQ') {
+                activeContainer = activeContainer === 'pouch' ? 'flask' : 'pouch';
+            }
+
+            if (e.code === 'KeyE') {
+                // Check if the player is currently in a trigger zone
+                if (player.canInteract && player.currentTrigger) {
+                    // Fire the specific trigger's onInteract function
+                    player.currentTrigger.onInteract(player.currentTrigger);
+                }
+            }
+        });
         window.addEventListener('keyup', (e) => keys[e.code] = false);
 
         function setMaterial(name) {
             const map = {
-                sand: MAT.SAND,
-                water: MAT.WATER,
-                oil: MAT.OIL,
-                coal: MAT.COAL,
-                soil: MAT.SOIL,
-                wall: MAT.WALL,
-                gas: MAT.GAS,
-                wood: MAT.WOOD,
-                fire: MAT.FIRE,
-                gunpowder: MAT.GUNPOWDER,
-                acid: MAT.ACID,
-                glass: MAT.GLASS,
-                'glass-wall': MAT.GLASS_WALL,
-                empty: MAT.EMPTY
+                sand: MAT.SAND, water: MAT.WATER, oil: MAT.OIL, coal: MAT.COAL,
+                soil: MAT.SOIL, wall: MAT.WALL, gas: MAT.GAS, wood: MAT.WOOD,
+                fire: MAT.FIRE, gunpowder: MAT.GUNPOWDER, acid: MAT.ACID,
+                glass: MAT.GLASS, 'glass-wall': MAT.GLASS_WALL, empty: MAT.EMPTY,
+                adamantium: MAT.ADAMANTIUM, copper: MAT.COPPER, silver: MAT.SILVER,
+                gold: MAT.GOLD, platinum: MAT.PLATINUM,
+                'rune-wall': MAT.RUNE_WALL
             };
 
             if (map[name] === undefined) {
@@ -396,6 +596,7 @@
                         const idx = getIdx(px, py);
                         if (idx !== -1 && grid[idx] !== MAT.WALL) {
                             grid[idx] = currentMaterial;
+                            activateChunkAt(px, py);
                         }
                     }
                 }
@@ -405,24 +606,38 @@
         canvas.addEventListener('contextmenu', e => e.preventDefault());
         
         canvas.addEventListener('mousedown', (e) => {
-            if (e.button === 0) { shootFire(); } 
-            else if (e.button === 1) { isDrawing = true; draw(mouse.worldX, mouse.worldY); }
+            if (e.button === 0) { isPouring = true; } // Left-click to pour
+            else if (e.button === 1) { isDrawing = true; draw(mouse.worldX, mouse.worldY); e.preventDefault(); } // Middle-click to draw
+            else if (e.button === 2) { 
+                isStoring = true; // Set storing state to true
+                storeMaterial(mouse.worldX, mouse.worldY); // Store immediately on click
+            } 
         });
+
         canvas.addEventListener('mouseup', (e) => {
+            if (e.button === 0) isPouring = false;
             if (e.button === 1) isDrawing = false;
+            if (e.button === 2) isStoring = false; // Set storing state to false
         });
+
         canvas.addEventListener('mousemove', (e) => {
              if (isDrawing) draw(mouse.worldX, mouse.worldY);
         });
 
         // --- CORE PHYSICS ENGINE ---
-        const getIdx = (x, y) => {
-            x = Math.floor(x); y = Math.floor(y);
-            if (x < 0 || x >= worldWidth || y < 0 || y >= worldHeight) return -1;
-            return y * worldWidth + x;
+        const getIdx = (x, y, w = worldWidth, h = worldHeight) => {
+            x = Math.floor(x);
+            y = Math.floor(y);
+            if (x < 0 || x >= w || y < 0 || y >= h) return -1;
+            return y * w + x;
         };
 
-        const isSolidForPlayer = (type) => [MAT.WALL, MAT.SOIL, MAT.WOOD, MAT.SAND, MAT.GUNPOWDER, MAT.COAL, MAT.COAL_BURNING, MAT.GLASS, MAT.GLASS_WALL].includes(type);
+        const isSolidForPlayer = (type) => [
+            MAT.WALL, MAT.SOIL, MAT.WOOD, MAT.SAND, 
+            MAT.GUNPOWDER, MAT.COAL, MAT.COAL_BURNING, MAT.GLASS, 
+            MAT.GLASS_WALL, MAT.ADAMANTIUM, MAT.COPPER, MAT.SILVER, 
+            MAT.GOLD, MAT.PLATINUM, MAT.RUNE_WALL
+        ].includes(type);
 
         function collidesAt(x, y) {
             for (let iy = 0; iy < player.height; iy++) {
@@ -451,6 +666,11 @@
         }
 
         function updatePlayer() {
+            if (isAlchemyUIVisible) {
+                player.vx = 0; // Prevent sliding
+                return;
+            }
+
             // --- INPUT ---
             if (keys['KeyA']) {
                 player.vx = -player.speed;
@@ -529,6 +749,167 @@
             }
         }
 
+        /**
+         * Scans a 3x3 area in the world and teleports valid materials into the correct container.
+         */
+        function storeMaterial(worldX, worldY) {
+            const storeRadius = 1; // Creates a 3x3 area
+            for (let dy = -storeRadius; dy <= storeRadius; dy++) {
+                for (let dx = -storeRadius; dx <= storeRadius; dx++) {
+                    const wx = worldX + dx;
+                    const wy = worldY + dy;
+                    const worldIdx = getIdx(wx, wy, worldWidth, worldHeight);
+                    if (worldIdx === -1) continue;
+
+                    const type = grid[worldIdx];
+                    let targetGrid, targetW, targetH;
+
+                    if (STORABLE_SOLIDS.has(type)) {
+                        targetGrid = pouchGrid; targetW = pouchWidth; targetH = pouchHeight;
+                    } else if (STORABLE_LIQUIDS.has(type)) {
+                        targetGrid = flaskGrid; targetW = flaskWidth; targetH = flaskHeight;
+                    } else {
+                        continue; // Can't store this type
+                    }
+
+                    // NEW: Scan from the top of the container downwards, across the full width, to find an empty spot.
+                    let spotFound = false;
+                    for (let y = 0; y < targetH; y++) {
+                        // Start scanning at a random x-offset each time to prevent filling bias on one side.
+                        const xOffset = Math.floor(Math.random() * targetW);
+                        for (let i = 0; i < targetW; i++) {
+                            const x = (i + xOffset) % targetW; // Loop through all x-coordinates
+                            
+                            const containerIdx = getIdx(x, y, targetW, targetH);
+                            if (containerIdx !== -1 && targetGrid[containerIdx] === MAT.EMPTY) {
+                                targetGrid[containerIdx] = type; // Place material
+                                grid[worldIdx] = MAT.EMPTY;      // Remove from world
+                                spotFound = true;
+                                break; // Exit inner x-loop
+                            }
+                        }
+                        if (spotFound) {
+                            break; // Exit outer y-loop
+                        }
+                    }
+                }
+            }
+        }
+
+        /**
+         * Takes one particle from the bottom of the active container and adds it to the pouredParticles array.
+         */
+        function pourFromContainer() {
+            const [containerGrid, containerW, containerH] = activeContainer === 'pouch'
+                ? [pouchGrid, pouchWidth, pouchHeight]
+                : [flaskGrid, flaskWidth, flaskHeight];
+
+            // NEW: Variables to control how many particles are poured each frame
+            const maxPourPerFrame = 3; 
+            let pouredCount = 0;
+
+            // Find particles at the bottom to pour
+            for (let y = containerH - 1; y >= 0; y--) {
+                for (let i = 0; i < containerW; i++) {
+                    // Scan from the center outwards
+                    const x = Math.floor(containerW / 2) + (i % 2 === 0 ? 1 : -1) * Math.floor(i / 2);
+                    const idx = getIdx(x, y, containerW, containerH);
+                    const type = containerGrid[idx];
+
+                    if (type !== MAT.EMPTY && type !== MAT.GAS) { // Cannot pour gas
+                        containerGrid[idx] = MAT.EMPTY; // Remove from container
+
+                        // --- Start of Noita-style Variance Logic ---
+
+                        // 1. Add variance to spawn position
+                        const baseSpawnX = player.x + (playerFacingRight ? player.width : 0);
+                        const baseSpawnY = player.y + 9;
+                        const spawnOffsetX = (Math.random() - 0.5) * 2; 
+                        const spawnOffsetY = (Math.random() - 0.5) * 2; 
+                        const finalSpawnX = baseSpawnX + spawnOffsetX;
+                        const finalSpawnY = baseSpawnY + spawnOffsetY;
+
+                        // 2. Add variance to the angle (spread)
+                        const baseAngle = Math.atan2(mouse.worldY - finalSpawnY, mouse.worldX - finalSpawnX);
+                        const spread = 0.05; // CHANGED: Reduced from 0.25 to make the stream tighter
+                        const finalAngle = baseAngle + (Math.random() - 0.5) * spread;
+
+                        // 3. Add variance to the velocity
+                        const baseVelocity = 4.0;
+                        const velocityVariance = 0.5;
+                        const finalVelocity = baseVelocity + (Math.random() - 0.5) * velocityVariance;
+
+                        // --- End of Noita-style Variance Logic ---
+
+                        pouredParticles.push({
+                            x: finalSpawnX, 
+                            y: finalSpawnY,
+                            vx: Math.cos(finalAngle) * finalVelocity,
+                            vy: Math.sin(finalAngle) * finalVelocity,
+                            type: type
+                        });
+                        
+                        pouredCount++;
+                        if (pouredCount >= maxPourPerFrame) {
+                           return; // Exit after pouring the max number of particles
+                        }
+                    }
+                }
+            }
+        }
+
+        /**
+         * Updates the position and state of all particles currently being poured.
+         */
+        function updatePouredParticles() {
+            pouredParticles = pouredParticles.filter(p => {
+                p.vy += GRAVITY * 0.5;
+                p.x += p.vx;
+                p.y += p.vy;
+
+                const ix = Math.floor(p.x);
+                const iy = Math.floor(p.y);
+
+                const worldIdx = getIdx(ix, iy);
+                if (worldIdx === -1) return false;
+
+                const isObstructed = grid[worldIdx] !== MAT.EMPTY && grid[worldIdx] !== MAT.GAS;
+
+                if (isObstructed || (p.vx * p.vx + p.vy * p.vy < 1.0)) {
+                    let placeX = ix;
+                    let placeY = iy;
+
+                    // THE FIX: Use a while(true) loop to search indefinitely upwards.
+                    // This loop is safe because getIdx() will eventually return -1 when placeY goes off-screen,
+                    // causing the loop to terminate naturally.
+                    while (true) {
+                        const checkIdx = getIdx(placeX, placeY);
+                        
+                        if (checkIdx === -1) {
+                            // We've searched all the way to the top of the map and found no space.
+                            // The particle is lost off-screen.
+                            break; 
+                        }
+
+                        if (grid[checkIdx] === MAT.EMPTY || grid[checkIdx] === MAT.GAS) {
+                            // Found an empty spot. Place the material.
+                            grid[checkIdx] = p.type;
+                            activateChunkAt(placeX, placeY);
+                            break; // Exit the loop, success.
+                        }
+                        
+                        // If the spot was taken, move up one pixel and try again.
+                        placeY--;
+                    }
+                    
+                    // The particle's journey is over. Remove it from the pouredParticles array.
+                    return false;
+                }
+                
+                return true; 
+            });
+        }
+
         function shootFire() {
             const projectileSpeed = 1.0; 
             
@@ -555,57 +936,67 @@
             });
         }
 
-        const moved = new Uint8Array(worldWidth * worldHeight);
+        const movedWorld = new Uint8Array(worldWidth * worldHeight);
+        const movedPouch = new Uint8Array(pouchWidth * pouchHeight);
+        const movedFlask = new Uint8Array(flaskWidth * flaskHeight);
         
-        function updateSimulation() {
+        /**
+         * Runs the simulation on the main world grid using the active chunk optimization.
+         */
+        function runWorldSimulationWithChunks(moved) {
             moved.fill(0);
+            const localGetIdx = (x, y) => getIdx(x, y, worldWidth, worldHeight);
+            const scanDir = (frameCount % 2 === 0);
 
-            leftToRight = frameCount % 2 === 0;
+            // The core optimization: Loop through ACTIVE chunks only
+            for (const chunk of activeChunks) {
+                const chunkX = chunk.index % chunkWidth;
+                const chunkY = Math.floor(chunk.index / chunkWidth);
 
-            const centerX = Math.floor(player.x);
-            const halfW = Math.floor(viewWidth * 0.6);
-            const startX = centerX - halfW;
-            const endX   = centerX + halfW;
+                const startX = chunkX * CHUNK_SIZE;
+                const startY = chunkY * CHUNK_SIZE;
+                const endX = startX + CHUNK_SIZE;
+                const endY = startY + CHUNK_SIZE;
 
-            /*for (let y = worldHeight - 1; y >= 0; y--) {
-                if (leftToRight) {
-                    for (let x = startX; x <= endX; x++) {
-                        stepAll(x, y, moved);
-                    }
-                } else {
-                    for (let x = endX; x >= startX; x--) {
-                        stepAll(x, y, moved);
+                // PASS 1: solids, gas, fire (within the chunk's bounds)
+                for (let y = endY - 1; y >= startY; y--) {
+                    for (let x = (scanDir ? startX : endX - 1); (scanDir ? x < endX : x >= startX); x += (scanDir ? 1 : -1)) {
+                        // We pass the main `grid` to the step functions here
+                        stepNonLiquid(x, y, moved, grid, worldWidth, worldHeight, localGetIdx);
                     }
                 }
-            }*/
 
-            // ---------- PASS 1: solids, gas, fire ----------
-            for (let y = worldHeight - 1; y >= 0; y--) {
-                if (leftToRight) {
-                    for (let x = startX; x <= endX; x++) {
-                        stepNonLiquid(x, y, moved);
-                    }
-                } else {
-                    for (let x = endX; x >= startX; x--) {
-                        stepNonLiquid(x, y, moved);
+                // PASS 2: liquids (within the chunk's bounds)
+                for (let y = endY - 1; y >= startY; y--) {
+                    for (let x = (scanDir ? startX : endX - 1); (scanDir ? x < endX : x >= startX); x += (scanDir ? 1 : -1)) {
+                        stepLiquid(x, y, moved, grid, worldWidth, worldHeight, localGetIdx);
                     }
                 }
             }
+        }
 
-            // ---------- PASS 2: liquids (ALWAYS bottom → top) ----------
-            for (let y = worldHeight - 1; y >= 0; y--) {
-                if (leftToRight) {
-                    for (let x = startX; x <= endX; x++) {
-                        stepLiquid(x, y, moved);
-                    }
-                } else {
-                    for (let x = endX; x >= startX; x--) {
-                        stepLiquid(x, y, moved);
-                    }
+        /**
+         * Runs the simulation on a small, self-contained grid like the pouch or flask.
+         * This function does NOT use the chunk system.
+         */
+        function runSimulationOnSmallGrid(moved, currentGrid, gridWidth, gridHeight) {
+             moved.fill(0);
+             const localGetIdx = (x, y) => getIdx(x, y, gridWidth, gridHeight);
+             const scanDir = (frameCount % 2 === 0);
+
+            // PASS 1: solids, gas, fire
+            for (let y = gridHeight - 1; y >= 0; y--) {
+                 for (let x = (scanDir ? 0 : gridWidth - 1); (scanDir ? x < gridWidth : x >= 0); x += (scanDir ? 1 : -1)) {
+                    stepNonLiquid(x, y, moved, currentGrid, gridWidth, gridHeight, localGetIdx);
                 }
             }
 
-            frameCount++;
+            // PASS 2: liquids
+            for (let y = gridHeight - 1; y >= 0; y--) {
+                 for (let x = (scanDir ? 0 : gridWidth - 1); (scanDir ? x < gridWidth : x >= 0); x += (scanDir ? 1 : -1)) {
+                    stepLiquid(x, y, moved, currentGrid, gridWidth, gridHeight, localGetIdx);
+                }
+            }
         }
 
         function stepAll(x, y, moved) {
@@ -622,41 +1013,45 @@
             else if (type >= 20) updateSource(x, y, idx, type);
         }
 
-        function stepNonLiquid(x, y, moved) {
-            const idx = getIdx(x, y);
+        function stepNonLiquid(x, y, moved, grid, w, h, getIdx) {
+            const idx = getIdx(x, y); 
             if (idx === -1 || moved[idx]) return;
-
             const type = grid[idx];
-            if (type === MAT.WATER) return;
-            if ([MAT.EMPTY, MAT.WALL, MAT.WOOD, MAT.GLASS_WALL].includes(type)) return;
+            if ([MAT.EMPTY, MAT.WALL, MAT.WOOD, MAT.GLASS_WALL, MAT.ADAMANTIUM, MAT.RUNE_WALL].includes(type) || LIQUIDS.has(type)) return;
 
-            if (type === MAT.FIRE) updateFire(x, y, idx, moved);
-
-            else if ([MAT.SAND, MAT.SOIL, MAT.GUNPOWDER, MAT.COAL, MAT.COAL_BURNING, MAT.GLASS].includes(type))
-                updateSolid(x, y, idx, type, moved);
-            else if (type === MAT.GAS) updateGas(x, y, idx, moved);
-            else if (type === MAT.GUNPOWDER_IGNITED)
-                updateIgnitedGunpowder(x, y, idx, moved);
-            else if (type >= 20) updateSource(x, y, idx, type);
+            if (type === MAT.FIRE) updateFire(x, y, idx, moved, grid, w, h, getIdx);
+            else if ([MAT.SAND, MAT.SOIL, MAT.GUNPOWDER, MAT.COAL, MAT.COAL_BURNING, MAT.GLASS, MAT.COPPER, MAT.SILVER, MAT.GOLD, MAT.PLATINUM].includes(type)) updateSolid(x, y, idx, type, moved, grid, w, h, getIdx);
+            else if (type === MAT.COAL_BURNING) updateBurningCoal(x, y, idx, moved, grid, w, h, getIdx);
+            else if (type === MAT.GAS) updateGas(x, y, idx, moved, grid, w, h, getIdx);
+            else if (type === MAT.GUNPOWDER_IGNITED) updateIgnitedGunpowder(x, y, idx, moved, grid, w, h, getIdx);
         }
 
-        function stepLiquid(x, y, moved) {
-            const idx = getIdx(x, y);
+        function stepLiquid(x, y, moved, grid, w, h, getIdx) {
+            const idx = getIdx(x, y, w, h);
             if (idx === -1 || moved[idx]) return;
             if (![MAT.WATER, MAT.OIL, MAT.OIL_BURNING, MAT.ACID].includes(grid[idx])) return;
 
-            updateLiquid(x, y, idx, moved);
+            updateLiquid(x, y, idx, moved, grid, w, h, getIdx);
         }
 
 
         function updateCamera() {
+            // Follow player on X-axis
             const targetCamX = player.x - viewWidth / 2;
             camera.x += (targetCamX - camera.x) * 0.1;
+
+            // Follow player on Y-axis
+            const targetCamY = player.y - viewHeight / 2;
+            camera.y += (targetCamY - camera.y) * 0.1;
+
+            // Clamp camera to world bounds
             if (camera.x < 0) camera.x = 0;
             if (camera.x > worldWidth - viewWidth) camera.x = worldWidth - viewWidth;
+            if (camera.y < 0) camera.y = 0;
+            if (camera.y > worldHeight - viewHeight) camera.y = worldHeight - viewHeight;
         }
 
-        function updateIgnitedGunpowder(x, y, idx, moved) {
+        function updateIgnitedGunpowder(x, y, idx, moved, grid, w, h, getIdx) {
             ignitionTimer[idx]--;
 
             // spread ignition BEFORE exploding
@@ -693,7 +1088,7 @@
                     const idx = getIdx(ex, ey);
                     if (idx === -1 || ex === 0 || ex === worldWidth - 1 || ey === 0 || ey === worldHeight - 1) continue;
                     
-                    if (grid[idx] !== MAT.WALL) {
+                    if (grid[idx] !== MAT.WALL && grid[idx] !== MAT.ADAMANTIUM) {
                         const rand = Math.random();
                         if (rand < 0.3) grid[idx] = MAT.FIRE;
                         else if (rand < 0.7) grid[idx] = MAT.GAS; 
@@ -728,7 +1123,7 @@
             triggerExplosion(sumX / cluster.length, sumY / cluster.length, 5 + Math.sqrt(cluster.length));
         }
 
-        function updateFire(x, y, idx, moved) {
+        function updateFire(x, y, idx, moved, grid, w, h, getIdx) {
             let nearbyFuel = false;
             for (let n of [{x:0,y:-1},{x:0,y:1},{x:-1,y:0},{x:1,y:0},{x:-1,y:-1},{x:1,y:-1},{x:-1,y:1},{x:1,y:1}]) {
                 const nx = x + n.x, ny = y + n.y;
@@ -778,7 +1173,7 @@
             if (Math.random() < (nearbyFuel ? 0.0 : 0.15)) grid[targetIdx] = MAT.GAS;
         }
 
-        function updateBurningCoal(x, y, idx, moved) {
+        function updateBurningCoal(x, y, idx, moved, grid, w, h, getIdx) {
             // --- DIRECT CONTACT IGNITION & HEATING (cardinal only) ---
             for (const n of [
                 {x:0,y:1},{x:0,y:-1},{x:1,y:0},{x:-1,y:0}
@@ -810,7 +1205,7 @@
             }
         }
 
-        function updateBurningOil(x, y, idx, moved) {
+        function updateBurningOil(x, y, idx, moved, grid, w, h, getIdx) {
             // --- DIRECT CONTACT IGNITION & HEATING (all neighbors) ---
             for (const n of [
                 {x:0,y:1},{x:0,y:-1},{x:1,y:0},{x:-1,y:0},
@@ -843,13 +1238,10 @@
             }
         }
 
-        
-        function updateSource(x, y, idx, type) { /* ... */ }
-
-        function updateSolid(x, y, idx, type, moved) {
+        function updateSolid(x, y, idx, type, moved, grid, w, h, getIdx) {
             const belowIdx = getIdx(x, y + 1);
             if (belowIdx === -1) return;
-            if (type === MAT.COAL_BURNING) {updateBurningCoal(x, y, idx, moved)}
+            if (type === MAT.COAL_BURNING) {updateBurningCoal(x, y, idx, moved, grid, w, h, getIdx)}
             if (grid[belowIdx] === MAT.FIRE && type === MAT.COAL) {
                 grid[idx] = MAT.COAL_BURNING;
                 return;
@@ -858,10 +1250,11 @@
             
             if ([MAT.WATER, MAT.OIL, MAT.OIL_BURNING, MAT.ACID].includes(below)) {
                 // Push entire liquid row sideways
-                if (pushLiquidRowSideways(x, y + 1, below)) {
+                if (pushLiquidRowSideways(x, y + 1, below, grid, w, h, getIdx)) {
                     grid[belowIdx] = type;
                     grid[idx] = MAT.EMPTY;
                     moved[belowIdx] = 1;
+                    activateChunkAt(x, y + 1);
                     return;
                 }
 
@@ -876,7 +1269,9 @@
             for (let dx of [dir, -dir]) {
                 const dIdx = getIdx(x + dx, y + 1);
                 if (dIdx !== -1 && [MAT.EMPTY, MAT.WATER, MAT.OIL, MAT.OIL_BURNING, MAT.GAS, MAT.FIRE, MAT.ACID].includes(grid[dIdx])) {
-                    grid[idx] = grid[dIdx]; grid[dIdx] = type; moved[dIdx] = 1; return;
+                    grid[idx] = grid[dIdx]; grid[dIdx] = type; moved[dIdx] = 1; 
+                    activateChunkAt(x + dx, y + 1);
+                    return;
                 }
             }
         }
@@ -885,7 +1280,7 @@
             return LIQUIDS.has(type);
         }
 
-        function updateLiquid(x, y, idx, moved) {
+        function updateLiquid(x, y, idx, moved, grid, w, h, getIdx) {
             const type = grid[idx];
 
             // --- NEW: Acid Corrosion Logic ---
@@ -898,7 +1293,7 @@
 
                     const nType = grid[nIdx];
                     // List of materials immune to acid
-                    const isImmune = [MAT.EMPTY, MAT.WALL, MAT.GLASS, MAT.GAS, MAT.GLASS_WALL].includes(nType);
+                    const isImmune = [MAT.EMPTY, MAT.GLASS, MAT.GAS, MAT.GLASS_WALL, MAT.ADAMANTIUM].includes(nType);
 
                     if (!isImmune && !isLiquid(nType) && Math.random() < 0.25) { // 25% chance to corrode
                         grid[nIdx] = MAT.EMPTY;
@@ -908,6 +1303,7 @@
                             consumed = true;
                             break; // Stop corroding this frame if consumed
                         }
+                        activateChunkAt(x + n.x, y + n.y);
                     }
                 }
                 if (consumed) {
@@ -924,9 +1320,12 @@
             if (grid[belowIdx] === MAT.FIRE) {
                 if (grid[idx] === MAT.OIL) {
                     grid[idx] = MAT.OIL_BURNING;
+                    activateChunkAt(x, y);
                 } else {
                     grid[idx] = MAT.GAS;
                     grid[belowIdx] = MAT.GAS;
+                    activateChunkAt(x, y);
+                    activateChunkAt(x, y+1);
                 }
                 return;
             }
@@ -937,6 +1336,8 @@
             if ([MAT.EMPTY, MAT.GAS].includes(below)) {
                 grid[idx] = below;
                 grid[belowIdx] = type;
+                activateChunkAt(x, y);
+                activateChunkAt(x, y+1);
                 moved[belowIdx] = 1;
                 return;
             }
@@ -945,34 +1346,40 @@
             if (LIQUID_DENSITY[type] > LIQUID_DENSITY[below]) {
                 grid[idx] = below;
                 grid[belowIdx] = type;
+                activateChunkAt(x, y);
+                activateChunkAt(x, y+1);
                 moved[belowIdx] = 1;
                 return;
             }
 
-            tryMoveLiquidSide(x, y, idx, type, moved, Math.random() < 0.5 ? -1 : 1, 20, 1); // Scaled limit
+            tryMoveLiquidSide(x, y, idx, type, moved, Math.random() < 0.5 ? -1 : 1, 20, 1, grid, w, h, getIdx); // Scaled limit
 
             if (grid[idx] === MAT.OIL_BURNING) {
-                updateBurningOil(x, y, idx, moved);
+                updateBurningOil(x, y, idx, moved, grid, w, h, getIdx);
             }
 
         }
 
-        function updateGas(x, y, idx, moved) {
+        function updateGas(x, y, idx, moved, grid, w, h, getIdx) {
             const aboveIdx = getIdx(x, y - 1);
             
             if (y === 0) {
                 grid[idx] = MAT.EMPTY;
+                activateChunkAt(x, y);
                 return;
             }
 
             const above = grid[aboveIdx];
             if ([MAT.EMPTY, MAT.WATER, MAT.SAND, MAT.SOIL, MAT.GUNPOWDER].includes(above)) {
-                grid[idx] = above; grid[aboveIdx] = MAT.GAS; moved[aboveIdx] = 1; return;
+                grid[idx] = above; grid[aboveIdx] = MAT.GAS; moved[aboveIdx] = 1; 
+                activateChunkAt(x, y);
+                activateChunkAt(x, y-1);
+                return;
             }
-            tryMoveLiquidSide(x, y, idx, MAT.GAS, moved, Math.random() < 0.5 ? -1 : 1, 4, -1); // Scaled limit
+            tryMoveLiquidSide(x, y, idx, MAT.GAS, moved, Math.random() < 0.5 ? -1 : 1, 4, -1, grid, w, h, getIdx); // Scaled limit
         }
 
-        function tryMoveLiquidSide(x, y, currentIdx, type, moved, dir, limit, vDir) {
+        function tryMoveLiquidSide(x, y, currentIdx, type, moved, dir, limit, vDir, grid, w, h, getIdx) {
             let targetX = x;
             const movableMaterials = [MAT.EMPTY, MAT.GAS, MAT.FIRE];
             const allMovableMaterials = [...LIQUIDS, ...movableMaterials];
@@ -991,12 +1398,13 @@
             if (targetX !== x) {
                 const tIdx = getIdx(targetX, y);
                 grid[currentIdx] = grid[tIdx]; grid[tIdx] = type; moved[tIdx] = 1;
+                activateChunkAt(targetX, y);
                 return true; // Return success
             }
             return false; // Return failure
         }
 
-        function pushLiquidRowSideways(x, y, liquidType, maxPush = 10) {
+        function pushLiquidRowSideways(x, y, liquidType, grid, w, h, getIdx, maxPush = 10) {
             const dirs = Math.random() < 0.5 ? [-1, 1] : [1, -1];
 
             for (const dir of dirs) {
@@ -1014,6 +1422,8 @@
                             if (grid[fromIdx] !== liquidType) break;
                             grid[toIdx] = grid[fromIdx];
                             grid[fromIdx] = MAT.EMPTY;
+                            activateChunkAt(x + dir * (j - 1), y);
+                            activateChunkAt(x + dir * j, y);
                         }
                         return true;
                     }
@@ -1022,20 +1432,6 @@
                     if (![MAT.WATER, MAT.OIL, MAT.OIL_BURNING, MAT.ACID].includes(grid[targetIdx])) {
                         break;
                     }
-                }
-            }
-            return false;
-        }
-
-
-        function tryDisplaceLiquidSide(x, y, liquidType) {
-            const dirs = Math.random() < 0.5 ? [-1, 1] : [1, -1];
-
-            for (const dx of dirs) {
-                const sideIdx = getIdx(x + dx, y);
-                if (sideIdx !== -1 && grid[sideIdx] === MAT.EMPTY) {
-                    grid[sideIdx] = liquidType;
-                    return true;
                 }
             }
             return false;
@@ -1131,19 +1527,29 @@
             firePixelsCoords = [];
             pixels.set(skyImageData.data);
             const time = frameCount * 0.04;
-            const startX = Math.floor(camera.x);
-            const endX   = startX + viewWidth;
 
-            for (let y = 0; y < viewHeight; y++) {
-                for (let x = startX; x < endX; x++) {
-                    const idx = getIdx(x, y);
+            // Get the top-left corner of the camera in world coordinates
+            const startX = Math.floor(camera.x);
+            const startY = Math.floor(camera.y); // THE CRITICAL MISSING PIECE
+
+            // Loop over every pixel on the SCREEN
+            for (let screenY = 0; screenY < viewHeight; screenY++) {
+                // Calculate the corresponding WORLD y-coordinate
+                const worldY = screenY + startY; 
+
+                for (let screenX = 0; screenX < viewWidth; screenX++) {
+                    // Calculate the corresponding WORLD x-coordinate
+                    const worldX = screenX + startX;
+
+                    // Get the material at the WORLD coordinate
+                    const idx = getIdx(worldX, worldY);
                     if (idx === -1 || grid[idx] === MAT.EMPTY) continue;
 
                     const type = grid[idx];
 
-                    // NEW: Identify hot materials and record their screen coordinates
+                    // NEW: Identify hot materials and record their SCREEN coordinates
                     if (type === MAT.FIRE || type === MAT.OIL_BURNING || type === MAT.COAL_BURNING) {
-                        firePixelsCoords.push({ x: x - startX, y: y });
+                        firePixelsCoords.push({ x: screenX, y: screenY });
                     }
 
                     let [r, g, b] = COLORS[type];
@@ -1154,14 +1560,16 @@
                         b = 0;
                     }
                     else if (type === MAT.WATER || type === MAT.OIL || type === MAT.OIL_BURNING || type === MAT.ACID) {
-                        [r, g, b] = animateLiquidColor(r, g, b, x, y, type, time);
+                         // Pass WORLD coordinates to the animation functions
+                        [r, g, b] = animateLiquidColor(r, g, b, worldX, worldY, type, time);
                     }
                     else {
-                        [r, g, b] = varyColor(r, g, b, x, y, type, 16);
+                        // Pass WORLD coordinates to the animation functions
+                        [r, g, b] = varyColor(r, g, b, worldX, worldY, type, 16);
                     }
                     
-                    setPixel(x - startX, y, r, g, b);
-
+                    // Set the pixel at the SCREEN coordinate
+                    setPixel(screenX, screenY, r, g, b);
                 }
             }
 
@@ -1247,16 +1655,47 @@
                 1
             );
 
+            // --- RENDER POURED PARTICLES ---
+            for (const p of pouredParticles) {
+                const [r,g,b] = COLORS[p.type];
+                ctx.fillStyle = `rgb(${r},${g},${b})`;
+                ctx.fillRect(Math.round(p.x - camera.x), Math.round(p.y - camera.y), 1, 1);
+            }
 
-            // --- PROJECTILES (also snapped) ---
-            ctx.fillStyle = 'orange';
-            for (const p of projectiles) {
-                ctx.fillRect(
-                    Math.round(p.x - camera.x),
-                    Math.round(p.y - camera.y),
-                    1,
-                    1
-                );
+            // --- RENDER MAGIC PARTICLES ---
+            for (let i = 0; i < MAX_MAGIC_PARTICLES; i++) {
+                const p = magicParticlePool[i];
+                if (p.active) {
+                    ctx.fillStyle = `rgb(${p.color[0]}, ${p.color[1]}, ${p.color[2]})`;
+                    ctx.fillRect(Math.round(p.x - camera.x), Math.round(p.y - camera.y), 1, 1);
+                }
+            }
+
+            // --- RENDER INTERACT HINT ---
+            // Check if the player can interact and that a trigger is currently active
+            if (player.canInteract && player.currentTrigger) {
+                // Get the currently active trigger
+                const trigger = player.currentTrigger;
+
+                // 1. Calculate the base position: center-top of the trigger zone
+                const hintX = Math.round(trigger.x - camera.x + trigger.width / 2);
+                const hintY = Math.round(trigger.y - camera.y - 15); // 15 pixels above the slab
+
+                // 2. Add the hover animation using a sine wave
+                const hoverAmplitude = 3; // How many pixels to move up and down
+                const hoverSpeed = 0.05;  // How fast to hover
+                const animatedY = hintY + Math.sin(frameCount * hoverSpeed) * hoverAmplitude;
+
+                // Draw a simple background for visibility
+                ctx.fillStyle = 'rgba(0,0,0,0.7)';
+                ctx.fillRect(hintX - 8, animatedY - 12, 16, 16);
+                
+                // Draw the 'E'
+                ctx.font = 'bold 12px monospace';
+                ctx.fillStyle = 'white';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle'; // Center text vertically for smoother animation
+                ctx.fillText('E', hintX, animatedY);
             }
 
             // --- AIM LINE ---
@@ -1266,6 +1705,44 @@
             ctx.moveTo(wandScreenX, wandScreenY);
             ctx.lineTo(mouse.x / scale, mouse.y / scale);
             ctx.stroke();
+
+            renderAlchemyUI();
+        }
+
+        /**
+         * Top-level function to draw both inventory containers on the screen.
+         */
+        function renderContainers() {
+            const pouchX = renderWidth - pouchWidth - 12;
+            const flaskX = pouchX - flaskWidth - 8;
+            const commonY = 40;
+
+            renderContainer(pouchGrid, pouchWidth, pouchHeight, pouchX, commonY, activeContainer === 'pouch');
+            renderContainer(flaskGrid, flaskWidth, flaskHeight, flaskX, commonY, activeContainer === 'flask');
+        }
+
+        /**
+         * Draws a single container's border and its contents.
+         */
+        function renderContainer(cGrid, cW, cH, screenX, screenY, isActive) {
+            // Draw background and border
+            ctx.fillStyle = 'rgba(0,0,0,0.5)';
+            ctx.fillRect(screenX - 2, screenY - 2, cW + 4, cH + 4);
+            ctx.strokeStyle = isActive ? 'white' : '#888'; // Highlight if active
+            ctx.lineWidth = 2;
+            ctx.strokeRect(screenX - 2, screenY - 2, cW + 4, cH + 4);
+
+            // Draw contents
+            for (let y = 0; y < cH; y++) {
+                for (let x = 0; x < cW; x++) {
+                    const type = cGrid[getIdx(x, y, cW, cH)];
+                    if (type !== MAT.EMPTY) {
+                        const [r, g, b] = varyColor(...COLORS[type], x, y, type, 8);
+                        ctx.fillStyle = `rgb(${r},${g},${b})`;
+                        ctx.fillRect(screenX + x, screenY + y, 1, 1);
+                    }
+                }
+            }
         }
 
         function renderBloom() {
@@ -1406,95 +1883,701 @@
 				}
             }
         }
-        function loadInitialScene() {
-            for (let x = 0; x < worldWidth; x++) {
-                // Scaled terrain generation
-                const groundHeight = Math.floor(worldHeight - 40 + Math.sin(x / 60) * 16 + Math.cos(x / 24) * 8) - 60;
-                for (let y = groundHeight; y < worldHeight; y++) {
-                    grid[getIdx(x, y)] = y > (groundHeight + worldHeight) / 2 ? MAT.SOIL : MAT.SAND;
+
+        /**
+         * A self-contained Perlin Noise generator object.
+         * Based on the original implementation by Ken Perlin.
+         */
+        const PerlinNoise = {
+            p: [],
+            seed: function(s) {
+                // Use a seeded PRNG to ensure the permutation table is the same for a given seed.
+                let random = (function() {
+                    let seed = s;
+                    return function() {
+                        seed = (seed * 9301 + 49297) % 233280;
+                        return seed / 233280;
+                    };
+                })();
+                
+                this.p = new Uint8Array(512);
+                let permutation = [];
+                for (let i = 0; i < 256; i++) {
+                    permutation.push(i);
+                }
+                // Shuffle permutation table
+                for (let i = permutation.length - 1; i > 0; i--) {
+                    const j = Math.floor(random() * (i + 1));
+                    [permutation[i], permutation[j]] = [permutation[j], permutation[i]];
+                }
+                // Duplicate the permutation table to avoid buffer overflows
+                for (let i = 0; i < 256; i++) {
+                    this.p[i] = this.p[i + 256] = permutation[i];
+                }
+            },
+            fade: function(t) { return t * t * t * (t * (t * 6 - 15) + 10); },
+            lerp: function(t, a, b) { return a + t * (b - a); },
+            grad: function(hash, x, y, z) {
+                let h = hash & 15;
+                let u = h < 8 ? x : y,
+                    v = h < 4 ? y : h === 12 || h === 14 ? x : z;
+                return ((h & 1) === 0 ? u : -u) + ((h & 2) === 0 ? v : -v);
+            },
+            noise: function(x, y, z = 0) {
+                let X = Math.floor(x) & 255,
+                    Y = Math.floor(y) & 255,
+                    Z = Math.floor(z) & 255;
+                x -= Math.floor(x);
+                y -= Math.floor(y);
+                z -= Math.floor(z);
+                let u = this.fade(x),
+                    v = this.fade(y),
+                    w = this.fade(z);
+                let A = this.p[X] + Y, AA = this.p[A] + Z, AB = this.p[A + 1] + Z,
+                    B = this.p[X + 1] + Y, BA = this.p[B] + Z, BB = this.p[B + 1] + Z;
+
+                return this.lerp(w, this.lerp(v, this.lerp(u, this.grad(this.p[AA], x, y, z),
+                                                              this.grad(this.p[BA], x - 1, y, z)),
+                                                      this.lerp(u, this.grad(this.p[AB], x, y - 1, z),
+                                                              this.grad(this.p[BB], x - 1, y - 1, z))),
+                                       this.lerp(v, this.lerp(u, this.grad(this.p[AA + 1], x, y, z - 1),
+                                                              this.grad(this.p[BA + 1], x - 1, y, z - 1)),
+                                                      this.lerp(u, this.grad(this.p[AB + 1], x, y - 1, z - 1),
+                                                              this.grad(this.p[BB + 1], x - 1, y - 1, z - 1))));
+            }
+        };
+
+        /**
+         * Generates a horizontal slab with a background, inscribed runes, and border lines.
+         * @param {number} slabX - The top-left X coordinate of the slab.
+         * @param {number} slabY - The top-left Y coordinate of the slab.
+         * @param {number} slabWidth - The width of the slab.
+         * @param {number} slabHeight - The height of the slab.
+         * @param {material} backgroundMaterial - The material for the slab's base.
+         * @param {material} runeMaterial - The material for the inscribed runes and borders.
+         */
+        function generateRunicSlab(slabX, slabY, slabWidth, slabHeight, backgroundMaterial, runeMaterial) {
+            // 1. Fill the entire slab area with the background material.
+            for (let y = slabY; y < slabY + slabHeight; y++) {
+                for (let x = slabX; x < slabX + slabWidth; x++) {
+                    const idx = getIdx(x, y);
+                    if (idx !== -1) grid[idx] = backgroundMaterial;
                 }
             }
-			
-            for (let y = 0; y < worldHeight; y++) {
-                grid[getIdx(0, y)] = MAT.WALL;
-                grid[getIdx(1, y)] = MAT.WALL;
-                grid[getIdx(worldWidth - 1, y)] = MAT.WALL;
-                grid[getIdx(worldWidth - 2, y)] = MAT.WALL;
+
+            // --- Calculate vertical positioning ---
+            const verticalPadding = Math.floor((slabHeight - DWARVEN_RUNES.RUNE_HEIGHT) / 2);
+            const runesTopY = slabY + verticalPadding;
+            const runesBottomY = runesTopY + DWARVEN_RUNES.RUNE_HEIGHT - 1;
+
+            // NEW: 2. Draw the horizontal border lines.
+            const lineThickness = 1; // You can make this thicker if you like
+            const linePadding = 3;   // Pixels of space between the line and the runes
+
+            // Top line
+            const topLineY = runesTopY - linePadding;
+            for (let t = 0; t < lineThickness; t++) {
+                for (let x = slabX; x < slabX + slabWidth; x++) {
+                    const idx = getIdx(x, topLineY - t);
+                    if (idx !== -1) grid[idx] = runeMaterial;
+                }
+            }
+            
+            // Bottom line
+            const bottomLineY = runesBottomY + linePadding;
+            for (let t = 0; t < lineThickness; t++) {
+                for (let x = slabX; x < slabX + slabWidth; x++) {
+                    const idx = getIdx(x, bottomLineY + t);
+                    if (idx !== -1) grid[idx] = runeMaterial;
+                }
+            }
+            
+            // --- Inscribe the runes ---
+            const runePadding = 5;
+            let cursorX = slabX + runePadding;
+
+            // 3. Loop and stamp the runes.
+            while (cursorX + DWARVEN_RUNES.RUNE_WIDTH + runePadding < slabX + slabWidth) {
+                // ... (The rest of the rune stamping logic is exactly the same) ...
+                const pattern = DWARVEN_RUNES.PATTERNS[Math.floor(Math.random() * DWARVEN_RUNES.PATTERNS.length)];
+
+                for (let y = 0; y < DWARVEN_RUNES.RUNE_HEIGHT; y++) {
+                    for (let x = 0; x < DWARVEN_RUNES.RUNE_WIDTH; x++) {
+                        if (pattern[y][x] === 1) {
+                            const drawX = cursorX + x;
+                            const drawY = runesTopY + y;
+                            const idx = getIdx(drawX, drawY);
+                            if (idx !== -1) {
+                                grid[idx] = runeMaterial;
+                            }
+                        }
+                    }
+                }
+
+                cursorX += DWARVEN_RUNES.RUNE_WIDTH + runePadding;
+            }
+        }
+
+        /**
+         * Creates a persistent particle emitter that spawns particles over time.
+         * Can spawn from an area or along a line.
+         * @param {object} options - An object with configuration for the emitter.
+         * @returns {number} The unique ID of the created emitter.
+         */
+        function createMagicEmitter(options) {
+            const emitter = {
+                id: nextEmitterId++,
+                mainColor: options.mainColor || [255, 255, 255],
+                spawnRate: options.spawnRate || 0.2,
+                
+                // --- NEW: Spawning type and coordinates ---
+                spawnType: options.spawnType || 'area', // Can be 'area' or 'line'
+                
+                // Properties for 'area' type (the original behavior)
+                x: options.x || 0,
+                y: options.y || 0,
+                spawnArea: options.spawnArea || { width: 10, height: 5 },
+                
+                // Properties for 'line' type
+                x1: options.x1 || 0,
+                y1: options.y1 || 0,
+                x2: options.x2 || 0,
+                y2: options.y2 || 0,
+
+                // --- Particle-specific properties (remain the same) ---
+                particleLifespan: options.particleLifespan || { min: 60, max: 150 },
+                particleVelocity: options.particleVelocity || { 
+                    vx: { min: -0.2, max: 0.2 },
+                    vy: { min: -0.2, max: -0.6 }
+                },
+                colorVariance: options.colorVariance || 60
+            };
+            magicEmitters.push(emitter);
+            return emitter.id;
+        }
+
+        /**
+         * Removes a magic particle emitter by its unique ID.
+         * @param {number} id - The ID of the emitter to remove.
+         */
+        function removeMagicEmitter(id) {
+            magicEmitters = magicEmitters.filter(e => e.id !== id);
+        }
+        
+        /**
+         * Updates all active emitters, spawning new particles based on their configuration.
+         * This function handles both 'area' and 'line' spawn types.
+         */
+        function updateMagicEmitters() {
+            // Loop through every active emitter
+            for (const emitter of magicEmitters) {
+                // Use the spawnRate as a probability check for this frame
+                if (Math.random() < emitter.spawnRate) {
+                    
+                    // Find an available (inactive) particle in the dedicated magic particle pool
+                    for (let i = 0; i < MAX_MAGIC_PARTICLES; i++) {
+                        const p = magicParticlePool[i];
+                        if (!p.active) {
+                            let spawnX, spawnY;
+
+                            // --- Determine the particle's starting position based on emitter type ---
+                            if (emitter.spawnType === 'line') {
+                                // Pick a random point along the line using linear interpolation.
+                                // A 't' value of 0 is the start of the line, 1 is the end.
+                                const t = Math.random(); 
+                                spawnX = emitter.x1 + t * (emitter.x2 - emitter.x1);
+                                spawnY = emitter.y1 + t * (emitter.y2 - emitter.y1);
+                            } else { // Default to 'area' if spawnType is not 'line'
+                                spawnX = emitter.x + (Math.random() - 0.5) * emitter.spawnArea.width;
+                                spawnY = emitter.y + (Math.random() - 0.5) * emitter.spawnArea.height;
+                            }
+                            
+                            // --- Full Color Variance Logic ---
+                            // Take the emitter's base color and add/subtract a random amount from each channel.
+                            const r = Math.max(0, Math.min(255, emitter.mainColor[0] + (Math.random() - 0.5) * emitter.colorVariance));
+                            const g = Math.max(0, Math.min(255, emitter.mainColor[1] + (Math.random() - 0.5) * emitter.colorVariance));
+                            const b = Math.max(0, Math.min(255, emitter.mainColor[2] + (Math.random() - 0.5) * emitter.colorVariance));
+                            
+                            // --- Activate and configure the particle with all its properties ---
+                            p.active = true;
+                            p.x = spawnX;
+                            p.y = spawnY;
+                            p.vx = emitter.particleVelocity.vx.min + Math.random() * (emitter.particleVelocity.vx.max - emitter.particleVelocity.vx.min);
+                            p.vy = emitter.particleVelocity.vy.min + Math.random() * (emitter.particleVelocity.vy.max - emitter.particleVelocity.vy.min);
+                            p.lifespan = emitter.particleLifespan.min + Math.random() * (emitter.particleLifespan.max - emitter.particleLifespan.min);
+                            p.color = [r, g, b];
+                            
+                            // We've successfully spawned a particle, so we can exit the inner loop.
+                            break; 
+                        }
+                    }
+                }
+            }
+        }
+
+        /**
+         * The main function to create a burst of magic particles at a specific location.
+         * @param {number} count - The number of particles to create.
+         * @param {number} x - The center X coordinate of the spawn area.
+         * @param {number} y - The center Y coordinate of the spawn area.
+         * @param {Array<number>} mainColor - The base color as an [R, G, B] array.
+         */
+        function spawnMagicParticles(count, x, y, mainColor) {
+            for (let i = 0; i < count; i++) {
+                // 1. Create variance in the spawn position
+                const spawnX = x + (Math.random() - 0.5) * 20;
+                const spawnY = y + (Math.random() - 0.5) * 10;
+
+                // 2. Create the color with a random hue shift from the main color
+                const colorVariance = 60;
+                const r = Math.max(0, Math.min(255, mainColor[0] + (Math.random() - 0.5) * colorVariance));
+                const g = Math.max(0, Math.min(255, mainColor[1] + (Math.random() - 0.5) * colorVariance));
+                const b = Math.max(0, Math.min(255, mainColor[2] + (Math.random() - 0.5) * colorVariance));
+
+                magicParticles.push({
+                    x: spawnX,
+                    y: spawnY,
+                    // 3. Particles float upwards with a slight horizontal drift
+                    vx: (Math.random() - 0.5) * 0.3,
+                    vy: -0.2 + (Math.random() * -0.4),
+                    // 4. They last for about 1-2.5 seconds (at 60fps)
+                    lifespan: 60 + Math.random() * 90,
+                    color: [r, g, b]
+                });
+            }
+        }
+
+        function updateMagicParticles() {
+            for (let i = 0; i < MAX_MAGIC_PARTICLES; i++) {
+                const p = magicParticlePool[i];
+                if (!p.active) continue;
+
+                p.x += p.vx;
+                p.y += p.vy;
+                p.lifespan--;
+
+                if (p.lifespan <= 0) {
+                    p.active = false;
+                }
+            }
+        }
+
+        /**
+         * Helper function to find the most common storable material in a given area.
+         * @returns {number|null} The material ID (e.g., MAT.SAND) or null if the area is empty.
+         */
+        function getDominantMaterialInArea(x, y, width, height) {
+            const counts = {};
+            let maxCount = 0;
+            let dominantMaterial = null;
+
+            for (let iy = y; iy < y + height; iy++) {
+                for (let ix = x; ix < x + width; ix++) {
+                    const idx = getIdx(ix, iy);
+                    if (idx === -1) continue;
+                    const type = grid[idx];
+                    // Only count materials that can actually be stored/manipulated
+                    if (STORABLE_SOLIDS.has(type) || STORABLE_LIQUIDS.has(type)) {
+                        counts[type] = (counts[type] || 0) + 1;
+                        if (counts[type] > maxCount) {
+                            maxCount = counts[type];
+                            dominantMaterial = type;
+                        }
+                    }
+                }
+            }
+            return dominantMaterial;
+        }
+
+        /**
+         * Manages alchemy jobs by teleporting materials from a manifest
+         * to a location above the target cauldron.
+         */
+        function processAlchemyJobs() {
+            if (alchemyJobs.length === 0) return;
+
+            // How many particles to teleport per frame. Controls the stream's speed.
+            const particlesToTeleportThisFrame = 5; 
+
+            for (let i = alchemyJobs.length - 1; i >= 0; i--) {
+                const job = alchemyJobs[i];
+
+                for (let j = 0; j < particlesToTeleportThisFrame; j++) {
+                    // If the manifest is empty, the job is complete.
+                    if (job.manifest.length === 0) {
+                        alchemyJobs.splice(i, 1);
+                        break; 
+                    }
+
+                    // Pull one particle's info from the manifest.
+                    const materialInfo = job.manifest.shift();
+
+                    // --- THE FIX: The Teleportation ---
+                    // 1. Define a spawn zone in the air above the target cauldron.
+                    const spawnX = job.target.x + (job.target.w * 0.1) + (Math.random() * job.target.w * 0.5);
+                    const spawnY = job.target.y - (5 + Math.random() * 10); // 5 to 15 pixels above the rim.
+
+                    // 2. Find the grid index for this spawn point.
+                    const spawnIdx = getIdx(spawnX, spawnY);
+
+                    // 3. If the spot in the air is empty, place the material there.
+                    if (spawnIdx !== -1 && grid[spawnIdx] === MAT.EMPTY) {
+                        grid[spawnIdx] = materialInfo.type;
+                        
+                        // 4. Activate the chunk to let the main physics engine take over.
+                        activateChunkAt(spawnX, spawnY);
+                    } else {
+                        // If the air is somehow crowded, put the particle back in the job to try again next frame.
+                        // This guarantees no material is ever lost.
+                        job.manifest.unshift(materialInfo);
+                    }
+                }
+            }
+        }
+
+        // --- THE ALCHEMY REACTION REGISTRY ---
+        const ALCHEMY_REACTIONS = {
+            'filter_material': {
+                name: "Filter Material",
+                description: "Moves materials from the left cauldron to the right, based on the sampler.",
+                execute: function(station) {
+                    console.log("Executing Filter Material reaction!");
+                    
+                    const filterMaterial = getDominantMaterialInArea(
+                        station.sampler.x, station.sampler.y, station.sampler.w, station.sampler.h
+                    );
+
+                    if (filterMaterial === null) {
+                        console.log("Sampler is empty. Nothing to filter.");
+                        return;
+                    }
+                    console.log(`Filtering for: ${MATERIAL_NAME[filterMaterial]}`);
+
+                    const source = station.cauldrons.left;
+                    const target = station.cauldrons.right;
+                    let translationManifest = [];
+
+                    // 1. Create a simple manifest of the material to be moved.
+                    for (let y = source.y; y < source.y + source.h; y++) {
+                        for (let x = source.x; x < source.x + source.w; x++) {
+                            const idx = getIdx(x, y);
+                            if (idx !== -1 && grid[idx] === filterMaterial) {
+                                // The manifest now only needs the type. The source location is irrelevant.
+                                translationManifest.push({ type: grid[idx] });
+                                grid[idx] = MAT.EMPTY;
+                                activateChunkAt(x, y);
+                            }
+                        }
+                    }
+
+                    if (translationManifest.length === 0) {
+                        console.log("No matching materials found.");
+                        return;
+                    }
+
+                    // 2. Create the job, providing the manifest and the target geometry.
+                    alchemyJobs.push({
+                        manifest: translationManifest,
+                        target: target
+                    });
+                }
+            }
+            // ... more reactions can be added here ...
+        };
+
+        /**
+         * Clears a large space and generates the fixed alchemy station with a solid floor.
+         */
+        function generateAlchemyStation() {
+            const stationWidth = 600;
+            const stationHeight = 200;
+            const startX = 0; 
+            const startY = 5;
+            const floorY = startY + stationHeight - 20;
+
+            // 1. Carve out a huge, clean room.
+            for (let y = startY; y < startY + stationHeight; y++) {
+                for (let x = startX; x < startX + stationWidth; x++) {
+                    const idx = getIdx(x, y);
+                    if (idx !== -1) grid[idx] = MAT.EMPTY;
+                }
+            }
+            
+            // 2. Build the solid Adamantium floor.
+            for (let y = floorY; y < startY + stationHeight; y++) {
+                for (let x = startX; x < startX + stationWidth; x++) {
+                    grid[getIdx(x, y)] = MAT.ADAMANTIUM;
+                }
             }
 
-            createCircle({
-                x: worldWidth / 2 + 100,
-                y: 250,
-                radius: 40,
-                type: MAT.WATER
-            });
+            // NEW: 3. Generate the decorative Runic Slab backdrop.
+            const slabHeight = 15;
+            const slabWidth = 70;
+            const slabY = floorY - slabHeight; // Place it right on top of the floor
+            const slabX = startX + 130;
+            // We use the Rune Wall material as the base and Adamantium for the inscription
+            generateRunicSlab(slabX, slabY, slabWidth, slabHeight, MAT.ADAMANTIUM, MAT.RUNE_WALL);
 
-            createReservoir({
-                x: worldWidth / 2 + 350,
-                y: 50,
-                width: 60,
-                height: 100,
-                fillType: MAT.OIL
-            });
+            // 3. Define the positions for the cauldrons and sampler.
+            const leftCauldronX = startX + 260;
+            const rightCauldronX = startX + 390;
+            const samplerX = startX + 325;
+            
+            // 4. Create the components.
+            // The cauldron's rim will be a few pixels above the main floor, making it protrude.
+            const rimHeightAboveFloor = 15;
+            const cauldronRimY = floorY - rimHeightAboveFloor;
 
-            createReservoir({
-                x: worldWidth / 2 - 150,
-                y: 50,
-                width: 60,
-                height: 100,
-                fillType: MAT.COAL
-            });
+            // Use the new, correct function
+            // Left Cauldron
+            createCauldron(leftCauldronX, cauldronRimY, 32, 4, MAT.ADAMANTIUM);
+            // Right Cauldron
+            createCauldron(rightCauldronX, cauldronRimY, 32, 4, MAT.ADAMANTIUM);
+            // Sampler in the middle
+            createCauldron(samplerX, floorY - 5, 8, 2, MAT.ADAMANTIUM);
 
-            createReservoir({
-                x: worldWidth / 2 + 500,
-                y: 50,
-                width: 60,
-                height: 100,
-                fillType: MAT.GUNPOWDER
-            });
+            const stationGeometry = {
+                cauldrons: {
+                    left: { x: leftCauldronX - 25, y: cauldronRimY, w: 64, h: 32 },
+                    right: { x: rightCauldronX - 25, y: cauldronRimY, w: 64, h: 32 }
+                },
+                sampler: { x: samplerX - 8, y: floorY - 5, w: 16, h: 8 }
+            };
 
-            createReservoir({
-                x: worldWidth / 2 - 350,
-                y: 50,
-                width: 60,
-                height: 100,
-                fillType: MAT.ACID,
-                wallType: MAT.GLASS_WALL
+            // Create the trigger with our custom onEnter and onLeave logic
+            createTrigger({
+                x: slabX,
+                y: slabY,
+                width: slabWidth,
+                height: slabHeight,
+                onEnter: function(trigger) {
+                    // This function is called when the player steps ON the slab.
+                    console.log("Player entered the sampler zone.");
+                    
+                    // Create a special gold-colored emitter on the slab
+                    const emitterId = createMagicEmitter({
+                        spawnType: 'line',
+                        x1: slabX, y1: slabY,
+                        x2: slabX + slabWidth, y2: slabY,
+                        mainColor: [255, 230, 100], // Gold
+                        spawnRate: 0.5 // Spawn a particle every 2 frames on average
+                    });
+                    
+                    // IMPORTANT: Store the ID of the emitter we just created inside the trigger.
+                    trigger.associatedData.emitterId = emitterId;
+                },
+                onLeave: function(trigger) {
+                    // This function is called when the player steps OFF the slab.
+                    console.log("Player left the sampler zone.");
+                    
+                    // Use the stored ID to find and remove the correct emitter.
+                    if (trigger.associatedData.emitterId != null) {
+                        removeMagicEmitter(trigger.associatedData.emitterId);
+                        trigger.associatedData.emitterId = null; // Clear the stored ID
+                    }
+                },
+                onInteract: function(trigger) {
+                    // This function is called when the player presses "E" inside the zone.
+                    console.log("Player INTERACTED with the sampler! Time for alchemy!");
+                    isAlchemyUIVisible = true;
+                },
+                associatedData: {
+                    stationGeometry: stationGeometry
+                }
             });
+        }
 
-            createCircle({
-                x: worldWidth / 2 - 250,
-                y: 50,
-                radius: 50,
-                type: MAT.GUNPOWDER
-            });
+        /**
+         * Creates a hollow, downward-facing cauldron bowl, set into a surface.
+         * It draws a solid depression first, then carves the empty space inside.
+         * @param {number} cx - The center X coordinate of the cauldron.
+         * @param {number} rimY - The Y coordinate for the cauldron's rim (the surface level).
+         * @param {number} radius - The outer radius of the cauldron.
+         * @param {number} thickness - The thickness of the cauldron's wall and floor.
+         * @param {material} material - The material to build the cauldron from.
+         */
+        function createCauldron(cx, rimY, radius, thickness, material) {
+            const outerRadiusSq = radius * radius;
+            const innerRadius = radius - thickness;
+            const innerRadiusSq = innerRadius * innerRadius;
+
+            // 1. Draw the SOLID outer shape of the cauldron's bowl, facing DOWN.
+            // This carves a solid half-sphere depression into the floor.
+            for (let dy = 0; dy <= radius; dy++) { // CHANGED: Loop from 0 to +radius
+                for (let dx = -radius; dx <= radius; dx++) {
+                    if (dx * dx + dy * dy <= outerRadiusSq) {
+                        const idx = getIdx(cx + dx, rimY + dy);
+                        if (idx !== -1) {
+                            grid[idx] = material;
+                        }
+                    }
+                }
+            }
+
+            // 2. Carve the EMPTY hollow interior, leaving the walls and bottom intact.
+            for (let dy = 0; dy < innerRadius; dy++) { // CHANGED: Loop from 0 to +innerRadius
+                for (let dx = -innerRadius; dx <= innerRadius; dx++) {
+                     if (dx * dx + dy * dy <= innerRadiusSq) {
+                        const idx = getIdx(cx + dx, rimY + dy);
+                        if (idx !== -1) {
+                            grid[idx] = MAT.EMPTY;
+                        }
+                    }
+                }
+            }
+        }
+
+        /**
+         * Generates a cave system using layered Perlin noise (octaves) with a vertical bias for connectivity.
+         * @param {number} width - The width of the world.
+         * @param {number} height - The height of the world.
+         * @param {Uint8Array} grid - The world grid to carve into.
+         */
+        function generateCavesWithPerlinNoise(width, height, grid) {
+            // --- Configuration ---
+            const scale = 150;           // Slightly larger scale for bigger main caverns.
+            const threshold = 0.52;     // CHANGED: Slightly increased the base threshold.
+            
+            // NEW: This is the key parameter for connectivity.
+            // It controls how much easier it is to form caves at the bottom of the world vs. the top.
+            // A value of 0.1 means the threshold at the bottom will be 0.1 lower than at the top.
+            const depthBiasStrength = 0.1;
+
+            // --- Octave Configuration (for adding detail) ---
+            const octaves = 4;
+            const persistence = 0.5;
+            const lacunarity = 2;
+            
+            PerlinNoise.seed(12345 * Math.random() + 10000);
+
+            for (let y = 0; y < height; y++) {
+                // NEW: Calculate the depth bias for the current row.
+                // depthFactor will be 0.0 at the top (y=0) and 1.0 at the bottom (y=height).
+                const depthFactor = y / height;
+                const currentDepthBias = depthFactor * depthBiasStrength;
+
+                for (let x = 0; x < width; x++) {
+                    let totalNoise = 0;
+                    let frequency = 1;
+                    let amplitude = 1;
+                    let maxAmplitude = 0;
+
+                    for (let i = 0; i < octaves; i++) {
+                        const noiseValue = (PerlinNoise.noise(x * frequency / scale, y * frequency / scale) + 1) / 2;
+                        totalNoise += noiseValue * amplitude;
+                        maxAmplitude += amplitude;
+                        amplitude *= persistence;
+                        frequency *= lacunarity;
+                    }
+                    
+                    const finalNoise = totalNoise / maxAmplitude;
+
+                    // CHANGED: We now compare the noise against a DYNAMIC threshold.
+                    // The threshold is lower deeper in the world, making caves more likely.
+                    if (finalNoise > threshold - currentDepthBias) {
+                        const idx = getIdx(x, y);
+                        if (idx !== -1) {
+                            grid[idx] = MAT.EMPTY;
+                        }
+                    }
+                }
+            }
+        }
+
+        function loadInitialScene() {
+            // 1. Fill the entire world with solid material.
+            for (let y = 0; y < worldHeight; y++) {
+                for (let x = 0; x < worldWidth; x++) {
+                    const strataNoise = Math.sin(y / 150 + x / 400) * 10;
+                    if (y > worldHeight / 2 + strataNoise) {
+                        grid[getIdx(x, y)] = MAT.WOOD;
+                    } else {
+                        grid[getIdx(x, y)] = MAT.WALL;
+                    }
+                }
+            }
+
+            // 2. Carve the new hierarchical cave system.
+            generateCavesWithPerlinNoise(worldWidth, worldHeight, grid);
+
+            generateAlchemyStation();
+
+            // 3. Place indestructible borders.
+            for (let y = 0; y < worldHeight; y++) {
+                grid[getIdx(0, y)] = MAT.ADAMANTIUM;
+                grid[getIdx(1, y)] = MAT.ADAMANTIUM;
+                grid[getIdx(worldWidth - 1, y)] = MAT.ADAMANTIUM;
+                grid[getIdx(worldWidth - 2, y)] = MAT.ADAMANTIUM;
+            }
+             for (let x = 0; x < worldWidth; x++) {
+                grid[getIdx(x, 0)] = MAT.ADAMANTIUM;
+                grid[getIdx(x, 1)] = MAT.ADAMANTIUM;
+                grid[getIdx(x, worldHeight - 1)] = MAT.ADAMANTIUM;
+                grid[getIdx(x, worldHeight - 2)] = MAT.ADAMANTIUM;
+            }
+
+            initializeChunks();
         }
 
         // --- GAME LOOP ---
         function gameLoop(now = performance.now()) {
-            frameCount++; 
-            // --- FPS CALC ---
+            frameCount++;
             framesThisSecond++;
             if (now - lastFpsTime >= 1000) {
-                fps = framesThisSecond;
+                hudFPS = framesThisSecond;
                 framesThisSecond = 0;
                 lastFpsTime = now;
             }
 
-            updatePlayer();
-			updateProjectiles();
+            activeChunks = nextActiveChunks;
+            nextActiveChunks = new Set();
 
-            // Run the simulation multiple times per frame for faster physics
-            for (let i = 0; i < SIMULATION_STEPS_PER_FRAME; i++) {
-                updateSimulation();
+            // --- UPDATE LOGIC ---
+            updatePlayer();
+            updatePouredParticles();
+            processAlchemyJobs();
+            updateMagicParticles();
+            updateMagicEmitters(); 
+            updateTriggers();
+
+            if (isPouring) {
+                pourFromContainer();
             }
 
-            updateCamera();
-            render();
-            requestAnimationFrame(gameLoop);
+            // Add this block to continuously store
+            if (isStoring) {
+                storeMaterial(mouse.worldX, mouse.worldY);
+            }
 
-            updateUI();
+            // Activate the chunk the mouse is currently interacting with
+            if (isDrawing || isPouring || isStoring) {
+                activateChunkAt(mouse.worldX, mouse.worldY);
+            }
+
+            // --- SIMULATIONS ---
+            for (let i = 0; i < SIMULATION_STEPS_PER_FRAME; i++) {
+                // Run main world simulation
+                runWorldSimulationWithChunks(movedWorld);
+                
+                // Run container simulations only once per frame to save performance
+                if (i === 0) {
+                   runSimulationOnSmallGrid(movedPouch, pouchGrid, pouchWidth, pouchHeight);
+                   runSimulationOnSmallGrid(movedFlask, flaskGrid, flaskWidth, flaskHeight);
+                }
+            }
+            
+            updateCamera();
+
+            // --- RENDER LOGIC ---
+            render();
+            renderContainers();
             drawHUD();
+            
+            if ((frameCount % 2) === 0) { // Update hover material at 30fps
+                updateHoverMaterial();
+            }
+
+            requestAnimationFrame(gameLoop);
         }
 
         function updateUI()
@@ -1533,6 +2616,109 @@
             ctx.fillText(`MAT: ${hudMaterial}`, x, y + 14);
         }
 
+        /**
+         * Creates a new trigger zone and adds it to the world.
+         * @param {object} options - Configuration for the trigger.
+         * @returns {number} The unique ID of the trigger.
+         */
+        function createTrigger(options) {
+            const trigger = {
+                id: nextTriggerId++,
+                x: options.x,
+                y: options.y,
+                width: options.width,
+                height: options.height,
+                onEnter: options.onEnter || function() {}, // What to do when player enters
+                onLeave: options.onLeave || function() {}, // What to do when player leaves
+                onInteract: options.onInteract || function() {},
+                isActive: false, // Tracks if the player is currently inside
+                // A generic object to store any data this trigger needs to remember, like an emitter ID.
+                associatedData: options.associatedData 
+            };
+            triggers.push(trigger);
+            return trigger.id;
+        }
+
+        /**
+         * Checks the player's position against all triggers and manages interaction state.
+         */
+        function updateTriggers() {
+            const playerCheckX = player.x + player.width / 2;
+            const playerCheckY = player.y + player.height;
+
+            let canCurrentlyInteract = false;
+            let activeTrigger = null;
+
+            for (const trigger of triggers) {
+                const isPlayerInside = (
+                    playerCheckX >= trigger.x &&
+                    playerCheckX <= trigger.x + trigger.width &&
+                    playerCheckY >= trigger.y &&
+                    playerCheckY <= trigger.y + trigger.height
+                );
+
+                if (isPlayerInside) {
+                    // We found a trigger the player is inside.
+                    canCurrentlyInteract = true;
+                    activeTrigger = trigger;
+
+                    if (!trigger.isActive) {
+                        trigger.isActive = true;
+                        trigger.onEnter(trigger);
+                    }
+                } else {
+                    if (trigger.isActive) {
+                        trigger.isActive = false;
+                        trigger.onLeave(trigger);
+                    }
+                }
+            }
+
+            // After checking all triggers, update the player's global state.
+            player.canInteract = canCurrentlyInteract;
+            player.currentTrigger = activeTrigger;
+        }
+
+        /**
+         * Renders the alchemy reaction selection UI when it's active.
+         */
+        function renderAlchemyUI() {
+            if (!isAlchemyUIVisible) return;
+
+            // Draw a semi-transparent background to dim the game
+            ctx.fillStyle = 'rgba(0,0,0,0.6)';
+            ctx.fillRect(0, 0, renderWidth, renderHeight);
+
+            // Draw the main UI box
+            const boxWidth = 300;
+            const boxHeight = 150;
+            const boxX = (renderWidth - boxWidth) / 2;
+            const boxY = (renderHeight - boxHeight) / 2;
+            ctx.fillStyle = '#222';
+            ctx.fillRect(boxX, boxY, boxWidth, boxHeight);
+            ctx.strokeStyle = '#888';
+            ctx.strokeRect(boxX, boxY, boxWidth, boxHeight);
+
+            // Draw text
+            ctx.fillStyle = 'white';
+            ctx.font = '16px monospace';
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'top';
+            ctx.fillText("Select a Reaction:", boxX + 10, boxY + 10);
+
+            // List all available reactions from our registry
+            let yOffset = 40;
+            let reactionIndex = 1;
+            for (const key in ALCHEMY_REACTIONS) {
+                const reaction = ALCHEMY_REACTIONS[key];
+                ctx.fillText(`[${reactionIndex}] ${reaction.name}`, boxX + 20, boxY + yOffset);
+                yOffset += 20;
+                reactionIndex++;
+            }
+
+            ctx.fillStyle = '#aaa';
+            ctx.fillText("Press [ESC] to close.", boxX + 10, boxY + boxHeight - 25);
+        }
 
         loadInitialScene();
         gameLoop();
