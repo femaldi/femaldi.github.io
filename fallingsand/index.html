@@ -57,6 +57,7 @@
         .btn-gunpowder { background-color: #444; color: #fff; border: 1px solid #777; }
         .btn-acid { background-color: #00ff00; color: white; }
         .btn-glass { background-color: #e0e0ff; color: #333; }
+        .btn-glass-wall { background-color: #b4b4e0; color: #333; }
         .btn-eraser { background-color: #000; color: white; border: 1px solid #555; }
         button.active {
             outline: 2px solid white;
@@ -104,6 +105,7 @@
         <button class="btn-coal" onclick="setMaterial('coal')">Coal</button>
         <button class="btn-acid" onclick="setMaterial('acid')">Acid</button>
         <button class="btn-glass" onclick="setMaterial('glass')">Glass</button>
+        <button class="btn-glass-wall" onclick="setMaterial('glass-wall')">Glass Wall</button>
         <button class="btn-eraser" onclick="setMaterial('empty')">Eraser</button>
     </div>
 
@@ -156,7 +158,7 @@
             WOOD: 10, FIRE: 11, GUNPOWDER: 12, GUNPOWDER_IGNITED: 13,
             OIL: 14, OIL_BURNING: 15,
             COAL:16, COAL_BURNING:17,
-            ACID:18, GLASS:19
+            ACID:18, GLASS:19, GLASS_WALL: 20
         };
 
         const COLORS = {
@@ -166,7 +168,7 @@
             [MAT.FIRE]: [255, 69, 0], [MAT.GUNPOWDER]: [60, 60, 60],
             [MAT.GUNPOWDER_IGNITED]: [120, 80, 80], [MAT.OIL]: [90, 70, 30], [MAT.OIL_BURNING]: [255, 69, 0],
             [MAT.COAL]: [30, 30, 30], [MAT.COAL_BURNING]: [255, 69, 0],
-            [MAT.ACID]: [0, 255, 0], [MAT.GLASS]: [200, 200, 255]
+            [MAT.ACID]: [0, 255, 0], [MAT.GLASS]: [200, 200, 255], [MAT.GLASS_WALL]: [180, 180, 235]
         };
 
         const MATERIAL_NAME = {
@@ -185,7 +187,8 @@
             [MAT.COAL]: 'Coal',
             [MAT.COAL_BURNING]: 'Burning Coal',
             [MAT.ACID]: 'Acid',
-            [MAT.GLASS]: 'Glass'
+            [MAT.GLASS]: 'Glass',
+            [MAT.GLASS_WALL]: 'Glass Wall'
         };
 
 
@@ -310,6 +313,7 @@
                 gunpowder: MAT.GUNPOWDER,
                 acid: MAT.ACID,
                 glass: MAT.GLASS,
+                'glass-wall': MAT.GLASS_WALL,
                 empty: MAT.EMPTY
             };
 
@@ -417,7 +421,7 @@
             return y * worldWidth + x;
         };
 
-        const isSolidForPlayer = (type) => [MAT.WALL, MAT.SOIL, MAT.WOOD, MAT.SAND, MAT.GUNPOWDER, MAT.COAL, MAT.COAL_BURNING, MAT.GLASS].includes(type);
+        const isSolidForPlayer = (type) => [MAT.WALL, MAT.SOIL, MAT.WOOD, MAT.SAND, MAT.GUNPOWDER, MAT.COAL, MAT.COAL_BURNING, MAT.GLASS, MAT.GLASS_WALL].includes(type);
 
         function collidesAt(x, y) {
             for (let iy = 0; iy < player.height; iy++) {
@@ -623,7 +627,7 @@
 
             const type = grid[idx];
             if (type === MAT.WATER) return;
-            if ([MAT.EMPTY, MAT.WALL, MAT.WOOD].includes(type)) return;
+            if ([MAT.EMPTY, MAT.WALL, MAT.WOOD, MAT.GLASS_WALL].includes(type)) return;
 
             if (type === MAT.FIRE) updateFire(x, y, idx, moved);
 
@@ -870,7 +874,7 @@
 
                     const nType = grid[nIdx];
                     // List of materials immune to acid
-                    const isImmune = [MAT.EMPTY, MAT.WALL, MAT.GLASS, MAT.GAS].includes(nType);
+                    const isImmune = [MAT.EMPTY, MAT.WALL, MAT.GLASS, MAT.GAS, MAT.GLASS_WALL].includes(nType);
 
                     if (!isImmune && !isLiquid(nType) && Math.random() < 0.25) { // 25% chance to corrode
                         grid[nIdx] = MAT.EMPTY;
@@ -1368,6 +1372,15 @@
                 width: 60,
                 height: 100,
                 fillType: MAT.GUNPOWDER
+            });
+
+            createReservoir({
+                x: worldWidth / 2 - 300,
+                y: 50,
+                width: 60,
+                height: 100,
+                fillType: MAT.ACID,
+                wallType: MAT.GLASS_WALL
             });
         }
 
