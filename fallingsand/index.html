@@ -873,50 +873,60 @@
          */
         function updatePouredParticles() {
             pouredParticles = pouredParticles.filter(p => {
+                // Apply gravity
                 p.vy += GRAVITY * 0.5;
-                p.x += p.vx;
-                p.y += p.vy;
 
-                const ix = Math.floor(p.x);
-                const iy = Math.floor(p.y);
+                // 1. Calculate the particle's potential next position
+                const nextX = p.x + p.vx;
+                const nextY = p.y + p.vy;
+                const nextIX = Math.floor(nextX);
+                const nextIY = Math.floor(nextY);
 
-                const worldIdx = getIdx(ix, iy);
-                if (worldIdx === -1) return false;
-
+                const worldIdx = getIdx(nextIX, nextIY);
+                
+                // Check if the particle is about to go off-screen
+                if (worldIdx === -1) {
+                    return false; // Remove if it leaves the world
+                }
+                
+                // 2. Check for an obstruction at that future position
                 const isObstructed = grid[worldIdx] !== MAT.EMPTY && grid[worldIdx] !== MAT.GAS;
+                const hasStopped = (p.vx * p.vx + p.vy * p.vy < 1.0);
 
-                if (isObstructed || (p.vx * p.vx + p.vy * p.vy < 1.0)) {
-                    let placeX = ix;
-                    let placeY = iy;
-
-                    // THE FIX: Use a while(true) loop to search indefinitely upwards.
-                    // This loop is safe because getIdx() will eventually return -1 when placeY goes off-screen,
-                    // causing the loop to terminate naturally.
+                // 3. If a collision is predicted OR the particle has stopped, materialize it
+                if (isObstructed || hasStopped) {
+                    // THE FIX: Start the search from the particle's CURRENT, known-good position, not the invalid future one.
+                    let placeX = Math.floor(p.x);
+                    let placeY = Math.floor(p.y);
+                    
+                    // The upward search is still useful for stacking, but now starts from a safe location.
                     while (true) {
                         const checkIdx = getIdx(placeX, placeY);
                         
+                        // Stop if we search off the top of the map
                         if (checkIdx === -1) {
-                            // We've searched all the way to the top of the map and found no space.
-                            // The particle is lost off-screen.
                             break; 
                         }
 
+                        // If we find an empty spot, place the material and we're done.
                         if (grid[checkIdx] === MAT.EMPTY || grid[checkIdx] === MAT.GAS) {
-                            // Found an empty spot. Place the material.
                             grid[checkIdx] = p.type;
                             activateChunkAt(placeX, placeY);
-                            break; // Exit the loop, success.
+                            break;
                         }
                         
                         // If the spot was taken, move up one pixel and try again.
                         placeY--;
                     }
                     
-                    // The particle's journey is over. Remove it from the pouredParticles array.
+                    // The particle's journey is over. Remove it.
                     return false;
+                } else {
+                    // 4. If no collision is predicted, update the particle's position and keep it alive.
+                    p.x = nextX;
+                    p.y = nextY;
+                    return true; 
                 }
-                
-                return true; 
             });
         }
 
@@ -2582,22 +2592,28 @@
         }
 
         /**
-         * Generates a cave system using layered Perlin noise (octaves) with a vertical bias for connectivity.
+         * Generates terrain and ore veins using an additive Perlin noise process.
          * @param {number} width - The width of the world.
          * @param {number} height - The height of the world.
-         * @param {Uint8Array} grid - The world grid to carve into.
+         * @param {Uint8Array} grid - The world grid to fill.
          */
         function generateCavesWithPerlinNoise(width, height, grid) {
             // --- Configuration ---
-            const scale = 150;           // Slightly larger scale for bigger main caverns.
-            const threshold = 0.52;     // CHANGED: Slightly increased the base threshold.
-            
-            // NEW: This is the key parameter for connectivity.
-            // It controls how much easier it is to form caves at the bottom of the world vs. the top.
-            // A value of 0.1 means the threshold at the bottom will be 0.1 lower than at the top.
-            const depthBiasStrength = 0.1;
+            const scale = 150;
+            const depthBiasStrength = 0.2;
 
-            // --- Octave Configuration (for adding detail) ---
+            // --- Tiers for Additive Generation ---
+            // This array is ordered from MOST common to RAREST.
+            // Each tier overwrites the one before it if the threshold is met.
+            const GENERATION_TIERS = [
+                { material: MAT.WALL,     threshold: 0.52 }, // Base rock
+                { material: MAT.COPPER,   threshold: 0.70 },
+                { material: MAT.SILVER,   threshold: 0.75 },
+                { material: MAT.GOLD,     threshold: 0.85 },
+                { material: MAT.PLATINUM, threshold: 0.99 }
+            ];
+
+            // --- Octave Configuration ---
             const octaves = 4;
             const persistence = 0.5;
             const lacunarity = 2;
@@ -2605,8 +2621,6 @@
             PerlinNoise.seed(12345 * Math.random() + 10000);
 
             for (let y = 0; y < height; y++) {
-                // NEW: Calculate the depth bias for the current row.
-                // depthFactor will be 0.0 at the top (y=0) and 1.0 at the bottom (y=height).
                 const depthFactor = y / height;
                 const currentDepthBias = depthFactor * depthBiasStrength;
 
@@ -2626,12 +2640,24 @@
                     
                     const finalNoise = totalNoise / maxAmplitude;
 
-                    // CHANGED: We now compare the noise against a DYNAMIC threshold.
-                    // The threshold is lower deeper in the world, making caves more likely.
-                    if (finalNoise > threshold - currentDepthBias) {
+                    // --- Additive Generation Logic ---
+                    let materialToPlace = MAT.EMPTY;
+
+                    // Loop through the tiers from rock up to platinum
+                    for (const tier of GENERATION_TIERS) {
+                        // Check if the noise is high enough for this tier
+                        if (finalNoise >= tier.threshold - currentDepthBias) {
+                            // If it is, this becomes the new candidate material.
+                            // This will naturally overwrite less rare materials.
+                            materialToPlace = tier.material;
+                        }
+                    }
+
+                    // After checking all tiers, if a material was chosen, place it.
+                    if (materialToPlace !== MAT.EMPTY) {
                         const idx = getIdx(x, y);
                         if (idx !== -1) {
-                            grid[idx] = MAT.EMPTY;
+                            grid[idx] = materialToPlace;
                         }
                     }
                 }
@@ -2640,16 +2666,16 @@
 
         function loadInitialScene() {
             // 1. Fill the entire world with solid material.
-            for (let y = 0; y < worldHeight; y++) {
-                for (let x = 0; x < worldWidth; x++) {
-                    const strataNoise = Math.sin(y / 150 + x / 400) * 10;
-                    if (y > worldHeight / 2 + strataNoise) {
-                        grid[getIdx(x, y)] = MAT.WOOD;
-                    } else {
-                        grid[getIdx(x, y)] = MAT.WALL;
-                    }
-                }
-            }
+            // for (let y = 0; y < worldHeight; y++) {
+            //     for (let x = 0; x < worldWidth; x++) {
+            //         const strataNoise = Math.sin(y / 150 + x / 400) * 10;
+            //         if (y > worldHeight / 2 + strataNoise) {
+            //             grid[getIdx(x, y)] = MAT.WOOD;
+            //         } else {
+            //             grid[getIdx(x, y)] = MAT.WALL;
+            //         }
+            //     }
+            // }
 
             // 2. Carve the new hierarchical cave system.
             generateCavesWithPerlinNoise(worldWidth, worldHeight, grid);
