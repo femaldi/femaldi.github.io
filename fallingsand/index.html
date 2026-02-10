@@ -320,7 +320,6 @@
             magicParticlePool.push({ x: 0, y: 0, vx: 0, vy: 0, lifespan: 0, color: [0,0,0], active: false });
         }
 
-        let magicParticles = [];
         let magicEmitters = [];
         let nextEmitterId = 0;
         let firePixelsCoords = [];
@@ -1203,6 +1202,10 @@
             if (Math.random() < 0.003) {
                 grid[idx] = MAT.GAS;
             }
+
+            if (grid[idx] === MAT.COAL_BURNING) {
+                activateChunkAt(x, y);
+            }
         }
 
         function updateBurningOil(x, y, idx, moved, grid, w, h, getIdx) {
@@ -1235,6 +1238,10 @@
             // --- Burn away faster than coal ---
             if (Math.random() < 0.008) {
                 grid[idx] = MAT.GAS;
+            }
+
+            if (grid[idx] === MAT.OIL_BURNING) {
+                activateChunkAt(x, y);
             }
         }
 
@@ -1309,6 +1316,10 @@
                 if (consumed) {
                     moved[idx] = 1; // Mark as "moved" so it's not processed again
                     return;
+                }
+
+                if (grid[idx] === MAT.ACID) {
+                    activateChunkAt(x, y);
                 }
             }
             // --- END: Acid Corrosion Logic ---
@@ -2116,34 +2127,46 @@
         }
 
         /**
-         * The main function to create a burst of magic particles at a specific location.
+         * The main function to create a burst of magic particles at a specific location, using the object pool.
          * @param {number} count - The number of particles to create.
          * @param {number} x - The center X coordinate of the spawn area.
          * @param {number} y - The center Y coordinate of the spawn area.
          * @param {Array<number>} mainColor - The base color as an [R, G, B] array.
          */
         function spawnMagicParticles(count, x, y, mainColor) {
-            for (let i = 0; i < count; i++) {
-                // 1. Create variance in the spawn position
-                const spawnX = x + (Math.random() - 0.5) * 20;
-                const spawnY = y + (Math.random() - 0.5) * 10;
+            let spawnedCount = 0;
+            // Search the pool for an inactive particle to reuse
+            for (let i = 0; i < MAX_MAGIC_PARTICLES; i++) {
+                const p = magicParticlePool[i];
+                if (!p.active) {
+                    // --- Activate and configure the particle ---
 
-                // 2. Create the color with a random hue shift from the main color
-                const colorVariance = 60;
-                const r = Math.max(0, Math.min(255, mainColor[0] + (Math.random() - 0.5) * colorVariance));
-                const g = Math.max(0, Math.min(255, mainColor[1] + (Math.random() - 0.5) * colorVariance));
-                const b = Math.max(0, Math.min(255, mainColor[2] + (Math.random() - 0.5) * colorVariance));
+                    p.active = true;
 
-                magicParticles.push({
-                    x: spawnX,
-                    y: spawnY,
+                    // 1. Create variance in the spawn position
+                    p.x = x + (Math.random() - 0.5) * 20;
+                    p.y = y + (Math.random() - 0.5) * 10;
+
+                    // 2. Create the color with a random hue shift from the main color
+                    const colorVariance = 60;
+                    const r = Math.max(0, Math.min(255, mainColor[0] + (Math.random() - 0.5) * colorVariance));
+                    const g = Math.max(0, Math.min(255, mainColor[1] + (Math.random() - 0.5) * colorVariance));
+                    const b = Math.max(0, Math.min(255, mainColor[2] + (Math.random() - 0.5) * colorVariance));
+                    p.color = [r, g, b];
+
                     // 3. Particles float upwards with a slight horizontal drift
-                    vx: (Math.random() - 0.5) * 0.3,
-                    vy: -0.2 + (Math.random() * -0.4),
+                    p.vx = (Math.random() - 0.5) * 0.3;
+                    p.vy = -0.2 + (Math.random() * -0.4);
+                    
                     // 4. They last for about 1-2.5 seconds (at 60fps)
-                    lifespan: 60 + Math.random() * 90,
-                    color: [r, g, b]
-                });
+                    p.lifespan = 60 + Math.random() * 90;
+
+                    spawnedCount++;
+                    if (spawnedCount >= count) {
+                        // We have spawned the requested number of particles, so we can stop searching.
+                        return;
+                    }
+                }
             }
         }
 
@@ -2280,6 +2303,81 @@
                         manifest: translationManifest,
                         target: target
                     });
+                }
+            },
+            // --- START OF NEW CODE ---
+            'heat_material': {
+                name: "Heat Material",
+                description: "Heats the material in the left cauldron, causing reactions.",
+                execute: function(station) {
+                    console.log("Executing Heat Material reaction!");
+                    const source = station.cauldrons.left;
+
+                    // Spawn some fire/heat particles for visual effect
+                    spawnMagicParticles(50, source.x + source.w / 2, source.y + source.h / 2, [255, 100, 0]);
+
+                    for (let y = source.y; y < source.y + source.h; y++) {
+                        for (let x = source.x; x < source.x + source.w; x++) {
+                            const idx = getIdx(x, y);
+                            if (idx === -1) continue;
+
+                            const type = grid[idx];
+                            let changed = true;
+                            switch (type) {
+                                case MAT.SAND:
+                                    grid[idx] = MAT.GLASS;
+                                    break;
+                                case MAT.WOOD:
+                                    grid[idx] = MAT.FIRE;
+                                    break;
+                                case MAT.OIL:
+                                    grid[idx] = MAT.OIL_BURNING;
+                                    break;
+                                case MAT.COAL:
+                                    grid[idx] = MAT.COAL_BURNING;
+                                    break;
+                                case MAT.GUNPOWDER:
+                                    grid[idx] = MAT.GUNPOWDER_IGNITED;
+                                    ignitionTimer[idx] = 8 + Math.floor(Math.random() * 6);
+                                    break;
+                                case MAT.WATER:
+                                    grid[idx] = MAT.GAS;
+                                    break;
+                                default:
+                                    changed = false;
+                                    break;
+                            }
+                            if (changed) {
+                                activateChunkAt(x, y);
+                            }
+                        }
+                    }
+                }
+            },
+            'clear_cauldrons': {
+                name: "Clear Cauldrons",
+                description: "Clears all materials from both cauldrons and the sampler.",
+                execute: function(station) {
+                    console.log("Executing Clear Cauldrons reaction!");
+                    const areasToClear = [
+                        station.cauldrons.left,
+                        station.cauldrons.right,
+                        station.sampler
+                    ];
+
+                    for (const area of areasToClear) {
+                        // Visual effect for clearing
+                        spawnMagicParticles(30, area.x + area.w / 2, area.y, [200, 200, 255]);
+                        for (let y = area.y; y < area.y + area.h; y++) {
+                            for (let x = area.x; x < area.x + area.w; x++) {
+                                const idx = getIdx(x, y);
+                                if (idx !== -1 && grid[idx] !== MAT.ADAMANTIUM) {
+                                    grid[idx] = MAT.EMPTY;
+                                    activateChunkAt(x, y);
+                                }
+                            }
+                        }
+                    }
                 }
             }
             // ... more reactions can be added here ...
