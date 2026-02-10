@@ -92,6 +92,9 @@
     </style>
 </head>
 <body>
+    <!-- <div id="loading-overlay" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #000; color: #fff; z-index: 1000; display: flex; justify-content: center; align-items: center; font-size: 2em; font-family: monospace;">
+        Loading World...
+    </div> -->
 
     <h1>Falling Sand Platformer</h1>
     <div class="info-bar">
@@ -162,8 +165,8 @@
         canvas.style.imageRendering = "pixelated";
 
 
-        const worldWidth = viewWidth * 30;
-        const worldHeight = viewHeight * 10;
+        const worldWidth = viewWidth * 5;
+        const worldHeight = viewHeight;// * 10;
 
         const renderWidth = viewWidth;
         const renderHeight = viewHeight;
@@ -298,6 +301,20 @@
             [MAT.OIL_BURNING]: 1
         };
 
+        const ALWAYS_VISIBLE_MATERIALS = new Set([
+            MAT.RUNE_WALL,
+            MAT.ADAMANTIUM // Also used for the alchemy station and world borders
+        ]);
+
+        const SHIMMERING_METALS = new Set([
+            MAT.ADAMANTIUM,
+            MAT.COPPER,
+            MAT.SILVER,
+            MAT.GOLD,
+            MAT.PLATINUM,
+            MAT.RUNE_WALL
+        ]);
+
 
         const MAX_STEP_HEIGHT = 2;
         const GRAVITY = 0.1;
@@ -313,6 +330,8 @@
         let playerFacingRight = true;
 		let projectiles = [];
         let alchemyJobs = [];
+
+        const MAX_VISIBLE_DISTANCE = 8;
 
         // --- Magic Particle System ---
         const MAX_MAGIC_PARTICLES = 5000;
@@ -375,6 +394,26 @@
                 }
             }
             // The first frame's active chunks are now in `nextActiveChunks`
+        }
+
+        /**
+         * NEW (V2): A centralized function to modify the grid.
+         */
+        function setGrid(idx, type) {
+            if (idx === -1) return;
+
+            const oldType = grid[idx];
+            if (type === oldType) return;
+
+            const wasEmpty = oldType === MAT.EMPTY || oldType === MAT.GAS;
+            const willBeEmpty = type === MAT.EMPTY || type === MAT.GAS;
+
+            grid[idx] = type;
+
+            // Physics activation still uses the same logic.
+            const x = idx % worldWidth;
+            const y = Math.floor(idx / worldWidth);
+            activateChunkAt(x, y);
         }
 
         /**
@@ -566,20 +605,20 @@
 
             switch (type) {
                 case MAT.GUNPOWDER:
-                    grid[idx] = MAT.GUNPOWDER_IGNITED;
+                    setGrid(idx, MAT.GUNPOWDER_IGNITED);
                     ignitionTimer[idx] = 3 + Math.floor(Math.random() * 5);
                     break;
 
                 case MAT.OIL:
-                    grid[idx] = MAT.OIL_BURNING;
+                    setGrid(idx, MAT.OIL_BURNING);
                     break;
 
                 case MAT.COAL:
-                    grid[idx] = MAT.COAL_BURNING;
+                    setGrid(idx, MAT.COAL_BURNING);
                     break;
 
                 case MAT.WOOD:
-                    grid[idx] = MAT.FIRE;
+                    setGrid(idx, MAT.FIRE);
                     break;
             }
         }
@@ -600,7 +639,7 @@
                         const px = x + dx; const py = y + dy;
                         const idx = getIdx(px, py);
                         if (idx !== -1 && grid[idx] !== MAT.WALL) {
-                            grid[idx] = currentMaterial;
+                            setGrid(idx, currentMaterial);
                             activateChunkAt(px, py);
                         }
                     }
@@ -793,7 +832,7 @@
                             const containerIdx = getIdx(x, y, targetW, targetH);
                             if (containerIdx !== -1 && targetGrid[containerIdx] === MAT.EMPTY) {
                                 targetGrid[containerIdx] = type; // Place material
-                                grid[worldIdx] = MAT.EMPTY;      // Remove from world
+                                setGrid(worldIdx, MAT.EMPTY);      // Remove from world
                                 spotFound = true;
                                 break; // Exit inner x-loop
                             }
@@ -910,7 +949,7 @@
 
                         // If we find an empty spot, place the material and we're done.
                         if (grid[checkIdx] === MAT.EMPTY || grid[checkIdx] === MAT.GAS) {
-                            grid[checkIdx] = p.type;
+                            setGrid(checkIdx, p.type);
                             activateChunkAt(placeX, placeY);
                             break;
                         }
@@ -950,7 +989,7 @@
                 const idx = getIdx(p.x, p.y);
                 if (idx === -1) return false; 
                 if (grid[idx] !== MAT.EMPTY) {
-                    grid[idx] = MAT.FIRE; return false;
+                    setGrid(idx, MAT.FIRE); return false;
                 }
                 return true;
             });
@@ -1082,7 +1121,7 @@
                 if (Math.random() < 0.35) { // 35% chance per frame to spread
                 const nIdx = getIdx(x + n.x, y + n.y);
                 if (nIdx !== -1 && grid[nIdx] === MAT.GUNPOWDER) {
-                    grid[nIdx] = MAT.GUNPOWDER_IGNITED;
+                    setGrid(nIdx, MAT.GUNPOWDER_IGNITED);
                     // Increased fuse time for a slower burn
                     ignitionTimer[nIdx] = 8 + Math.floor(Math.random() * 6);
                 }
@@ -1090,7 +1129,7 @@
             }
 
             if (ignitionTimer[idx] <= 0) {
-                grid[idx] = MAT.EMPTY;
+                setGrid(idx, MAT.EMPTY);
                 triggerExplosion(x, y, 6);
             }
         }
@@ -1110,11 +1149,11 @@
                     
                     if (grid[idx] !== MAT.WALL && grid[idx] !== MAT.ADAMANTIUM) {
                         const rand = Math.random();
-                        if (rand < 0.3) grid[idx] = MAT.FIRE;
-                        else if (rand < 0.7) grid[idx] = MAT.GAS; 
-                        else grid[idx] = MAT.EMPTY;
+                        if (rand < 0.3) setGrid(idx, MAT.FIRE);
+                        else if (rand < 0.7) setGrid(idx, MAT.GAS); 
+                        else setGrid(idx, MAT.EMPTY);
                     } else if (radius > 20 && Math.random() < 0.5) { // Scaled check
-                        grid[idx] = MAT.GAS;
+                        setGrid(idx, MAT.GAS);
                     }
                 }
             }
@@ -1124,7 +1163,7 @@
             let queue = [{x: startX, y: startY}];
             let cluster = [{x: startX, y: startY}]; 
             let visited = new Set([`${startX},${startY}`]);
-            grid[getIdx(startX, startY)] = MAT.EMPTY;
+            setGrid(getIdx(startX, startY), MAT.EMPTY);
             let iterations = 0; const maxIterations = 3000;
             while (queue.length > 0 && iterations++ < maxIterations) {
                 let current = queue.shift();
@@ -1134,7 +1173,7 @@
                     const nIdx = getIdx(nx, ny);
                     if (nIdx !== -1 && !visited.has(key) && grid[nIdx] === MAT.GUNPOWDER) {
                         visited.add(key); queue.push({x: nx, y: ny});
-                        cluster.push({x: nx, y: ny}); grid[nIdx] = MAT.EMPTY;
+                        cluster.push({x: nx, y: ny}); setGrid(nIdx, MAT.EMPTY);
                     }
                 }
             }
@@ -1153,32 +1192,32 @@
 
                 // NEW: Check for sand to turn into glass
                 if (nType === MAT.SAND && Math.random() < 0.05) { // 5% chance
-                    grid[nIdx] = MAT.GLASS;
+                    setGrid(nIdx, MAT.GLASS);
                 }
 
                 if (nType === MAT.GUNPOWDER) {
                     if (Math.random() < 0.5) { // 50% chance to be ignited by fire
-                        grid[nIdx] = MAT.GUNPOWDER_IGNITED;
+                        setGrid(nIdx, MAT.GUNPOWDER_IGNITED);
                         ignitionTimer[nIdx] = 8 + Math.floor(Math.random() * 6); // Use same slower fuse
                         return;
                     }
                 }
 
                 if (nType === MAT.OIL) {
-                    grid[nIdx] = MAT.OIL_BURNING;
+                    setGrid(nIdx, MAT.OIL_BURNING);
                     return;
                 }
 
                 if (nType === MAT.COAL) {
-                    grid[nIdx] = MAT.COAL_BURNING;
+                    setGrid(nIdx, MAT.COAL_BURNING);
                     return;
                 }
 
                 if (nType === MAT.WOOD) {
                     nearbyFuel = true;
-                    if (Math.random() < 0.01) { grid[nIdx] = MAT.FIRE; moved[nIdx] = 1; }
+                    if (Math.random() < 0.01) { setGrid(nIdx, MAT.FIRE); moved[nIdx] = 1; }
                 }
-                if (nType === MAT.WATER) { grid[nIdx] = MAT.GAS; grid[idx] = MAT.GAS; return; }
+                if (nType === MAT.WATER) { setGrid(nIdx, MAT.GAS); setGrid(idx, MAT.GAS); return; }
             }
             let targetIdx = idx;
             if (!nearbyFuel && y > 0) {
@@ -1186,11 +1225,11 @@
                 if (Math.random() < 0.5) nextX += Math.random() < 0.5 ? -1 : 1;
                 const nextIdx = getIdx(nextX, nextY);
                 if (nextIdx !== -1 && (grid[nextIdx] === MAT.EMPTY || grid[nextIdx] === MAT.GAS)) {
-                    grid[idx] = grid[nextIdx]; grid[nextIdx] = MAT.FIRE;
+                    setGrid(idx, grid[nextIdx]); setGrid(nextIdx, MAT.FIRE);
                     moved[nextIdx] = 1; targetIdx = nextIdx;
                 }
             }
-            if (Math.random() < (nearbyFuel ? 0.0 : 0.15)) grid[targetIdx] = MAT.GAS;
+            if (Math.random() < (nearbyFuel ? 0.0 : 0.15)) setGrid(targetIdx, MAT.GAS);
         }
 
         function updateBurningCoal(x, y, idx, moved, grid, w, h, getIdx) {
@@ -1205,7 +1244,7 @@
 
                 // NEW: Turn sand into glass
                 if (grid[nIdx] === MAT.SAND && Math.random() < 0.08) { // 8% chance
-                    grid[nIdx] = MAT.GLASS;
+                    setGrid(nIdx, MAT.GLASS);
                 }
 
                 tryIgniteAt(nx, ny, 0.02);
@@ -1215,13 +1254,13 @@
             if (Math.random() < 0.02) {
                 const aboveIdx = getIdx(x, y - 1);
                 if (aboveIdx !== -1 && grid[aboveIdx] === MAT.EMPTY) {
-                    grid[aboveIdx] = MAT.FIRE;
+                    setGrid(aboveIdx, MAT.FIRE);
                 }
             }
 
             // --- Burn out slowly ---
             if (Math.random() < 0.003) {
-                grid[idx] = MAT.GAS;
+                setGrid(idx, MAT.GAS);
             }
 
             if (grid[idx] === MAT.COAL_BURNING) {
@@ -1242,7 +1281,7 @@
                 
                 // NEW: Turn sand into glass
                 if (grid[nIdx] === MAT.SAND && Math.random() < 0.1) { // 10% chance for hot oil
-                     grid[nIdx] = MAT.GLASS;
+                     setGrid(nIdx, MAT.GLASS);
                 }
 
                 tryIgniteAt(nx, ny, 0.05);
@@ -1252,13 +1291,13 @@
             if (Math.random() < 0.05) {
                 const aboveIdx = getIdx(x, y - 1);
                 if (aboveIdx !== -1 && grid[aboveIdx] === MAT.EMPTY) {
-                    grid[aboveIdx] = MAT.FIRE;
+                    setGrid(aboveIdx, MAT.FIRE);
                 }
             }
 
             // --- Burn away faster than coal ---
             if (Math.random() < 0.008) {
-                grid[idx] = MAT.GAS;
+                setGrid(idx, MAT.GAS);
             }
 
             if (grid[idx] === MAT.OIL_BURNING) {
@@ -1271,7 +1310,7 @@
             if (belowIdx === -1) return;
             if (type === MAT.COAL_BURNING) {updateBurningCoal(x, y, idx, moved, grid, w, h, getIdx)}
             if (grid[belowIdx] === MAT.FIRE && type === MAT.COAL) {
-                grid[idx] = MAT.COAL_BURNING;
+                setGrid(idx, MAT.COAL_BURNING);
                 return;
             }
             const below = grid[belowIdx];
@@ -1279,16 +1318,16 @@
             if ([MAT.WATER, MAT.OIL, MAT.OIL_BURNING, MAT.ACID].includes(below)) {
                 // Push entire liquid row sideways
                 if (pushLiquidRowSideways(x, y + 1, below, grid, w, h, getIdx)) {
-                    grid[belowIdx] = type;
-                    grid[idx] = MAT.EMPTY;
+                    setGrid(belowIdx, type);
+                    setGrid(idx, MAT.EMPTY);
                     moved[belowIdx] = 1;
                     activateChunkAt(x, y + 1);
                     return;
                 }
 
                 // Absolute last resort fallback
-                grid[idx] = below;
-                grid[belowIdx] = type;
+                setGrid(idx, below);
+                setGrid(belowIdx, type);
                 moved[belowIdx] = 1;
                 return;
             }
@@ -1297,7 +1336,7 @@
             for (let dx of [dir, -dir]) {
                 const dIdx = getIdx(x + dx, y + 1);
                 if (dIdx !== -1 && [MAT.EMPTY, MAT.WATER, MAT.OIL, MAT.OIL_BURNING, MAT.GAS, MAT.FIRE, MAT.ACID].includes(grid[dIdx])) {
-                    grid[idx] = grid[dIdx]; grid[dIdx] = type; moved[dIdx] = 1; 
+                    setGrid(idx, grid[dIdx]); setGrid(dIdx, type); moved[dIdx] = 1; 
                     activateChunkAt(x + dx, y + 1);
                     return;
                 }
@@ -1324,10 +1363,10 @@
                     const isImmune = [MAT.EMPTY, MAT.GLASS, MAT.GAS, MAT.GLASS_WALL, MAT.ADAMANTIUM].includes(nType);
 
                     if (!isImmune && !isLiquid(nType) && Math.random() < 0.25) { // 25% chance to corrode
-                        grid[nIdx] = MAT.EMPTY;
+                        setGrid(nIdx, MAT.EMPTY);
                         // Acid has a small chance to be consumed in the reaction
                         if (Math.random() < 0.1) {
-                            grid[idx] = MAT.EMPTY;
+                            setGrid(idx, MAT.EMPTY);
                             consumed = true;
                             break; // Stop corroding this frame if consumed
                         }
@@ -1351,11 +1390,11 @@
             
             if (grid[belowIdx] === MAT.FIRE) {
                 if (grid[idx] === MAT.OIL) {
-                    grid[idx] = MAT.OIL_BURNING;
+                    setGrid(idx, MAT.OIL_BURNING);
                     activateChunkAt(x, y);
                 } else {
-                    grid[idx] = MAT.GAS;
-                    grid[belowIdx] = MAT.GAS;
+                    setGrid(idx, MAT.GAS);
+                    setGrid(belowIdx, MAT.GAS);
                     activateChunkAt(x, y);
                     activateChunkAt(x, y+1);
                 }
@@ -1366,8 +1405,8 @@
 
             // Fall into empty / gas
             if ([MAT.EMPTY, MAT.GAS].includes(below)) {
-                grid[idx] = below;
-                grid[belowIdx] = type;
+                setGrid(idx, below);
+                setGrid(belowIdx, type);
                 activateChunkAt(x, y);
                 activateChunkAt(x, y+1);
                 moved[belowIdx] = 1;
@@ -1376,8 +1415,8 @@
 
             // Liquid-on-liquid density swap
             if (LIQUID_DENSITY[type] > LIQUID_DENSITY[below]) {
-                grid[idx] = below;
-                grid[belowIdx] = type;
+                setGrid(idx, below);
+                setGrid(belowIdx, type);
                 activateChunkAt(x, y);
                 activateChunkAt(x, y+1);
                 moved[belowIdx] = 1;
@@ -1396,14 +1435,14 @@
             const aboveIdx = getIdx(x, y - 1);
             
             if (y === 0) {
-                grid[idx] = MAT.EMPTY;
+                setGrid(idx, MAT.EMPTY);
                 activateChunkAt(x, y);
                 return;
             }
 
             const above = grid[aboveIdx];
             if ([MAT.EMPTY, MAT.WATER, MAT.SAND, MAT.SOIL, MAT.GUNPOWDER].includes(above)) {
-                grid[idx] = above; grid[aboveIdx] = MAT.GAS; moved[aboveIdx] = 1; 
+                setGrid(idx, above); setGrid(aboveIdx, MAT.GAS); moved[aboveIdx] = 1; 
                 activateChunkAt(x, y);
                 activateChunkAt(x, y-1);
                 return;
@@ -1429,7 +1468,7 @@
             }
             if (targetX !== x) {
                 const tIdx = getIdx(targetX, y);
-                grid[currentIdx] = grid[tIdx]; grid[tIdx] = type; moved[tIdx] = 1;
+                setGrid(currentIdx, grid[tIdx]); setGrid(tIdx, type); moved[tIdx] = 1;
                 activateChunkAt(targetX, y);
                 return true; // Return success
             }
@@ -1452,8 +1491,8 @@
                             const toIdx   = getIdx(x + dir * j, y);
 
                             if (grid[fromIdx] !== liquidType) break;
-                            grid[toIdx] = grid[fromIdx];
-                            grid[fromIdx] = MAT.EMPTY;
+                            setGrid(toIdx, grid[fromIdx]);
+                            setGrid(fromIdx, MAT.EMPTY);
                             activateChunkAt(x + dir * (j - 1), y);
                             activateChunkAt(x + dir * j, y);
                         }
@@ -1503,7 +1542,7 @@
                         ix >= rightX - wallWidth ||
                         iy >= groundY - wallWidth;
 
-                    grid[idx] = isWall ? wallType : fillType;
+                    setGrid(idx, isWall ? wallType : fillType);
                 }
             }
         }
@@ -1525,7 +1564,7 @@
                     const idx = getIdx(px, py);
                     if (idx === -1) continue;
 
-                    grid[idx] = type;
+                    setGrid(idx, type);
                 }
             }
         }
@@ -1540,7 +1579,7 @@
                     if (d2 > r2 || d2 < inner) continue;
 
                     const idx = getIdx(x + dx, y + dy);
-                    if (idx !== -1) grid[idx] = type;
+                    if (idx !== -1) setGrid(idx, type);
                 }
             }
         }
@@ -1566,41 +1605,49 @@
 
             // Loop over every pixel on the SCREEN
             for (let screenY = 0; screenY < viewHeight; screenY++) {
-                // Calculate the corresponding WORLD y-coordinate
-                const worldY = screenY + startY; 
-
+                const worldY = screenY + startY;
                 for (let screenX = 0; screenX < viewWidth; screenX++) {
-                    // Calculate the corresponding WORLD x-coordinate
                     const worldX = screenX + startX;
 
-                    // Get the material at the WORLD coordinate
                     const idx = getIdx(worldX, worldY);
-                    if (idx === -1 || grid[idx] === MAT.EMPTY) continue;
+                    if (idx === -1) continue;
 
                     const type = grid[idx];
+                    
+                    if (type === MAT.EMPTY) continue;
 
-                    // NEW: Identify hot materials and record their SCREEN coordinates
-                    if (type === MAT.FIRE || type === MAT.OIL_BURNING || type === MAT.COAL_BURNING) {
-                        firePixelsCoords.push({ x: screenX, y: screenY });
-                    }
+                    // --- START: REFACTORED RENDER LOGIC ---
 
+                    // 1. Calculate the base color for the material.
                     let [r, g, b] = COLORS[type];
 
                     if (type === MAT.FIRE) {
-                        r = 255;
-                        g = 80 + Math.random() * 80;
-                        b = 0;
-                    }
-                    else if (type === MAT.WATER || type === MAT.OIL || type === MAT.OIL_BURNING || type === MAT.ACID) {
-                         // Pass WORLD coordinates to the animation functions
+                        r = 255; g = 80 + Math.random() * 80; b = 0;
+                        firePixelsCoords.push({ x: screenX, y: screenY });
+                    } else if (type === MAT.OIL_BURNING || type === MAT.COAL_BURNING) {
+                         firePixelsCoords.push({ x: screenX, y: screenY });
+                         [r, g, b] = animateLiquidColor(r, g, b, worldX, worldY, type, time);
+                    } else if (LIQUIDS.has(type)) {
                         [r, g, b] = animateLiquidColor(r, g, b, worldX, worldY, type, time);
-                    }
-                    else {
-                        // Pass WORLD coordinates to the animation functions
+                    } else {
                         [r, g, b] = varyColor(r, g, b, worldX, worldY, type, 16);
                     }
-                    
-                    // Set the pixel at the SCREEN coordinate
+
+                    // 2. NEW: Apply shimmer effect if the material is a metal.
+                    if (SHIMMERING_METALS.has(type)) {
+                        // This hash creates a pseudo-random value based on position and time.
+                        // Dividing frameCount makes the shimmer slower and less frantic.
+                        const shimmerHash = hashCell(worldX, worldY, Math.floor(frameCount / 4));
+                        
+                        // Only apply a shimmer on rare occasions (when the hash is a high value).
+                        if (shimmerHash > 254) {
+                            const shimmerBrightness = 35; // How much brighter to make the pixel.
+                            r = Math.min(255, r + shimmerBrightness);
+                            g = Math.min(255, g + shimmerBrightness);
+                            b = Math.min(255, b + shimmerBrightness);
+                        }
+                    }
+
                     setPixel(screenX, screenY, r, g, b);
                 }
             }
@@ -1909,10 +1956,10 @@
             const trunkHeight = 40 + Math.floor(Math.random() * 12); // Scaled height
             for (let i = 0; i < trunkHeight; i++) {
                 const y = baseY - i; if (y < 0) continue;
-                grid[getIdx(baseX, y)] = MAT.WOOD;
+                setGrid(getIdx(baseX, y), MAT.WOOD);
                 if(i < 30) { // Scaled thickness
-					grid[getIdx(baseX - 1, y)] = MAT.WOOD;
-					grid[getIdx(baseX + 1, y)] = MAT.WOOD;
+					setGrid(getIdx(baseX - 1, y), MAT.WOOD);
+					setGrid(getIdx(baseX + 1, y), MAT.WOOD);
 				}
             }
         }
@@ -1994,7 +2041,7 @@
             for (let y = slabY; y < slabY + slabHeight; y++) {
                 for (let x = slabX; x < slabX + slabWidth; x++) {
                     const idx = getIdx(x, y);
-                    if (idx !== -1) grid[idx] = backgroundMaterial;
+                    if (idx !== -1) setGrid(idx, backgroundMaterial);
                 }
             }
 
@@ -2012,7 +2059,7 @@
             for (let t = 0; t < lineThickness; t++) {
                 for (let x = slabX; x < slabX + slabWidth; x++) {
                     const idx = getIdx(x, topLineY - t);
-                    if (idx !== -1) grid[idx] = runeMaterial;
+                    if (idx !== -1) setGrid(idx, runeMaterial);
                 }
             }
             
@@ -2021,7 +2068,7 @@
             for (let t = 0; t < lineThickness; t++) {
                 for (let x = slabX; x < slabX + slabWidth; x++) {
                     const idx = getIdx(x, bottomLineY + t);
-                    if (idx !== -1) grid[idx] = runeMaterial;
+                    if (idx !== -1) setGrid(idx, runeMaterial);
                 }
             }
             
@@ -2041,7 +2088,7 @@
                             const drawY = runesTopY + y;
                             const idx = getIdx(drawX, drawY);
                             if (idx !== -1) {
-                                grid[idx] = runeMaterial;
+                                setGrid(idx, runeMaterial);
                             }
                         }
                     }
@@ -2311,7 +2358,7 @@
 
                     // 3. If the spot in the air is empty, place the material there.
                     if (spawnIdx !== -1 && grid[spawnIdx] === MAT.EMPTY) {
-                        grid[spawnIdx] = materialInfo.type;
+                        setGrid(spawnIdx, materialInfo.type);
                         
                         // 4. Activate the chunk to let the main physics engine take over.
                         activateChunkAt(spawnX, spawnY);
@@ -2353,7 +2400,7 @@
                             if (idx !== -1 && grid[idx] === filterMaterial) {
                                 // The manifest now only needs the type. The source location is irrelevant.
                                 translationManifest.push({ type: grid[idx] });
-                                grid[idx] = MAT.EMPTY;
+                                setGrid(idx, MAT.EMPTY);
                                 activateChunkAt(x, y);
                             }
                         }
@@ -2391,23 +2438,23 @@
                             let changed = true;
                             switch (type) {
                                 case MAT.SAND:
-                                    grid[idx] = MAT.GLASS;
+                                    setGrid(idx, MAT.GLASS);
                                     break;
                                 case MAT.WOOD:
-                                    grid[idx] = MAT.FIRE;
+                                    setGrid(idx, MAT.FIRE);
                                     break;
                                 case MAT.OIL:
-                                    grid[idx] = MAT.OIL_BURNING;
+                                    setGrid(idx, MAT.OIL_BURNING);
                                     break;
                                 case MAT.COAL:
-                                    grid[idx] = MAT.COAL_BURNING;
+                                    setGrid(idx, MAT.COAL_BURNING);
                                     break;
                                 case MAT.GUNPOWDER:
-                                    grid[idx] = MAT.GUNPOWDER_IGNITED;
+                                    setGrid(idx, MAT.GUNPOWDER_IGNITED);
                                     ignitionTimer[idx] = 8 + Math.floor(Math.random() * 6);
                                     break;
                                 case MAT.WATER:
-                                    grid[idx] = MAT.GAS;
+                                    setGrid(idx, MAT.GAS);
                                     break;
                                 default:
                                     changed = false;
@@ -2438,7 +2485,7 @@
                             for (let x = area.x; x < area.x + area.w; x++) {
                                 const idx = getIdx(x, y);
                                 if (idx !== -1 && grid[idx] !== MAT.ADAMANTIUM) {
-                                    grid[idx] = MAT.EMPTY;
+                                    setGrid(idx, MAT.EMPTY);
                                     activateChunkAt(x, y);
                                 }
                             }
@@ -2463,14 +2510,14 @@
             for (let y = startY; y < startY + stationHeight; y++) {
                 for (let x = startX; x < startX + stationWidth; x++) {
                     const idx = getIdx(x, y);
-                    if (idx !== -1) grid[idx] = MAT.EMPTY;
+                    if (idx !== -1) setGrid(idx, MAT.EMPTY);
                 }
             }
             
             // 2. Build the solid Adamantium floor.
             for (let y = floorY; y < startY + stationHeight; y++) {
                 for (let x = startX; x < startX + stationWidth; x++) {
-                    grid[getIdx(x, y)] = MAT.ADAMANTIUM;
+                    setGrid(getIdx(x, y), MAT.ADAMANTIUM);
                 }
             }
 
@@ -2572,7 +2619,7 @@
                     if (dx * dx + dy * dy <= outerRadiusSq) {
                         const idx = getIdx(cx + dx, rimY + dy);
                         if (idx !== -1) {
-                            grid[idx] = material;
+                            setGrid(idx, material);
                         }
                     }
                 }
@@ -2584,7 +2631,7 @@
                      if (dx * dx + dy * dy <= innerRadiusSq) {
                         const idx = getIdx(cx + dx, rimY + dy);
                         if (idx !== -1) {
-                            grid[idx] = MAT.EMPTY;
+                            setGrid(idx, MAT.EMPTY);
                         }
                     }
                 }
@@ -2657,7 +2704,7 @@
                     if (materialToPlace !== MAT.EMPTY) {
                         const idx = getIdx(x, y);
                         if (idx !== -1) {
-                            grid[idx] = materialToPlace;
+                            setGrid(idx, materialToPlace);
                         }
                     }
                 }
@@ -2670,9 +2717,9 @@
             //     for (let x = 0; x < worldWidth; x++) {
             //         const strataNoise = Math.sin(y / 150 + x / 400) * 10;
             //         if (y > worldHeight / 2 + strataNoise) {
-            //             grid[getIdx(x, y)] = MAT.WOOD;
+            //             setGrid(getIdx(x, y), MAT.WOOD);
             //         } else {
-            //             grid[getIdx(x, y)] = MAT.WALL;
+            //             setGrid(getIdx(x, y), MAT.WALL);
             //         }
             //     }
             // }
@@ -2684,16 +2731,16 @@
 
             // 3. Place indestructible borders.
             for (let y = 0; y < worldHeight; y++) {
-                grid[getIdx(0, y)] = MAT.ADAMANTIUM;
-                grid[getIdx(1, y)] = MAT.ADAMANTIUM;
-                grid[getIdx(worldWidth - 1, y)] = MAT.ADAMANTIUM;
-                grid[getIdx(worldWidth - 2, y)] = MAT.ADAMANTIUM;
+                setGrid(getIdx(0, y), MAT.ADAMANTIUM);
+                setGrid(getIdx(1, y), MAT.ADAMANTIUM);
+                setGrid(getIdx(worldWidth - 1, y), MAT.ADAMANTIUM);
+                setGrid(getIdx(worldWidth - 2, y), MAT.ADAMANTIUM);
             }
              for (let x = 0; x < worldWidth; x++) {
-                grid[getIdx(x, 0)] = MAT.ADAMANTIUM;
-                grid[getIdx(x, 1)] = MAT.ADAMANTIUM;
-                grid[getIdx(x, worldHeight - 1)] = MAT.ADAMANTIUM;
-                grid[getIdx(x, worldHeight - 2)] = MAT.ADAMANTIUM;
+                setGrid(getIdx(x, 0), MAT.ADAMANTIUM);
+                setGrid(getIdx(x, 1), MAT.ADAMANTIUM);
+                setGrid(getIdx(x, worldHeight - 1), MAT.ADAMANTIUM);
+                setGrid(getIdx(x, worldHeight - 2), MAT.ADAMANTIUM);
             }
 
             initializeChunks();
