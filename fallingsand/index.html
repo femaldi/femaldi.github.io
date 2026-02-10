@@ -302,6 +302,7 @@
         const MAX_STEP_HEIGHT = 2;
         const GRAVITY = 0.1;
         const MAX_FALL_SPEED = 4;
+        const MAX_HOVER_SPEED = 2;
         
         let grid = new Uint8Array(worldWidth * worldHeight).fill(MAT.EMPTY);
         let ignitionTimer = new Uint8Array(worldWidth * worldHeight);
@@ -461,9 +462,16 @@
         // --- PLAYER AND CAMERA ---
         const player = {
             x: 30, y: 80, vx: 0, vy: 0,
-            width: 8, height: 16, speed: 1, jumpForce: 2.5, onGround: false,
+            width: 8, height: 16, speed: 1, onGround: false,
             canInteract: false,
-            currentTrigger: null // Scaled player size
+            currentTrigger: null,
+            maxHoverEnergy: 100,
+            hoverEnergy: 100,
+            hoverForce: 0.25,      // Upward force, must be > GRAVITY to ascend
+            hoverDrainRate: 0.5,     // Energy used per frame of hovering
+            hoverRechargeRate: 1, // Energy recovered per frame when not hovering
+            maxHp: 100,
+            hp: 100
         };
         const camera = { x: player.x - viewWidth / 2, y: 0 };
 		const mouse = { x: 0, y: 0, worldX: 0, worldY: 0 };
@@ -581,8 +589,6 @@
             const rect = canvas.getBoundingClientRect();
             mouse.x = evt.clientX - rect.left;
             mouse.y = evt.clientY - rect.top;
-            mouse.worldX = Math.floor(camera.x + mouse.x / scale);
-            mouse.worldY = Math.floor(camera.y + mouse.y / scale);
         };
 
         function draw(x, y) {
@@ -670,80 +676,85 @@
                 return;
             }
 
-            // --- INPUT ---
+            const wasOnGround = player.onGround;
+
+            // --- 1. APPLY FORCES TO VELOCITY ---
+            // Horizontal input
             if (keys['KeyA']) {
                 player.vx = -player.speed;
-                playerFacingRight = false; // Set direction
+                playerFacingRight = false;
             } else if (keys['KeyD']) {
                 player.vx = player.speed;
-                playerFacingRight = true; // Set direction
+                playerFacingRight = true;
             } else {
                 player.vx = 0;
             }
 
-            if (keys['KeyW'] && player.onGround) {
-                player.vy = -player.jumpForce;
-                player.onGround = false;
+            // Levitation and Energy
+            if (keys['KeyW'] && player.hoverEnergy > 0) {
+                player.vy -= player.hoverForce;
+                player.hoverEnergy = Math.max(0, player.hoverEnergy - player.hoverDrainRate);
+                spawnLevitationParticles(2);
+            } else {
+                if (player.hoverEnergy < player.maxHoverEnergy && player.onGround) {
+                    player.hoverEnergy = Math.min(player.maxHoverEnergy, player.hoverEnergy + player.hoverRechargeRate);
+                }
             }
-
-            // --- GRAVITY ---
+            
+            // Gravity and Velocity Clamping
             player.vy += GRAVITY;
             if (player.vy > MAX_FALL_SPEED) player.vy = MAX_FALL_SPEED;
+            if (player.vy < -MAX_HOVER_SPEED) player.vy = -MAX_HOVER_SPEED;
 
+
+            // --- 2. RESOLVE HORIZONTAL MOVEMENT AND COLLISIONS FIRST ---
             let nextX = player.x + player.vx;
-            let nextY = player.y + player.vy;
-
-            player.onGround = false;
-
-            // --- HORIZONTAL MOVE + STEP UP ---
-            let movedHorizontally = false;
-
             if (player.vx !== 0) {
-                const dir = Math.sign(player.vx);
-
-                if (!collidesAtSides(nextX, player.y, dir)) {
+                if (!collidesAtSides(nextX, player.y, Math.sign(player.vx))) {
                     player.x = nextX;
-                    movedHorizontally = true;
                 } else {
-                    // Try stepping up
-                    for (let step = 1; step <= MAX_STEP_HEIGHT; step++) {
-                        const stepY = player.y - step;
-
-                        if (
-                            !collidesAt(player.x, stepY) &&
-                            !collidesAtSides(nextX, stepY, dir)
-                        ) {
-                            player.y = stepY;
-                            player.x = nextX;
-                            player.onGround = true;
-                            movedHorizontally = true;
-                            break;
+                    // Wall collision detected. Can we step up?
+                    // The step-up is now part of the horizontal check.
+                    let couldStepUp = false;
+                    if (wasOnGround) { // Only allow stepping from the ground
+                        for (let step = 1; step <= MAX_STEP_HEIGHT; step++) {
+                            const stepY = player.y - step;
+                            if (!collidesAt(player.x, stepY) && !collidesAtSides(nextX, stepY, Math.sign(player.vx))) {
+                                player.y = stepY;
+                                player.x = nextX;
+                                couldStepUp = true;
+                                break;
+                            }
                         }
+                    }
+                    // If we hit a wall and couldn't step, stop horizontal movement.
+                    if (!couldStepUp) {
+                        player.vx = 0;
                     }
                 }
             }
 
-            if (!movedHorizontally) {
-                player.vx = 0;
-            }
 
-            // --- VERTICAL MOVE ---
+            // --- 3. RESOLVE VERTICAL MOVEMENT AND COLLISIONS SECOND ---
+            // By now, player.x is final for this frame.
+            let nextY = player.y + player.vy;
+            player.onGround = false;
+
             if (!collidesAt(player.x, nextY)) {
                 player.y = nextY;
             } else {
-                if (player.vy !== 0) {
-                    const dir = Math.sign(player.vy);
+                const dir = Math.sign(player.vy);
 
-                    // Step until just before collision
-                    while (!collidesAt(player.x, player.y + dir)) {
-                        player.y += dir;
-                    }
-
-                    if (dir > 0) {
-                        player.onGround = true;
-                    }
+                if (!collidesAt(player.x, player.y + dir)) {
+                    player.y += dir;
                 }
 
+                // If we collided while moving down, we are on the ground.
+                if (dir > 0) {
+                    player.onGround = true;
+                }
+                
+                // Stop vertical movement upon collision.
                 player.vy = 0;
             }
         }
@@ -1717,6 +1728,7 @@
             ctx.lineTo(mouse.x / scale, mouse.y / scale);
             ctx.stroke();
 
+            renderPlayerStatsUI();
             renderAlchemyUI();
         }
 
@@ -2121,6 +2133,50 @@
                             // We've successfully spawned a particle, so we can exit the inner loop.
                             break; 
                         }
+                    }
+                }
+            }
+        }
+
+        /**
+         * Spawns exhaust particles from the player's feet when levitating.
+         * @param {number} count - The number of particles to attempt to spawn this frame.
+         */
+        function spawnLevitationParticles(count) {
+            let spawnedCount = 0;
+            // Base position is the center of the player's feet
+            const baseX = player.x + player.width / 2;
+            const baseY = player.y + player.height - 2; // Start the trail slightly inside the player model
+
+            for (let i = 0; i < MAX_MAGIC_PARTICLES; i++) {
+                const p = magicParticlePool[i];
+                if (!p.active) {
+                    p.active = true;
+
+                    // Position with slight horizontal randomness for a "cone" shape
+                    p.x = baseX + (Math.random() - 0.5) * 4;
+                    p.y = baseY + (Math.random() - 0.5) * 2;
+
+                    // Velocity: Shoots downwards and spreads out.
+                    // It's also slightly affected by the player's own upward speed to make it "lag behind".
+                    p.vx = (Math.random() - 0.5) * 0.5;
+                    p.vy = (Math.random() * 0.8) + 0.4 - (player.vy * 0.1);
+
+                    // Color: A blueish-white "magic energy" color with some variance
+                    const baseColor = [180, 200, 255];
+                    const colorVariance = 40;
+                    p.color = [
+                        Math.max(0, Math.min(255, baseColor[0] + (Math.random() - 0.5) * colorVariance)),
+                        Math.max(0, Math.min(255, baseColor[1] + (Math.random() - 0.5) * colorVariance)),
+                        Math.max(0, Math.min(255, baseColor[2] + (Math.random() - 0.5) * colorVariance))
+                    ];
+
+                    // Lifespan: Particles last for less than a second
+                    p.lifespan = 15 + Math.random() * 20;
+
+                    spawnedCount++;
+                    if (spawnedCount >= count) {
+                        return; // We've spawned enough particles for this frame
                     }
                 }
             }
@@ -2665,6 +2721,8 @@
             }
             
             updateCamera();
+            mouse.worldX = Math.floor(camera.x + mouse.x / scale);
+            mouse.worldY = Math.floor(camera.y + mouse.y / scale);
 
             // --- RENDER LOGIC ---
             render();
@@ -2817,6 +2875,55 @@
             ctx.fillStyle = '#aaa';
             ctx.fillText("Press [ESC] to close.", boxX + 10, boxY + boxHeight - 25);
         }
+
+        /**
+         * Renders the player's HP and Hover Energy bars in the top-left corner of the canvas.
+         */
+        function renderPlayerStatsUI() {
+            const barWidth = 150;
+            const barHeight = 10;
+            const x = 15;
+            let y = 15; // Starting Y position
+
+            ctx.imageSmoothingEnabled = false;
+
+            // --- HP Bar ---
+            // Background
+            ctx.fillStyle = 'rgba(0,0,0,0.7)';
+            ctx.fillRect(x, y, barWidth, barHeight);
+            
+            // Fill
+            const hpPercent = player.hp / player.maxHp;
+            ctx.fillStyle = '#d14242'; // Red for health
+            ctx.fillRect(x, y, barWidth * hpPercent, barHeight);
+
+            // Text Label
+            ctx.fillStyle = 'white';
+            ctx.font = '8px monospace';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(`${player.hp}/${player.maxHp}`, x + barWidth / 2, y + barHeight / 2);
+
+            // --- Hover Energy Bar ---
+            y += barHeight + 5; // Move down for the next bar
+
+            // Background
+            ctx.fillStyle = 'rgba(0,0,0,0.7)';
+            ctx.fillRect(x, y, barWidth, barHeight);
+
+            // Fill
+            const energyPercent = player.hoverEnergy / player.maxHoverEnergy;
+            ctx.fillStyle = '#DDED64';
+            ctx.fillRect(x, y, barWidth * energyPercent, barHeight);
+            
+            // Text Label
+            ctx.fillStyle = 'white';
+            ctx.font = '8px monospace';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(`${Math.round(player.hoverEnergy)}/${player.maxHoverEnergy}`, x + barWidth / 2, y + barHeight / 2);
+        }
+
 
         loadInitialScene();
         gameLoop();
