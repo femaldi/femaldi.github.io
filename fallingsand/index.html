@@ -147,6 +147,7 @@
         let activeChunks = new Set(); // A set of active chunk indices for the current frame
         let nextActiveChunks = new Set(); // A set of chunks to activate for the *next* frame
 
+
         // NEW: Increased view area and reduced scale
         const viewWidth = 600;
         const viewHeight = 400;
@@ -165,8 +166,8 @@
         canvas.style.imageRendering = "pixelated";
 
 
-        const worldWidth = viewWidth * 5;
-        const worldHeight = viewHeight;// * 10;
+        const worldWidth = viewWidth * 30;
+        const worldHeight = viewHeight * 10;
 
         const renderWidth = viewWidth;
         const renderHeight = viewHeight;
@@ -331,6 +332,10 @@
 		let projectiles = [];
         let alchemyJobs = [];
 
+        let lightGrid = new Uint8Array(worldWidth * worldHeight).fill(0); // 0 = black, 15 = brightest
+        const MAX_LIGHT_LEVEL = 15;
+        const LIGHTING_UPDATE_INTERVAL = 30; // Update lighting every 30 frames
+
         const MAX_VISIBLE_DISTANCE = 8;
 
         // --- Magic Particle System ---
@@ -396,21 +401,16 @@
             // The first frame's active chunks are now in `nextActiveChunks`
         }
 
-        /**
-         * NEW (V2): A centralized function to modify the grid.
-         */
         function setGrid(idx, type) {
             if (idx === -1) return;
 
             const oldType = grid[idx];
             if (type === oldType) return;
 
-            const wasEmpty = oldType === MAT.EMPTY || oldType === MAT.GAS;
-            const willBeEmpty = type === MAT.EMPTY || type === MAT.GAS;
-
+            // The 'lightingNeedsUpdate = true' line has been REMOVED from here.
+            
             grid[idx] = type;
 
-            // Physics activation still uses the same logic.
             const x = idx % worldWidth;
             const y = Math.floor(idx / worldWidth);
             activateChunkAt(x, y);
@@ -1584,6 +1584,142 @@
             }
         }
 
+        /**
+         * Performs a fast, localized lighting update on a single chunk.
+         * Crucially, it also detects if light has "spilled" over a border and returns
+         * a Set of neighboring chunks that should now also be activated.
+         * @param {object} chunk - The chunk object to process.
+         * @returns {Set<object>} A set of neighboring chunk objects to activate next.
+         */
+        function updateLocalLightingAndFindNeighbors(chunk) {
+            const neighborsToActivate = new Set();
+            const chunkX_base = chunk.index % chunkWidth;
+            const chunkY_base = Math.floor(chunk.index / chunkWidth);
+            const startX = chunkX_base * CHUNK_SIZE;
+            const startY = chunkY_base * CHUNK_SIZE;
+            const endX = startX + CHUNK_SIZE;
+            const endY = startY + CHUNK_SIZE;
+
+            for (let y = startY; y < endY; y++) {
+                for (let x = startX; x < endX; x++) {
+                    const idx = getIdx(x, y);
+                    if (idx === -1) continue;
+
+                    let maxNeighborLight = 0;
+                    if (x > 0) maxNeighborLight = Math.max(maxNeighborLight, lightGrid[idx - 1]);
+                    if (x < worldWidth - 1) maxNeighborLight = Math.max(maxNeighborLight, lightGrid[idx + 1]);
+                    if (y > 0) maxNeighborLight = Math.max(maxNeighborLight, lightGrid[idx - worldWidth]);
+                    if (y < worldHeight - 1) maxNeighborLight = Math.max(maxNeighborLight, lightGrid[idx + worldWidth]);
+
+                    const isWall = grid[idx] === MAT.WALL;
+                    const lightLoss = isWall ? 3 : 0;
+                    const potentialLight = maxNeighborLight - lightLoss;
+                    
+                    let lightChanged = false;
+                    if (potentialLight > lightGrid[idx]) {
+                        lightGrid[idx] = potentialLight;
+                        lightChanged = true;
+                    }
+
+                    if (grid[idx] === MAT.EMPTY && lightGrid[idx] < MAX_LIGHT_LEVEL) {
+                        lightGrid[idx] = MAX_LIGHT_LEVEL;
+                        lightChanged = true;
+                    }
+
+                    if (lightChanged) {
+                        // Check neighbors if this pixel is on a chunk border
+                        const dirs = [{dx:-1, dy:0}, {dx:1, dy:0}, {dx:0, dy:-1}, {dx:0, dy:1}];
+                        for (const dir of dirs) {
+                            const nx = x + dir.dx;
+                            const ny = y + dir.dy;
+                            
+                            // Check if the neighbor is in a different chunk
+                            if (Math.floor(nx / CHUNK_SIZE) !== chunkX_base || Math.floor(ny / CHUNK_SIZE) !== chunkY_base) {
+                                const nIdx = getIdx(nx, ny);
+                                // If the neighbor exists and isn't a wall, it can receive light.
+                                if (nIdx !== -1 && grid[nIdx] !== MAT.WALL) {
+                                    const nChunkX = Math.floor(nx / CHUNK_SIZE);
+                                    const nChunkY = Math.floor(ny / CHUNK_SIZE);
+                                    if (nChunkX >= 0 && nChunkX < chunkWidth && nChunkY >= 0 && nChunkY < chunkHeight) {
+                                        neighborsToActivate.add(chunkGrid[nChunkY * chunkWidth + nChunkX]);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            return neighborsToActivate;
+        }
+
+        /**
+         * Calculates light levels using a Breadth-First Search with material-dependent dampening.
+         * Light originates from EMPTY cells, travels freely through non-WALL materials,
+         * and loses strength when penetrating WALLs.
+         */
+        function updateLighting() {
+            lightGrid.fill(0);
+            const queue = [];
+
+            // 1. Seed the queue with all empty cells as the light sources.
+            // const searchRadius = 25;
+            // const startX = Math.max(0, Math.floor(camera.x) - searchRadius);
+            // const endX = Math.min(worldWidth, Math.floor(camera.x) + viewWidth + searchRadius);
+            // const startY = Math.max(0, Math.floor(camera.y) - searchRadius);
+            // const endY = Math.min(worldHeight, Math.floor(camera.y) + viewHeight + searchRadius);
+
+            const startX = 0;
+            const endX = worldWidth;
+            const startY = 0;
+            const endY = worldHeight;
+
+            for (let y = startY; y < endY; y++) {
+                for (let x = startX; x < endX; x++) {
+                    const idx = getIdx(x, y);
+                    if (idx !== -1 && grid[idx] === MAT.EMPTY) {
+                        lightGrid[idx] = MAX_LIGHT_LEVEL;
+                        queue.push(idx);
+                    }
+                }
+            }
+
+            // 2. Spread the light outwards layer by layer (BFS)
+            let head = 0;
+            const DIRS = [-1, 1, -worldWidth, worldWidth];
+
+            while (head < queue.length) {
+                const currentIdx = queue[head++];
+                const currentLight = lightGrid[currentIdx];
+
+                if (currentLight <= 1) continue;
+
+                for (const dir of DIRS) {
+                    const nextIdx = currentIdx + dir;
+
+                    if (nextIdx < 0 || nextIdx >= grid.length || (dir === 1 && nextIdx % worldWidth === 0) || (dir === -1 && currentIdx % worldWidth === 0)) {
+                        continue;
+                    }
+                    
+                    // --- NEW LIGHTING LOGIC ---
+                    // Determine the light loss based on the material we are *entering*.
+                    const isNextMaterialWall = grid[nextIdx] === MAT.WALL;
+                    
+                    // Light passing into a WALL is heavily dampened.
+                    // Light passing into ANY OTHER material is not dampened at all.
+                    const lightLoss = isNextMaterialWall ? 3 : 0;
+                    
+                    const nextLight = currentLight - lightLoss;
+
+                    // If our calculated light is brighter than the neighbor's current light, update it.
+                    if (nextLight > lightGrid[nextIdx]) {
+                        lightGrid[nextIdx] = nextLight;
+                        // Always add the neighbor to the queue to continue spreading light.
+                        queue.push(nextIdx); 
+                    }
+                }
+            }
+        }
+
         // --- RENDERING ---
         function setPixel(x, y, r, g, b, a = 255) {
             const i = (y * renderWidth + x) * 4;
@@ -1616,7 +1752,13 @@
                     
                     if (type === MAT.EMPTY) continue;
 
-                    // --- START: REFACTORED RENDER LOGIC ---
+                    // --- NEW: Gradient Lighting Logic ---
+                    const lightLevel = lightGrid[idx];
+
+                    if (lightLevel === 0 && !ALWAYS_VISIBLE_MATERIALS.has(type)) {
+                        setPixel(screenX, screenY, 0, 0, 0); // Completely dark
+                        continue;
+                    }
 
                     // 1. Calculate the base color for the material.
                     let [r, g, b] = COLORS[type];
@@ -1646,6 +1788,14 @@
                             g = Math.min(255, g + shimmerBrightness);
                             b = Math.min(255, b + shimmerBrightness);
                         }
+                    }
+
+                    // 3. Apply brightness based on light level
+                    if (!ALWAYS_VISIBLE_MATERIALS.has(type)) {
+                        const brightness = lightLevel / MAX_LIGHT_LEVEL;
+                        r *= brightness;
+                        g *= brightness;
+                        b *= brightness;
                     }
 
                     setPixel(screenX, screenY, r, g, b);
@@ -2647,7 +2797,7 @@
         function generateCavesWithPerlinNoise(width, height, grid) {
             // --- Configuration ---
             const scale = 150;
-            const depthBiasStrength = 0.2;
+            const depthBiasStrength = 0.3;
 
             // --- Tiers for Additive Generation ---
             // This array is ordered from MOST common to RAREST.
@@ -2744,6 +2894,7 @@
             }
 
             initializeChunks();
+            updateLighting();
         }
 
         // --- GAME LOOP ---
@@ -2766,6 +2917,28 @@
             updateMagicParticles();
             updateMagicEmitters(); 
             updateTriggers();
+
+            // --- NEW PROPAGATING LOCAL LIGHTING ---
+            // This BFS will process the initial active chunks and any others connected by visible materials.
+            const lightingQueue = [...activeChunks];     // Seed the queue with physics-active chunks
+            const processedChunks = new Set(activeChunks); // Keep track of what's been processed this frame
+
+            let head = 0;
+            while (head < lightingQueue.length) {
+                const chunkToUpdate = lightingQueue[head++];
+                const newlyActivatedNeighbors = updateLocalLightingAndFindNeighbors(chunkToUpdate);
+
+                for (const neighbor of newlyActivatedNeighbors) {
+                    if (!processedChunks.has(neighbor)) {
+                        processedChunks.add(neighbor);
+                        lightingQueue.push(neighbor);
+                    }
+                }
+            }
+
+            // if (frameCount % LIGHTING_UPDATE_INTERVAL === 0) {
+            //     updateLighting();
+            // }
 
             if (isPouring) {
                 pourFromContainer();
