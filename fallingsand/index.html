@@ -178,16 +178,17 @@
 
         // --- MATERIAL DEFINITIONS ---
         const MAT = {
-            EMPTY: 0, WALL: 1, SAND: 2, WATER: 3, SOIL: 4, GAS: 5, 
+            EMPTY: 0, ROCK_WALL: 1, SAND: 2, WATER: 3, SOIL: 4, GAS: 5, 
             WOOD: 10, FIRE: 11, GUNPOWDER: 12, GUNPOWDER_IGNITED: 13,
             OIL: 14, OIL_BURNING: 15,
             COAL:16, COAL_BURNING:17,
             ACID:18, GLASS:19, GLASS_WALL: 20,
-            ADAMANTIUM: 21, COPPER: 22, SILVER: 23, GOLD: 24, PLATINUM: 25, RUNE_WALL: 26
+            ADAMANTIUM: 21, COPPER: 22, SILVER: 23, GOLD: 24, PLATINUM: 25, RUNE_WALL: 26,
+            SANDSTONE_WALL: 27, VOLCANIC_WALL: 28, LABYRINTH_WALL: 29, MAGIC_WALL: 30
         };
 
         const COLORS = {
-            [MAT.WALL]: [100, 100, 100], [MAT.SAND]: [246, 215, 176],
+            [MAT.ROCK_WALL]: [100, 100, 100], [MAT.SAND]: [246, 215, 176],
             [MAT.WATER]: [79, 164, 244], [MAT.SOIL]: [93, 64, 55],
             [MAT.GAS]: [200, 200, 200], [MAT.WOOD]: [139, 69, 19],
             [MAT.FIRE]: [255, 69, 0], [MAT.GUNPOWDER]: [60, 60, 60],
@@ -196,12 +197,16 @@
             [MAT.ACID]: [0, 255, 0], [MAT.GLASS]: [200, 200, 255], [MAT.GLASS_WALL]: [180, 180, 235],
             [MAT.ADAMANTIUM]: [77, 82, 87], [MAT.COPPER]: [184, 115, 51],
             [MAT.SILVER]: [192, 192, 192], [MAT.GOLD]: [255, 215, 0],
-            [MAT.PLATINUM]: [229, 228, 226], [MAT.RUNE_WALL]: [200, 200, 100]
+            [MAT.PLATINUM]: [229, 228, 226], [MAT.RUNE_WALL]: [200, 200, 100],
+            [MAT.SANDSTONE_WALL]: [130, 100, 70],
+            [MAT.VOLCANIC_WALL]: [45, 20, 20],
+            [MAT.LABYRINTH_WALL]: [70, 75, 80],
+            [MAT.MAGIC_WALL]: [40, 25, 60]
         };
 
         const MATERIAL_NAME = {
             [MAT.EMPTY]: 'Empty',
-            [MAT.WALL]: 'Wall',
+            [MAT.ROCK_WALL]: 'Wall',
             [MAT.SAND]: 'Sand',
             [MAT.WATER]: 'Water',
             [MAT.SOIL]: 'Soil',
@@ -222,8 +227,17 @@
             [MAT.SILVER]: 'Silver', 
             [MAT.GOLD]: 'Gold', 
             [MAT.PLATINUM]: 'Platinum',
-            [MAT.RUNE_WALL]: 'Rune Wall'
+            [MAT.RUNE_WALL]: 'Rune Wall',
+            [MAT.SANDSTONE_WALL]: 'Sandstone Wall', 
+            [MAT.VOLCANIC_WALL]: 'Volcanic Wall',
+            [MAT.LABYRINTH_WALL]: 'Labyrinth Wall', 
+            [MAT.MAGIC_WALL]: 'Magic Wall'
         };
+
+        const WALL_TYPES = new Set([
+            MAT.ROCK_WALL, MAT.SANDSTONE_WALL, MAT.VOLCANIC_WALL, 
+            MAT.LABYRINTH_WALL, MAT.MAGIC_WALL
+        ]);
 
         // --- RUNE DEFINITIONS ---
         // A library of rune patterns. 1 represents the rune material, 0 is empty.
@@ -317,9 +331,8 @@
             MAT.RUNE_WALL
         ]);
 
-        // NEW: Materials that don't need to be simulated at the start of the game.
         const STATIC_MATERIALS = new Set([
-            MAT.WALL,
+            MAT.ROCK_WALL, MAT.SANDSTONE_WALL, MAT.VOLCANIC_WALL, MAT.LABYRINTH_WALL, MAT.MAGIC_WALL, // All walls added
             MAT.WOOD,
             MAT.GLASS_WALL,
             MAT.ADAMANTIUM,
@@ -346,7 +359,7 @@
         let alchemyJobs = [];
 
         let lightGrid = new Uint8Array(worldWidth * worldHeight).fill(0); // 0 = black, 15 = brightest
-        const MAX_LIGHT_LEVEL = 15;
+        const MAX_LIGHT_LEVEL = 30;
         const LIGHTING_UPDATE_INTERVAL = 30; // Update lighting every 30 frames
 
         const MAX_VISIBLE_DISTANCE = 8;
@@ -512,8 +525,8 @@
         };
 
         /**
-         * Generates a high-quality, themed, multi-layered cave interior background.
-         * This version is correctly tuned to generate patterns across the full worldWidth.
+         * Generates a high-quality, themed, and pixelated multi-layered cave background.
+         * This version uses smaller (mostly 2x2) pixel blocks for a finer, more detailed aesthetic.
          */
         function generateCaveBackground(width, height) {
             const img = ctx.createImageData(width, height);
@@ -523,56 +536,74 @@
 
             PerlinNoise.seed(1337);
 
-            const hash = (x, y, s = 0) => { /* ... */ };
+            const hash = (x, y, s = 0) => {
+                let h = x * 374761393 + y * 668265263 + s * 1442695041;
+                h = (h ^ (h >> 13)) * 1274126177;
+                return (h ^ (h >> 16)) & 255;
+            };
             const lerp = (a, b, t) => a + (b - a) * t;
-            const lerpColor = (c1, c2, t) => [lerp(c1[0],c2[0],t), lerp(c1[1],c2[1],t), lerp(c1[2],c2[2],t)];
+            const lerpColor = (c1, c2, t) => [lerp(c1[0], c2[0], t), lerp(c1[1], c2[1], t), lerp(c1[2], c2[2], t)];
 
-            // --- RE-TUNED Layer Generators ---
+            // --- RE-TUNED: Finer Pixel-Art Layer Generators ---
+
             const getSandCaveColor = (x, y) => {
-                const n1 = PerlinNoise.noise(x * 0.004, y * 0.02); // x freq adjusted
-                const n2 = PerlinNoise.noise(x * 0.016, y * 0.08); // x freq adjusted
-                const baseNoise = (n1 + n2 * 0.25) / 1.25;
-                let c = lerpColor([80, 60, 40], [60, 45, 30], (baseNoise + 1) / 2);
-                const ripple = Math.sin(y * 0.1 + PerlinNoise.noise(x * 0.002, y * 0.05) * 5); // x freq adjusted
-                c = lerpColor(c, [90, 70, 50], (ripple + 1) / 2 * 0.1);
-                return c;
+                const px = x >> 1; const py = y >> 1; // Use 2x2 pixel blocks
+                const n = (PerlinNoise.noise(px * 0.04, py * 0.1) + 1) / 2;
+                
+                if (n > 0.6) return [60, 45, 30];
+                if (n > 0.4) return [50, 38, 25];
+                return [40, 30, 20];
             };
+
             const getCoalMineColor = (x, y) => {
-                const n1 = PerlinNoise.noise(x * 0.01, y * 0.05); // x freq adjusted
-                const n2 = PerlinNoise.noise(x * 0.04, y * 0.2); // x freq adjusted
-                let c = lerpColor([28, 25, 25], [12, 10, 10], (n1 + n2 * 0.3) / 1.3);
-                const seamNoise = PerlinNoise.noise(x * 0.001, y * 0.15); // x freq adjusted
-                const seamFactor = Math.pow(Math.abs(seamNoise), 3) * 2;
-                if (seamFactor > 0.4) { c = lerpColor(c, [0, 0, 0], Math.min(1, (seamFactor - 0.4) * 2)); }
-                return c;
+                const px = x >> 1; const py = y >> 1; // Use 2x2 pixel blocks
+                const rockNoise = (PerlinNoise.noise(px * 0.1, py * 0.1) + 1) / 2;
+                const seamNoise = PerlinNoise.noise(px * 0.01, py * 0.4);
+                
+                if (Math.pow(seamNoise, 2) > 0.3) return [5, 3, 3];
+                
+                if (rockNoise > 0.6) return [28, 25, 25];
+                if (rockNoise > 0.45) return [20, 18, 18];
+                return [12, 10, 10];
             };
+
             const getVolcanicColor = (x, y) => {
-                let c = lerpColor([30, 10, 5], [10, 5, 2], PerlinNoise.noise(x * 0.02, y * 0.1)); // x freq adjusted
-                const crackle = Math.abs(PerlinNoise.noise(x * 0.006, y * 0.03) * 2); // x freq adjusted
-                if (crackle > 0.9) { const glow = (crackle - 0.9) * 10; const glowColor = lerpColor([255, 180, 0], [255, 60, 0], crackle); c = lerpColor(c, glowColor, glow); }
-                return c;
+                const px = x >> 1; const py = y >> 1; // Keep 2x2 blocks
+                const crackle = Math.abs(PerlinNoise.noise(px * 0.06, py * 0.06) * 2.5);
+
+                if (crackle > 0.98) return [255, 170, 0];
+                if (crackle > 0.95) return [255, 90, 0];
+                
+                const rockNoise = hash(px >> 1, py >> 1) / 255;
+                if (rockNoise > 0.5) return [25, 10, 10];
+                return [15, 5, 5];
             };
+
             const getLabyrinthColor = (x, y) => {
-                const gx = Math.floor(x / 24); const gy = Math.floor(y / 24);
-                let c = hash(gx, gy) > 128 ? [50, 55, 60] : [40, 45, 50];
-                const grain = PerlinNoise.noise(x * 0.06, y * 0.3) * 10; // x freq adjusted
-                c = [c[0] + grain, c[1] + grain, c[2] + grain];
-                const isEdgeX = x % 24 < 1 || x % 24 > 22; const isEdgeY = y % 24 < 1 || y % 24 > 22;
-                if (isEdgeX || isEdgeY) { c = [c[0] * 0.7, c[1] * 0.7, c[2] * 0.7]; }
-                return c;
+                const px = x >> 2; const py = y >> 2; // Use smaller 4x4 pixel bricks
+                const isMortarX = x % 4 < 1;
+                const isMortarY = y % 4 < 1;
+                if(isMortarX || isMortarY) return [20, 22, 25];
+                
+                return hash(px, py) > 128 ? [55, 60, 65] : [45, 50, 55];
             };
+
             const getMagicDungeonColor = (x, y) => {
-                const n1 = PerlinNoise.noise(x * 0.0016, y * 0.008); // x freq adjusted
-                const n2 = PerlinNoise.noise(x * 0.006, y * 0.03); // x freq adjusted
-                let c = lerpColor([20, 5, 40], [40, 15, 60], (n1 + n2 * 0.3) / 1.3);
-                const crystalNoise = Math.abs(PerlinNoise.noise(x * 0.01, y * 0.05) * 1.5); // x freq adjusted
-                if (crystalNoise > 0.95) { const glow = (crystalNoise - 0.95) * 20; c = lerpColor(c, [180, 150, 255], glow); }
-                if (hash(x, y, 1) > 254) c = [220, 220, 255];
-                return c;
+                const px = x >> 1; const py = y >> 1; // Use 2x2 pixel blocks
+                const energy = (PerlinNoise.noise(px * 0.03, py * 0.03) + 1) / 2;
+                
+                const crystal = Math.abs(PerlinNoise.noise(px * 0.16, py * 0.16));
+                if (Math.pow(crystal, 3) > 0.2) return [180, 150, 255];
+                if (Math.pow(crystal, 2) > 0.25) return [100, 80, 140];
+                
+                if(hash(x,y) > 254) return [200, 200, 255];
+                if(energy > 0.55) return [40, 15, 60];
+                return [20, 5, 40];
             };
+            
             const layerFunctions = [getSandCaveColor, getCoalMineColor, getVolcanicColor, getLabyrinthColor, getMagicDungeonColor];
 
-            // Main Pixel Loop
+            // Main Pixel Loop (This part remains the same)
             for (let y = 0; y < height; y++) {
                 for (let x = 0; x < width; x++) {
                     const layerIndex = Math.min(layerFunctions.length - 1, Math.floor(y / layerHeight));
@@ -580,12 +611,14 @@
                     let color;
                     if (layerIndex > 0 && yInLayer < transitionSize) {
                         const t = yInLayer / transitionSize;
-                        color = lerpColor(layerFunctions[layerIndex-1](x,y), layerFunctions[layerIndex](x,y), t);
+                        const color1 = layerFunctions[layerIndex - 1](x, y);
+                        const color2 = layerFunctions[layerIndex](x, y);
+                        color = lerpColor(color1, color2, t * t);
                     } else {
                         color = layerFunctions[layerIndex](x, y);
                     }
                     const i = (y * width + x) * 4;
-                    d[i]=color[0]; d[i+1]=color[1]; d[i+2]=color[2]; d[i+3]=255;
+                    d[i] = color[0]; d[i + 1] = color[1]; d[i + 2] = color[2]; d[i + 3] = 255;
                 }
             }
             return img;
@@ -649,7 +682,7 @@
         function setMaterial(name) {
             const map = {
                 sand: MAT.SAND, water: MAT.WATER, oil: MAT.OIL, coal: MAT.COAL,
-                soil: MAT.SOIL, wall: MAT.WALL, gas: MAT.GAS, wood: MAT.WOOD,
+                soil: MAT.SOIL, wall: MAT.ROCK_WALL, gas: MAT.GAS, wood: MAT.WOOD,
                 fire: MAT.FIRE, gunpowder: MAT.GUNPOWDER, acid: MAT.ACID,
                 glass: MAT.GLASS, 'glass-wall': MAT.GLASS_WALL, empty: MAT.EMPTY,
                 adamantium: MAT.ADAMANTIUM, copper: MAT.COPPER, silver: MAT.SILVER,
@@ -731,7 +764,7 @@
                     if (dx*dx + dy*dy <= r*r) {
                         const px = x + dx; const py = y + dy;
                         const idx = getIdx(px, py);
-                        if (idx !== -1 && grid[idx] !== MAT.WALL) {
+                        if (idx !== -1) {
                             setGrid(idx, currentMaterial);
                             activateChunkAt(px, py);
                         }
@@ -770,7 +803,8 @@
         };
 
         const isSolidForPlayer = (type) => [
-            MAT.WALL, MAT.SOIL, MAT.WOOD, MAT.SAND, 
+            MAT.ROCK_WALL, MAT.SANDSTONE_WALL, MAT.VOLCANIC_WALL, MAT.LABYRINTH_WALL, MAT.MAGIC_WALL, // All walls added
+            MAT.SOIL, MAT.WOOD, MAT.SAND, 
             MAT.GUNPOWDER, MAT.COAL, MAT.COAL_BURNING, MAT.GLASS, 
             MAT.GLASS_WALL, MAT.ADAMANTIUM, MAT.COPPER, MAT.SILVER, 
             MAT.GOLD, MAT.PLATINUM, MAT.RUNE_WALL
@@ -1160,7 +1194,7 @@
             if (idx === -1 || moved[idx]) return;
 
             const type = grid[idx];
-            if ([MAT.EMPTY, MAT.WALL, MAT.WOOD].includes(type)) return;
+            if ([MAT.EMPTY, MAT.ROCK_WALL, MAT.WOOD].includes(type)) return;
             if (type === MAT.WATER) updateLiquid(x, y, idx, moved);
             if (type === MAT.FIRE) updateFire(x, y, idx, moved);
             else if ([MAT.SAND, MAT.SOIL, MAT.GUNPOWDER].includes(type))
@@ -1173,7 +1207,7 @@
             const idx = getIdx(x, y); 
             if (idx === -1 || moved[idx]) return;
             const type = grid[idx];
-            if ([MAT.EMPTY, MAT.WALL, MAT.WOOD, MAT.GLASS_WALL, MAT.ADAMANTIUM, MAT.RUNE_WALL].includes(type) || LIQUIDS.has(type)) return;
+            if (WALL_TYPES.has(type) || [MAT.EMPTY, MAT.WOOD, MAT.GLASS_WALL, MAT.ADAMANTIUM, MAT.RUNE_WALL].includes(type) || LIQUIDS.has(type)) return;
 
             if (type === MAT.FIRE) updateFire(x, y, idx, moved, grid, w, h, getIdx, setter);
             else if ([MAT.SAND, MAT.SOIL, MAT.GUNPOWDER, MAT.COAL, MAT.COAL_BURNING, MAT.GLASS, MAT.COPPER, MAT.SILVER, MAT.GOLD, MAT.PLATINUM].includes(type)) updateSolid(x, y, idx, type, moved, grid, w, h, getIdx, setter);
@@ -1239,7 +1273,7 @@
                     const idx = getIdx(ex, ey);
                     if (idx === -1 || ex === 0 || ex === worldWidth - 1 || ey === 0 || ey === worldHeight - 1) continue;
                     
-                    if (grid[idx] !== MAT.WALL && grid[idx] !== MAT.ADAMANTIUM) {
+                    if (!WALL_TYPES.has(grid[idx]) && grid[idx] !== MAT.ADAMANTIUM) {
                         const rand = Math.random();
                         if (rand < 0.3) setGrid(idx, MAT.FIRE);
                         else if (rand < 0.7) setGrid(idx, MAT.GAS); 
@@ -1575,7 +1609,7 @@
                     if (y > 0) maxNeighborLight = Math.max(maxNeighborLight, lightGrid[idx - worldWidth]);
                     if (y < worldHeight - 1) maxNeighborLight = Math.max(maxNeighborLight, lightGrid[idx + worldWidth]);
 
-                    const isWall = grid[idx] === MAT.WALL;
+                    const isWall = WALL_TYPES.has(grid[idx]);
                     const lightLoss = isWall ? 3 : 0;
                     const potentialLight = maxNeighborLight - lightLoss;
                     
@@ -1601,7 +1635,7 @@
                             if (Math.floor(nx / CHUNK_SIZE) !== chunkX_base || Math.floor(ny / CHUNK_SIZE) !== chunkY_base) {
                                 const nIdx = getIdx(nx, ny);
                                 // If the neighbor exists and isn't a wall, it can receive light.
-                                if (nIdx !== -1 && grid[nIdx] !== MAT.WALL) {
+                                if (nIdx !== -1 && !WALL_TYPES.has(grid[nIdx])) {
                                     const nChunkX = Math.floor(nx / CHUNK_SIZE);
                                     const nChunkY = Math.floor(ny / CHUNK_SIZE);
                                     if (nChunkX >= 0 && nChunkX < chunkWidth && nChunkY >= 0 && nChunkY < chunkHeight) {
@@ -1618,7 +1652,7 @@
 
         /**
          * Calculates light levels using a Breadth-First Search with material-dependent dampening.
-         * Light originates from EMPTY cells, travels freely through non-WALL materials,
+         * Light originates from EMPTY cells, travels freely through non-ROCK_WALL materials,
          * and loses strength when penetrating WALLs.
          */
         function updateLighting() {
@@ -1666,7 +1700,7 @@
                     
                     // --- NEW LIGHTING LOGIC ---
                     // Determine the light loss based on the material we are *entering*.
-                    const isNextMaterialWall = grid[nextIdx] === MAT.WALL;
+                    const isNextMaterialWall = WALL_TYPES.has(grid[nextIdx]);
                     
                     // Light passing into a WALL is heavily dampened.
                     // Light passing into ANY OTHER material is not dampened at all.
@@ -2710,38 +2744,41 @@
             }
         }
 
-        /**
-         * Generates terrain and ore veins using an additive Perlin noise process.
-         * @param {number} width - The width of the world.
-         * @param {number} height - The height of the world.
-         * @param {Uint8Array} grid - The world grid to fill.
-         */
         function generateCavesWithPerlinNoise(width, height, grid) {
-            // --- Configuration ---
             const scale = 150;
-            const depthBiasStrength = 0.3;
+            const depthBiasStrength = 0.2;
+            const layerHeight = height / 5;
 
-            // --- Tiers for Additive Generation ---
-            // This array is ordered from MOST common to RAREST.
-            // Each tier overwrites the one before it if the threshold is met.
+            // This array maps each of the 5 layers to a specific wall material.
+            const layerWallMaterials = [
+                MAT.SANDSTONE_WALL, // Layer 1: Sand Cave
+                MAT.ROCK_WALL,      // Layer 2: Coal Mine (uses original Rock Wall)
+                MAT.VOLCANIC_WALL,  // Layer 3: Volcanic
+                MAT.LABYRINTH_WALL, // Layer 4: Labyrinth
+                MAT.MAGIC_WALL      // Layer 5: Magic Dungeon
+            ];
+
             const GENERATION_TIERS = [
-                { material: MAT.WALL,     threshold: 0.52 }, // Base rock
                 { material: MAT.COPPER,   threshold: 0.70 },
                 { material: MAT.SILVER,   threshold: 0.75 },
                 { material: MAT.GOLD,     threshold: 0.85 },
                 { material: MAT.PLATINUM, threshold: 0.99 }
             ];
-
-            // --- Octave Configuration ---
+            
+            // --- MISSING LINES ADDED BACK HERE ---
             const octaves = 4;
             const persistence = 0.5;
             const lacunarity = 2;
-            
+            // ------------------------------------
+
             PerlinNoise.seed(12345 * Math.random() + 10000);
 
             for (let y = 0; y < height; y++) {
                 const depthFactor = y / height;
                 const currentDepthBias = depthFactor * depthBiasStrength;
+                
+                const layerIndex = Math.min(layerWallMaterials.length - 1, Math.floor(y / layerHeight));
+                const baseWallType = layerWallMaterials[layerIndex];
 
                 for (let x = 0; x < width; x++) {
                     let totalNoise = 0;
@@ -2759,25 +2796,20 @@
                     
                     const finalNoise = totalNoise / maxAmplitude;
 
-                    // --- Additive Generation Logic ---
                     let materialToPlace = MAT.EMPTY;
 
-                    // Loop through the tiers from rock up to platinum
+                    if (finalNoise >= 0.52 - currentDepthBias) {
+                        materialToPlace = baseWallType;
+                    }
+
                     for (const tier of GENERATION_TIERS) {
-                        // Check if the noise is high enough for this tier
                         if (finalNoise >= tier.threshold - currentDepthBias) {
-                            // If it is, this becomes the new candidate material.
-                            // This will naturally overwrite less rare materials.
                             materialToPlace = tier.material;
                         }
                     }
-
-                    // After checking all tiers, if a material was chosen, place it.
+                    
                     if (materialToPlace !== MAT.EMPTY) {
-                        const idx = getIdx(x, y);
-                        if (idx !== -1) {
-                            setGrid(idx, materialToPlace);
-                        }
+                        setGrid(getIdx(x, y), materialToPlace);
                     }
                 }
             }
