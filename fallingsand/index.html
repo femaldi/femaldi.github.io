@@ -1019,29 +1019,29 @@
             moved.fill(0);
             const localGetIdx = (x, y) => getIdx(x, y, worldWidth, worldHeight);
             const scanDir = (frameCount % 2 === 0);
+            
+            // For the main world, the "setter" is the original setGrid function.
+            const setter = setGrid; 
 
-            // The core optimization: Loop through ACTIVE chunks only
             for (const chunk of activeChunks) {
                 const chunkX = chunk.index % chunkWidth;
                 const chunkY = Math.floor(chunk.index / chunkWidth);
-
                 const startX = chunkX * CHUNK_SIZE;
                 const startY = chunkY * CHUNK_SIZE;
                 const endX = startX + CHUNK_SIZE;
                 const endY = startY + CHUNK_SIZE;
 
-                // PASS 1: solids, gas, fire (within the chunk's bounds)
+                // PASS 1: solids, gas, fire
                 for (let y = endY - 1; y >= startY; y--) {
                     for (let x = (scanDir ? startX : endX - 1); (scanDir ? x < endX : x >= startX); x += (scanDir ? 1 : -1)) {
-                        // We pass the main `grid` to the step functions here
-                        stepNonLiquid(x, y, moved, grid, worldWidth, worldHeight, localGetIdx);
+                        stepNonLiquid(x, y, moved, grid, worldWidth, worldHeight, localGetIdx, setter);
                     }
                 }
 
-                // PASS 2: liquids (within the chunk's bounds)
+                // PASS 2: liquids
                 for (let y = endY - 1; y >= startY; y--) {
                     for (let x = (scanDir ? startX : endX - 1); (scanDir ? x < endX : x >= startX); x += (scanDir ? 1 : -1)) {
-                        stepLiquid(x, y, moved, grid, worldWidth, worldHeight, localGetIdx);
+                        stepLiquid(x, y, moved, grid, worldWidth, worldHeight, localGetIdx, setter);
                     }
                 }
             }
@@ -1049,24 +1049,28 @@
 
         /**
          * Runs the simulation on a small, self-contained grid like the pouch or flask.
-         * This function does NOT use the chunk system.
          */
         function runSimulationOnSmallGrid(moved, currentGrid, gridWidth, gridHeight) {
              moved.fill(0);
              const localGetIdx = (x, y) => getIdx(x, y, gridWidth, gridHeight);
              const scanDir = (frameCount % 2 === 0);
 
+             // For sub-grids, the "setter" is a simple function that modifies the provided grid directly.
+             const setter = (idx, type) => {
+                if (idx !== -1) currentGrid[idx] = type;
+             };
+
             // PASS 1: solids, gas, fire
             for (let y = gridHeight - 1; y >= 0; y--) {
                  for (let x = (scanDir ? 0 : gridWidth - 1); (scanDir ? x < gridWidth : x >= 0); x += (scanDir ? 1 : -1)) {
-                    stepNonLiquid(x, y, moved, currentGrid, gridWidth, gridHeight, localGetIdx);
+                    stepNonLiquid(x, y, moved, currentGrid, gridWidth, gridHeight, localGetIdx, setter);
                 }
             }
 
             // PASS 2: liquids
             for (let y = gridHeight - 1; y >= 0; y--) {
                  for (let x = (scanDir ? 0 : gridWidth - 1); (scanDir ? x < gridWidth : x >= 0); x += (scanDir ? 1 : -1)) {
-                    stepLiquid(x, y, moved, currentGrid, gridWidth, gridHeight, localGetIdx);
+                    stepLiquid(x, y, moved, currentGrid, gridWidth, gridHeight, localGetIdx, setter);
                 }
             }
         }
@@ -1085,25 +1089,25 @@
             else if (type >= 20) updateSource(x, y, idx, type);
         }
 
-        function stepNonLiquid(x, y, moved, grid, w, h, getIdx) {
+        function stepNonLiquid(x, y, moved, grid, w, h, getIdx, setter) {
             const idx = getIdx(x, y); 
             if (idx === -1 || moved[idx]) return;
             const type = grid[idx];
             if ([MAT.EMPTY, MAT.WALL, MAT.WOOD, MAT.GLASS_WALL, MAT.ADAMANTIUM, MAT.RUNE_WALL].includes(type) || LIQUIDS.has(type)) return;
 
-            if (type === MAT.FIRE) updateFire(x, y, idx, moved, grid, w, h, getIdx);
-            else if ([MAT.SAND, MAT.SOIL, MAT.GUNPOWDER, MAT.COAL, MAT.COAL_BURNING, MAT.GLASS, MAT.COPPER, MAT.SILVER, MAT.GOLD, MAT.PLATINUM].includes(type)) updateSolid(x, y, idx, type, moved, grid, w, h, getIdx);
-            else if (type === MAT.COAL_BURNING) updateBurningCoal(x, y, idx, moved, grid, w, h, getIdx);
-            else if (type === MAT.GAS) updateGas(x, y, idx, moved, grid, w, h, getIdx);
-            else if (type === MAT.GUNPOWDER_IGNITED) updateIgnitedGunpowder(x, y, idx, moved, grid, w, h, getIdx);
+            if (type === MAT.FIRE) updateFire(x, y, idx, moved, grid, w, h, getIdx, setter);
+            else if ([MAT.SAND, MAT.SOIL, MAT.GUNPOWDER, MAT.COAL, MAT.COAL_BURNING, MAT.GLASS, MAT.COPPER, MAT.SILVER, MAT.GOLD, MAT.PLATINUM].includes(type)) updateSolid(x, y, idx, type, moved, grid, w, h, getIdx, setter);
+            else if (type === MAT.COAL_BURNING) updateBurningCoal(x, y, idx, moved, grid, w, h, getIdx, setter);
+            else if (type === MAT.GAS) updateGas(x, y, idx, moved, grid, w, h, getIdx, setter);
+            else if (type === MAT.GUNPOWDER_IGNITED) updateIgnitedGunpowder(x, y, idx, moved, grid, w, h, getIdx, setter);
         }
 
-        function stepLiquid(x, y, moved, grid, w, h, getIdx) {
+        function stepLiquid(x, y, moved, grid, w, h, getIdx, setter) {
             const idx = getIdx(x, y, w, h);
             if (idx === -1 || moved[idx]) return;
             if (![MAT.WATER, MAT.OIL, MAT.OIL_BURNING, MAT.ACID].includes(grid[idx])) return;
 
-            updateLiquid(x, y, idx, moved, grid, w, h, getIdx);
+            updateLiquid(x, y, idx, moved, grid, w, h, getIdx, setter);
         }
 
 
@@ -1123,30 +1127,25 @@
             if (camera.y > worldHeight - viewHeight) camera.y = worldHeight - viewHeight;
         }
 
-        function updateIgnitedGunpowder(x, y, idx, moved, grid, w, h, getIdx) {
+        function updateIgnitedGunpowder(x, y, idx, moved, grid, w, h, getIdx, setter) {
             ignitionTimer[idx]--;
 
-            // spread ignition BEFORE exploding
-            for (let n of [
-                {x:0,y:1},{x:0,y:-1},{x:1,y:0},{x:-1,y:0}
-            ]) {
+            for (let n of [{x:0,y:1},{x:0,y:-1},{x:1,y:0},{x:-1,y:0}]) {
                 const nIdx = getIdx(x + n.x, y + n.y);
-                if (Math.random() < 0.35) { // 35% chance per frame to spread
-                const nIdx = getIdx(x + n.x, y + n.y);
-                if (nIdx !== -1 && grid[nIdx] === MAT.GUNPOWDER) {
-                    setGrid(nIdx, MAT.GUNPOWDER_IGNITED);
-                    // Increased fuse time for a slower burn
-                    ignitionTimer[nIdx] = 8 + Math.floor(Math.random() * 6);
+                if (Math.random() < 0.35) {
+                    if (nIdx !== -1 && grid[nIdx] === MAT.GUNPOWDER) {
+                        setter(nIdx, MAT.GUNPOWDER_IGNITED);
+                        ignitionTimer[nIdx] = 8 + Math.floor(Math.random() * 6);
+                    }
                 }
-            }
             }
 
             if (ignitionTimer[idx] <= 0) {
-                setGrid(idx, MAT.EMPTY);
-                triggerExplosion(x, y, 6);
+                setter(idx, MAT.EMPTY);
+                // Explosions only happen in the main world, so we can still call setGrid here.
+                if (setter === setGrid) triggerExplosion(x, y, 6);
             }
         }
-
 
         function triggerExplosion(centerX, centerY, radius) {
             const maxRadius = 100; // Scaled max radius
@@ -1195,42 +1194,27 @@
             triggerExplosion(sumX / cluster.length, sumY / cluster.length, 5 + Math.sqrt(cluster.length));
         }
 
-        function updateFire(x, y, idx, moved, grid, w, h, getIdx) {
+        function updateFire(x, y, idx, moved, grid, w, h, getIdx, setter) {
             let nearbyFuel = false;
-            for (let n of [{x:0,y:-1},{x:0,y:1},{x:-1,y:0},{x:1,y:0},{x:-1,y:-1},{x:1,y:-1},{x:-1,y:1},{x:1,y:1}]) {
+            for (let n of [{x:0,y:1},{x:0,y:1},{x:-1,y:0},{x:1,y:0},{x:-1,y:-1},{x:1,y:-1},{x:-1,y:1},{x:1,y:1}]) {
                 const nx = x + n.x, ny = y + n.y;
                 const nIdx = getIdx(nx, ny);
                 if (nIdx === -1) continue;
                 const nType = grid[nIdx];
 
-                // NEW: Check for sand to turn into glass
-                if (nType === MAT.SAND && Math.random() < 0.05) { // 5% chance
-                    setGrid(nIdx, MAT.GLASS);
-                }
-
-                if (nType === MAT.GUNPOWDER) {
-                    if (Math.random() < 0.5) { // 50% chance to be ignited by fire
-                        setGrid(nIdx, MAT.GUNPOWDER_IGNITED);
-                        ignitionTimer[nIdx] = 8 + Math.floor(Math.random() * 6); // Use same slower fuse
-                        return;
-                    }
-                }
-
-                if (nType === MAT.OIL) {
-                    setGrid(nIdx, MAT.OIL_BURNING);
+                if (nType === MAT.SAND && Math.random() < 0.05) setter(nIdx, MAT.GLASS);
+                if (nType === MAT.GUNPOWDER && Math.random() < 0.5) {
+                    setter(nIdx, MAT.GUNPOWDER_IGNITED);
+                    ignitionTimer[nIdx] = 8 + Math.floor(Math.random() * 6);
                     return;
                 }
-
-                if (nType === MAT.COAL) {
-                    setGrid(nIdx, MAT.COAL_BURNING);
-                    return;
-                }
-
+                if (nType === MAT.OIL) { setter(nIdx, MAT.OIL_BURNING); return; }
+                if (nType === MAT.COAL) { setter(nIdx, MAT.COAL_BURNING); return; }
                 if (nType === MAT.WOOD) {
                     nearbyFuel = true;
-                    if (Math.random() < 0.01) { setGrid(nIdx, MAT.FIRE); moved[nIdx] = 1; }
+                    if (Math.random() < 0.01) { setter(nIdx, MAT.FIRE); moved[nIdx] = 1; }
                 }
-                if (nType === MAT.WATER) { setGrid(nIdx, MAT.GAS); setGrid(idx, MAT.GAS); return; }
+                if (nType === MAT.WATER) { setter(nIdx, MAT.GAS); setter(idx, MAT.GAS); return; }
             }
             let targetIdx = idx;
             if (!nearbyFuel && y > 0) {
@@ -1238,120 +1222,66 @@
                 if (Math.random() < 0.5) nextX += Math.random() < 0.5 ? -1 : 1;
                 const nextIdx = getIdx(nextX, nextY);
                 if (nextIdx !== -1 && (grid[nextIdx] === MAT.EMPTY || grid[nextIdx] === MAT.GAS)) {
-                    setGrid(idx, grid[nextIdx]); setGrid(nextIdx, MAT.FIRE);
+                    setter(idx, grid[nextIdx]); setter(nextIdx, MAT.FIRE);
                     moved[nextIdx] = 1; targetIdx = nextIdx;
                 }
             }
-            if (Math.random() < (nearbyFuel ? 0.0 : 0.15)) setGrid(targetIdx, MAT.GAS);
+            if (Math.random() < (nearbyFuel ? 0.0 : 0.15)) setter(targetIdx, MAT.GAS);
         }
 
-        function updateBurningCoal(x, y, idx, moved, grid, w, h, getIdx) {
-            // --- DIRECT CONTACT IGNITION & HEATING (cardinal only) ---
-            for (const n of [
-                {x:0,y:1},{x:0,y:-1},{x:1,y:0},{x:-1,y:0}
-            ]) {
-                const nx = x + n.x;
-                const ny = y + n.y;
+        function updateBurningCoal(x, y, idx, moved, grid, w, h, getIdx, setter) {
+            for (const n of [{x:0,y:1},{x:0,y:-1},{x:1,y:0},{x:-1,y:0}]) {
+                const nx = x + n.x, ny = y + n.y;
                 const nIdx = getIdx(nx, ny);
                 if (nIdx === -1) continue;
-
-                // NEW: Turn sand into glass
-                if (grid[nIdx] === MAT.SAND && Math.random() < 0.08) { // 8% chance
-                    setGrid(nIdx, MAT.GLASS);
-                }
-
-                tryIgniteAt(nx, ny, 0.02);
+                if (grid[nIdx] === MAT.SAND && Math.random() < 0.08) setter(nIdx, MAT.GLASS);
+                // tryIgniteAt is world-only, so we check the setter
+                if (setter === setGrid) tryIgniteAt(nx, ny, 0.02);
             }
-
-            // --- Weak fire emission (secondary effect) ---
             if (Math.random() < 0.02) {
                 const aboveIdx = getIdx(x, y - 1);
-                if (aboveIdx !== -1 && grid[aboveIdx] === MAT.EMPTY) {
-                    setGrid(aboveIdx, MAT.FIRE);
-                }
+                if (aboveIdx !== -1 && grid[aboveIdx] === MAT.EMPTY) setter(aboveIdx, MAT.FIRE);
             }
-
-            // --- Burn out slowly ---
-            if (Math.random() < 0.003) {
-                setGrid(idx, MAT.GAS);
-            }
-
-            if (grid[idx] === MAT.COAL_BURNING) {
-                activateChunkAt(x, y);
-            }
+            if (Math.random() < 0.003) setter(idx, MAT.GAS);
+            if (grid[idx] === MAT.COAL_BURNING && setter === setGrid) activateChunkAt(x, y);
         }
-
-        function updateBurningOil(x, y, idx, moved, grid, w, h, getIdx) {
-            // --- DIRECT CONTACT IGNITION & HEATING (all neighbors) ---
-            for (const n of [
-                {x:0,y:1},{x:0,y:-1},{x:1,y:0},{x:-1,y:0},
-                {x:1,y:1},{x:-1,y:1},{x:1,y:-1},{x:-1,y:-1}
-            ]) {
-                const nx = x + n.x;
-                const ny = y + n.y;
+        
+        function updateBurningOil(x, y, idx, moved, grid, w, h, getIdx, setter) {
+            for (const n of [{x:0,y:1},{x:0,y:-1},{x:1,y:0},{x:-1,y:0},{x:1,y:1},{x:-1,y:1},{x:1,y:-1},{x:-1,y:-1}]) {
+                const nx = x + n.x, ny = y + n.y;
                 const nIdx = getIdx(nx, ny);
                 if (nIdx === -1) continue;
-                
-                // NEW: Turn sand into glass
-                if (grid[nIdx] === MAT.SAND && Math.random() < 0.1) { // 10% chance for hot oil
-                     setGrid(nIdx, MAT.GLASS);
-                }
-
-                tryIgniteAt(nx, ny, 0.05);
+                if (grid[nIdx] === MAT.SAND && Math.random() < 0.1) setter(nIdx, MAT.GLASS);
+                if (setter === setGrid) tryIgniteAt(nx, ny, 0.05);
             }
-
-            // --- Strong fire emission ---
             if (Math.random() < 0.05) {
                 const aboveIdx = getIdx(x, y - 1);
-                if (aboveIdx !== -1 && grid[aboveIdx] === MAT.EMPTY) {
-                    setGrid(aboveIdx, MAT.FIRE);
-                }
+                if (aboveIdx !== -1 && grid[aboveIdx] === MAT.EMPTY) setter(aboveIdx, MAT.FIRE);
             }
-
-            // --- Burn away faster than coal ---
-            if (Math.random() < 0.008) {
-                setGrid(idx, MAT.GAS);
-            }
-
-            if (grid[idx] === MAT.OIL_BURNING) {
-                activateChunkAt(x, y);
-            }
+            if (Math.random() < 0.008) setter(idx, MAT.GAS);
+            if (grid[idx] === MAT.OIL_BURNING && setter === setGrid) activateChunkAt(x, y);
         }
 
-        function updateSolid(x, y, idx, type, moved, grid, w, h, getIdx) {
+        function updateSolid(x, y, idx, type, moved, grid, w, h, getIdx, setter) {
             const belowIdx = getIdx(x, y + 1);
             if (belowIdx === -1) return;
-            if (type === MAT.COAL_BURNING) {updateBurningCoal(x, y, idx, moved, grid, w, h, getIdx)}
+            if (type === MAT.COAL_BURNING) {updateBurningCoal(x, y, idx, moved, grid, w, h, getIdx, setter)}
             if (grid[belowIdx] === MAT.FIRE && type === MAT.COAL) {
-                setGrid(idx, MAT.COAL_BURNING);
+                setter(idx, MAT.COAL_BURNING);
                 return;
             }
             const below = grid[belowIdx];
-            
-            if ([MAT.WATER, MAT.OIL, MAT.OIL_BURNING, MAT.ACID].includes(below)) {
-                // Push entire liquid row sideways
-                if (pushLiquidRowSideways(x, y + 1, below, grid, w, h, getIdx)) {
-                    setGrid(belowIdx, type);
-                    setGrid(idx, MAT.EMPTY);
-                    moved[belowIdx] = 1;
-                    activateChunkAt(x, y + 1);
-                    return;
-                }
-
-                // Absolute last resort fallback
-                setGrid(idx, below);
-                setGrid(belowIdx, type);
-                moved[belowIdx] = 1;
-                return;
+            if ([MAT.EMPTY, MAT.GAS].includes(below)) {
+                setter(idx, below); setter(belowIdx, type); moved[belowIdx] = 1; return;
             }
-
+            if (isLiquid(below)) {
+                setter(idx, below); setter(belowIdx, type); moved[belowIdx] = 1; return;
+            }
             const dir = Math.random() < 0.5 ? -1 : 1;
             for (let dx of [dir, -dir]) {
                 const dIdx = getIdx(x + dx, y + 1);
                 if (dIdx !== -1 && [MAT.EMPTY, MAT.WATER, MAT.OIL, MAT.OIL_BURNING, MAT.GAS, MAT.FIRE, MAT.ACID].includes(grid[dIdx])) {
-                    setGrid(idx, grid[dIdx]); setGrid(dIdx, type); moved[dIdx] = 1; 
-                    activateChunkAt(x + dx, y + 1);
-                    return;
+                    setter(idx, grid[dIdx]); setter(dIdx, type); moved[dIdx] = 1; return;
                 }
             }
         }
@@ -1360,110 +1290,52 @@
             return LIQUIDS.has(type);
         }
 
-        function updateLiquid(x, y, idx, moved, grid, w, h, getIdx) {
+        function updateLiquid(x, y, idx, moved, grid, w, h, getIdx, setter) {
             const type = grid[idx];
-
-            // --- NEW: Acid Corrosion Logic ---
             if (type === MAT.ACID) {
                 let consumed = false;
-                // Check cardinal neighbors for things to corrode
                 for (const n of [{x:0,y:1},{x:0,y:-1},{x:1,y:0},{x:-1,y:0}]) {
                     const nIdx = getIdx(x + n.x, y + n.y);
                     if (nIdx === -1) continue;
-
                     const nType = grid[nIdx];
-                    // List of materials immune to acid
                     const isImmune = [MAT.EMPTY, MAT.GLASS, MAT.GAS, MAT.GLASS_WALL, MAT.ADAMANTIUM].includes(nType);
-
-                    if (!isImmune && !isLiquid(nType) && Math.random() < 0.25) { // 25% chance to corrode
-                        setGrid(nIdx, MAT.EMPTY);
-                        // Acid has a small chance to be consumed in the reaction
-                        if (Math.random() < 0.1) {
-                            setGrid(idx, MAT.EMPTY);
-                            consumed = true;
-                            break; // Stop corroding this frame if consumed
-                        }
-                        activateChunkAt(x + n.x, y + n.y);
+                    if (!isImmune && !isLiquid(nType) && Math.random() < 0.25) {
+                        setter(nIdx, MAT.EMPTY);
+                        if (Math.random() < 0.1) { setter(idx, MAT.EMPTY); consumed = true; break; }
                     }
                 }
-                if (consumed) {
-                    moved[idx] = 1; // Mark as "moved" so it's not processed again
-                    return;
-                }
-
-                if (grid[idx] === MAT.ACID) {
-                    activateChunkAt(x, y);
-                }
+                if (consumed) { moved[idx] = 1; return; }
             }
-            // --- END: Acid Corrosion Logic ---
-
-
             const belowIdx = getIdx(x, y + 1);
             if (belowIdx === -1) return;
-            
             if (grid[belowIdx] === MAT.FIRE) {
-                if (grid[idx] === MAT.OIL) {
-                    setGrid(idx, MAT.OIL_BURNING);
-                    activateChunkAt(x, y);
-                } else {
-                    setGrid(idx, MAT.GAS);
-                    setGrid(belowIdx, MAT.GAS);
-                    activateChunkAt(x, y);
-                    activateChunkAt(x, y+1);
-                }
+                if (grid[idx] === MAT.OIL) setter(idx, MAT.OIL_BURNING);
+                else { setter(idx, MAT.GAS); setter(belowIdx, MAT.GAS); }
                 return;
             }
-
             const below = grid[belowIdx];
-
-            // Fall into empty / gas
             if ([MAT.EMPTY, MAT.GAS].includes(below)) {
-                setGrid(idx, below);
-                setGrid(belowIdx, type);
-                activateChunkAt(x, y);
-                activateChunkAt(x, y+1);
-                moved[belowIdx] = 1;
-                return;
+                setter(idx, below); setter(belowIdx, type); moved[belowIdx] = 1; return;
             }
-
-            // Liquid-on-liquid density swap
             if (LIQUID_DENSITY[type] > LIQUID_DENSITY[below]) {
-                setGrid(idx, below);
-                setGrid(belowIdx, type);
-                activateChunkAt(x, y);
-                activateChunkAt(x, y+1);
-                moved[belowIdx] = 1;
-                return;
+                setter(idx, below); setter(belowIdx, type); moved[belowIdx] = 1; return;
             }
-
-            tryMoveLiquidSide(x, y, idx, type, moved, Math.random() < 0.5 ? -1 : 1, 20, 1, grid, w, h, getIdx); // Scaled limit
-
-            if (grid[idx] === MAT.OIL_BURNING) {
-                updateBurningOil(x, y, idx, moved, grid, w, h, getIdx);
-            }
-
+            tryMoveLiquidSide(x, y, idx, type, moved, Math.random() < 0.5 ? -1 : 1, 20, 1, grid, w, h, getIdx, setter);
+            if (grid[idx] === MAT.OIL_BURNING) updateBurningOil(x, y, idx, moved, grid, w, h, getIdx, setter);
         }
 
-        function updateGas(x, y, idx, moved, grid, w, h, getIdx) {
+        function updateGas(x, y, idx, moved, grid, w, h, getIdx, setter) {
             const aboveIdx = getIdx(x, y - 1);
-            
-            if (y === 0) {
-                setGrid(idx, MAT.EMPTY);
-                activateChunkAt(x, y);
-                return;
-            }
-
+            if (y === 0) { setter(idx, MAT.EMPTY); return; }
             const above = grid[aboveIdx];
             if ([MAT.EMPTY, MAT.WATER, MAT.SAND, MAT.SOIL, MAT.GUNPOWDER].includes(above)) {
-                setGrid(idx, above); setGrid(aboveIdx, MAT.GAS); moved[aboveIdx] = 1; 
-                activateChunkAt(x, y);
-                activateChunkAt(x, y-1);
+                setter(idx, above); setter(aboveIdx, MAT.GAS); moved[aboveIdx] = 1;
                 return;
             }
-            tryMoveLiquidSide(x, y, idx, MAT.GAS, moved, Math.random() < 0.5 ? -1 : 1, 4, -1, grid, w, h, getIdx); // Scaled limit
+            tryMoveLiquidSide(x, y, idx, MAT.GAS, moved, Math.random() < 0.5 ? -1 : 1, 4, -1, grid, w, h, getIdx, setter);
         }
 
-        function tryMoveLiquidSide(x, y, currentIdx, type, moved, dir, limit, vDir, grid, w, h, getIdx) {
+        function tryMoveLiquidSide(x, y, currentIdx, type, moved, dir, limit, vDir, grid, w, h, getIdx, setter) {
             let targetX = x;
             const movableMaterials = [MAT.EMPTY, MAT.GAS, MAT.FIRE];
             const allMovableMaterials = [...LIQUIDS, ...movableMaterials];
@@ -1481,11 +1353,10 @@
             }
             if (targetX !== x) {
                 const tIdx = getIdx(targetX, y);
-                setGrid(currentIdx, grid[tIdx]); setGrid(tIdx, type); moved[tIdx] = 1;
-                activateChunkAt(targetX, y);
-                return true; // Return success
+                setter(currentIdx, grid[tIdx]); setter(tIdx, type); moved[tIdx] = 1;
+                return true;
             }
-            return false; // Return failure
+            return false;
         }
 
         function pushLiquidRowSideways(x, y, liquidType, grid, w, h, getIdx, maxPush = 10) {
