@@ -448,68 +448,148 @@
             }
         }
 
-        function generateNightSky(width, height) {
+        /**
+         * A self-contained Perlin Noise generator object.
+         * Based on the original implementation by Ken Perlin.
+         */
+        const PerlinNoise = {
+            p: [],
+            seed: function(s) {
+                // Use a seeded PRNG to ensure the permutation table is the same for a given seed.
+                let random = (function() {
+                    let seed = s;
+                    return function() {
+                        seed = (seed * 9301 + 49297) % 233280;
+                        return seed / 233280;
+                    };
+                })();
+                
+                this.p = new Uint8Array(512);
+                let permutation = [];
+                for (let i = 0; i < 256; i++) {
+                    permutation.push(i);
+                }
+                // Shuffle permutation table
+                for (let i = permutation.length - 1; i > 0; i--) {
+                    const j = Math.floor(random() * (i + 1));
+                    [permutation[i], permutation[j]] = [permutation[j], permutation[i]];
+                }
+                // Duplicate the permutation table to avoid buffer overflows
+                for (let i = 0; i < 256; i++) {
+                    this.p[i] = this.p[i + 256] = permutation[i];
+                }
+            },
+            fade: function(t) { return t * t * t * (t * (t * 6 - 15) + 10); },
+            lerp: function(t, a, b) { return a + t * (b - a); },
+            grad: function(hash, x, y, z) {
+                let h = hash & 15;
+                let u = h < 8 ? x : y,
+                    v = h < 4 ? y : h === 12 || h === 14 ? x : z;
+                return ((h & 1) === 0 ? u : -u) + ((h & 2) === 0 ? v : -v);
+            },
+            noise: function(x, y, z = 0) {
+                let X = Math.floor(x) & 255,
+                    Y = Math.floor(y) & 255,
+                    Z = Math.floor(z) & 255;
+                x -= Math.floor(x);
+                y -= Math.floor(y);
+                z -= Math.floor(z);
+                let u = this.fade(x),
+                    v = this.fade(y),
+                    w = this.fade(z);
+                let A = this.p[X] + Y, AA = this.p[A] + Z, AB = this.p[A + 1] + Z,
+                    B = this.p[X + 1] + Y, BA = this.p[B] + Z, BB = this.p[B + 1] + Z;
+
+                return this.lerp(w, this.lerp(v, this.lerp(u, this.grad(this.p[AA], x, y, z),
+                                                              this.grad(this.p[BA], x - 1, y, z)),
+                                                      this.lerp(u, this.grad(this.p[AB], x, y - 1, z),
+                                                              this.grad(this.p[BB], x - 1, y - 1, z))),
+                                       this.lerp(v, this.lerp(u, this.grad(this.p[AA + 1], x, y, z - 1),
+                                                              this.grad(this.p[BA + 1], x - 1, y, z - 1)),
+                                                      this.lerp(u, this.grad(this.p[AB + 1], x, y - 1, z - 1),
+                                                              this.grad(this.p[BB + 1], x - 1, y - 1, z - 1))));
+            }
+        };
+
+        /**
+         * Generates a high-quality, themed, multi-layered cave interior background.
+         * This version is correctly tuned to generate patterns across the full worldWidth.
+         */
+        function generateCaveBackground(width, height) {
             const img = ctx.createImageData(width, height);
             const d = img.data;
+            const layerHeight = height / 5;
+            const transitionSize = 40;
 
-            const hash = (x, y, s = 0) => {
-                let h = x * 374761393 + y * 668265263 + s * 1442695041;
-                h = (h ^ (h >> 13)) * 1274126177;
-                return (h ^ (h >> 16)) & 255;
-            };
+            PerlinNoise.seed(1337);
 
+            const hash = (x, y, s = 0) => { /* ... */ };
             const lerp = (a, b, t) => a + (b - a) * t;
+            const lerpColor = (c1, c2, t) => [lerp(c1[0],c2[0],t), lerp(c1[1],c2[1],t), lerp(c1[2],c2[2],t)];
 
+            // --- RE-TUNED Layer Generators ---
+            const getSandCaveColor = (x, y) => {
+                const n1 = PerlinNoise.noise(x * 0.004, y * 0.02); // x freq adjusted
+                const n2 = PerlinNoise.noise(x * 0.016, y * 0.08); // x freq adjusted
+                const baseNoise = (n1 + n2 * 0.25) / 1.25;
+                let c = lerpColor([80, 60, 40], [60, 45, 30], (baseNoise + 1) / 2);
+                const ripple = Math.sin(y * 0.1 + PerlinNoise.noise(x * 0.002, y * 0.05) * 5); // x freq adjusted
+                c = lerpColor(c, [90, 70, 50], (ripple + 1) / 2 * 0.1);
+                return c;
+            };
+            const getCoalMineColor = (x, y) => {
+                const n1 = PerlinNoise.noise(x * 0.01, y * 0.05); // x freq adjusted
+                const n2 = PerlinNoise.noise(x * 0.04, y * 0.2); // x freq adjusted
+                let c = lerpColor([28, 25, 25], [12, 10, 10], (n1 + n2 * 0.3) / 1.3);
+                const seamNoise = PerlinNoise.noise(x * 0.001, y * 0.15); // x freq adjusted
+                const seamFactor = Math.pow(Math.abs(seamNoise), 3) * 2;
+                if (seamFactor > 0.4) { c = lerpColor(c, [0, 0, 0], Math.min(1, (seamFactor - 0.4) * 2)); }
+                return c;
+            };
+            const getVolcanicColor = (x, y) => {
+                let c = lerpColor([30, 10, 5], [10, 5, 2], PerlinNoise.noise(x * 0.02, y * 0.1)); // x freq adjusted
+                const crackle = Math.abs(PerlinNoise.noise(x * 0.006, y * 0.03) * 2); // x freq adjusted
+                if (crackle > 0.9) { const glow = (crackle - 0.9) * 10; const glowColor = lerpColor([255, 180, 0], [255, 60, 0], crackle); c = lerpColor(c, glowColor, glow); }
+                return c;
+            };
+            const getLabyrinthColor = (x, y) => {
+                const gx = Math.floor(x / 24); const gy = Math.floor(y / 24);
+                let c = hash(gx, gy) > 128 ? [50, 55, 60] : [40, 45, 50];
+                const grain = PerlinNoise.noise(x * 0.06, y * 0.3) * 10; // x freq adjusted
+                c = [c[0] + grain, c[1] + grain, c[2] + grain];
+                const isEdgeX = x % 24 < 1 || x % 24 > 22; const isEdgeY = y % 24 < 1 || y % 24 > 22;
+                if (isEdgeX || isEdgeY) { c = [c[0] * 0.7, c[1] * 0.7, c[2] * 0.7]; }
+                return c;
+            };
+            const getMagicDungeonColor = (x, y) => {
+                const n1 = PerlinNoise.noise(x * 0.0016, y * 0.008); // x freq adjusted
+                const n2 = PerlinNoise.noise(x * 0.006, y * 0.03); // x freq adjusted
+                let c = lerpColor([20, 5, 40], [40, 15, 60], (n1 + n2 * 0.3) / 1.3);
+                const crystalNoise = Math.abs(PerlinNoise.noise(x * 0.01, y * 0.05) * 1.5); // x freq adjusted
+                if (crystalNoise > 0.95) { const glow = (crystalNoise - 0.95) * 20; c = lerpColor(c, [180, 150, 255], glow); }
+                if (hash(x, y, 1) > 254) c = [220, 220, 255];
+                return c;
+            };
+            const layerFunctions = [getSandCaveColor, getCoalMineColor, getVolcanicColor, getLabyrinthColor, getMagicDungeonColor];
+
+            // Main Pixel Loop
             for (let y = 0; y < height; y++) {
-                const t = y / height;
-
-                const baseR = lerp(6, 18, t);
-                const baseG = lerp(8, 22, t);
-                const baseB = lerp(18, 42, t);
-
                 for (let x = 0; x < width; x++) {
+                    const layerIndex = Math.min(layerFunctions.length - 1, Math.floor(y / layerHeight));
+                    const yInLayer = y % layerHeight;
+                    let color;
+                    if (layerIndex > 0 && yInLayer < transitionSize) {
+                        const t = yInLayer / transitionSize;
+                        color = lerpColor(layerFunctions[layerIndex-1](x,y), layerFunctions[layerIndex](x,y), t);
+                    } else {
+                        color = layerFunctions[layerIndex](x, y);
+                    }
                     const i = (y * width + x) * 4;
-
-                    let r = baseR;
-                    let g = baseG;
-                    let b = baseB;
-
-                    // Nebula (very subtle)
-                    const nebula =
-                        hash(x >> 3, y >> 3, 1) * 0.003 +
-                        hash(x >> 4, y >> 4, 2) * 0.002;
-
-                    if (nebula > 1.3) {
-                        r += nebula * 6;
-                        g += nebula * 5;
-                        b += nebula * 10;
-                    }
-
-                    // Stars
-                    const s = hash(x, y, 3);
-
-                    if (s > 252) {
-                        const br = 170 + (s & 31);
-                        r = g = b = br;
-                    } else if (s > 254) {
-                        r = 200; g = 200; b = 220;
-                    } else if (s === 255) {
-                        r = 255; g = 240; b = 200;
-                    }
-
-                    d[i]     = r;
-                    d[i + 1] = g;
-                    d[i + 2] = b;
-                    d[i + 3] = 255;
+                    d[i]=color[0]; d[i+1]=color[1]; d[i+2]=color[2]; d[i+3]=255;
                 }
             }
-
             return img;
         }
-
-
-
-        skyImageData = generateNightSky(renderWidth, renderHeight);
 
         // --- PLAYER AND CAMERA ---
         const player = {
@@ -1616,7 +1696,27 @@
         function render() {
             // --- WORLD ---
             firePixelsCoords = [];
-            pixels.set(skyImageData.data);
+            
+            const bgPixels = skyImageData.data;
+            const bgStartY = Math.floor(camera.y);
+
+            for (let screenY = 0; screenY < renderHeight; screenY++) {
+                const worldY = screenY + bgStartY; // The Y-coordinate in the giant background image
+
+                for (let screenX = 0; screenX < renderWidth; screenX++) {
+                    const destI = (screenY * renderWidth + screenX) * 4; // Index for the canvas
+                    const sourceI = (worldY * worldWidth + screenX) * 4; 
+
+                    // Safety check to prevent reading out of bounds
+                    if (sourceI >= 0 && sourceI < bgPixels.length) {
+                        pixels[destI]     = bgPixels[sourceI];
+                        pixels[destI + 1] = bgPixels[sourceI + 1];
+                        pixels[destI + 2] = bgPixels[sourceI + 2];
+                        pixels[destI + 3] = 255;
+                    }
+                }
+            }
+
             const time = frameCount * 0.04;
 
             // Get the top-left corner of the camera in world coordinates
@@ -1998,68 +2098,6 @@
             }
         }
 
-        /**
-         * A self-contained Perlin Noise generator object.
-         * Based on the original implementation by Ken Perlin.
-         */
-        const PerlinNoise = {
-            p: [],
-            seed: function(s) {
-                // Use a seeded PRNG to ensure the permutation table is the same for a given seed.
-                let random = (function() {
-                    let seed = s;
-                    return function() {
-                        seed = (seed * 9301 + 49297) % 233280;
-                        return seed / 233280;
-                    };
-                })();
-                
-                this.p = new Uint8Array(512);
-                let permutation = [];
-                for (let i = 0; i < 256; i++) {
-                    permutation.push(i);
-                }
-                // Shuffle permutation table
-                for (let i = permutation.length - 1; i > 0; i--) {
-                    const j = Math.floor(random() * (i + 1));
-                    [permutation[i], permutation[j]] = [permutation[j], permutation[i]];
-                }
-                // Duplicate the permutation table to avoid buffer overflows
-                for (let i = 0; i < 256; i++) {
-                    this.p[i] = this.p[i + 256] = permutation[i];
-                }
-            },
-            fade: function(t) { return t * t * t * (t * (t * 6 - 15) + 10); },
-            lerp: function(t, a, b) { return a + t * (b - a); },
-            grad: function(hash, x, y, z) {
-                let h = hash & 15;
-                let u = h < 8 ? x : y,
-                    v = h < 4 ? y : h === 12 || h === 14 ? x : z;
-                return ((h & 1) === 0 ? u : -u) + ((h & 2) === 0 ? v : -v);
-            },
-            noise: function(x, y, z = 0) {
-                let X = Math.floor(x) & 255,
-                    Y = Math.floor(y) & 255,
-                    Z = Math.floor(z) & 255;
-                x -= Math.floor(x);
-                y -= Math.floor(y);
-                z -= Math.floor(z);
-                let u = this.fade(x),
-                    v = this.fade(y),
-                    w = this.fade(z);
-                let A = this.p[X] + Y, AA = this.p[A] + Z, AB = this.p[A + 1] + Z,
-                    B = this.p[X + 1] + Y, BA = this.p[B] + Z, BB = this.p[B + 1] + Z;
-
-                return this.lerp(w, this.lerp(v, this.lerp(u, this.grad(this.p[AA], x, y, z),
-                                                              this.grad(this.p[BA], x - 1, y, z)),
-                                                      this.lerp(u, this.grad(this.p[AB], x, y - 1, z),
-                                                              this.grad(this.p[BB], x - 1, y - 1, z))),
-                                       this.lerp(v, this.lerp(u, this.grad(this.p[AA + 1], x, y, z - 1),
-                                                              this.grad(this.p[BA + 1], x - 1, y, z - 1)),
-                                                      this.lerp(u, this.grad(this.p[AB + 1], x, y - 1, z - 1),
-                                                              this.grad(this.p[BB + 1], x - 1, y - 1, z - 1))));
-            }
-        };
 
         /**
          * Generates a horizontal slab with a background, inscribed runes, and border lines.
@@ -3035,6 +3073,10 @@
             
             // A helper function to pause execution and allow the browser to render UI updates.
             const yieldToBrowser = () => new Promise(resolve => setTimeout(resolve, 20)); // 20ms pause
+
+            updateLoadingStatus('Generating Background...');
+            await yieldToBrowser();
+            skyImageData = generateCaveBackground(worldWidth, worldHeight);
 
             updateLoadingStatus('Generating Perlin Caves...');
             await yieldToBrowser();
