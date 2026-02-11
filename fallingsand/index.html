@@ -92,9 +92,10 @@
     </style>
 </head>
 <body>
-    <!-- <div id="loading-overlay" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #000; color: #fff; z-index: 1000; display: flex; justify-content: center; align-items: center; font-size: 2em; font-family: monospace;">
-        Loading World...
-    </div> -->
+   <div id="loading-overlay" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #1a1a2a; color: #fff; z-index: 1000; display: flex; justify-content: center; align-items: center; flex-direction: column;">
+        <h1 style="font-size: 2.5em; margin-bottom: 20px;">Falling Sand Platformer</h1>
+        <p id="loading-status" style="font-size: 1.2em; font-family: monospace;">Initializing...</p>
+    </div>
 
     <h1>Falling Sand Platformer</h1>
     <div class="info-bar">
@@ -316,11 +317,23 @@
             MAT.RUNE_WALL
         ]);
 
+        // NEW: Materials that don't need to be simulated at the start of the game.
+        const STATIC_MATERIALS = new Set([
+            MAT.WALL,
+            MAT.WOOD,
+            MAT.GLASS_WALL,
+            MAT.ADAMANTIUM,
+            MAT.RUNE_WALL
+        ]);
+
 
         const MAX_STEP_HEIGHT = 2;
         const GRAVITY = 0.1;
         const MAX_FALL_SPEED = 4;
         const MAX_HOVER_SPEED = 2;
+
+        const MAX_CHUNKS_PER_FRAME = 250; // Max number of off-screen chunks to process per frame. On-screen chunks are always processed.
+        let pendingActiveChunks = []; // An array to hold active chunks that were deferred from the previous frame.
         
         let grid = new Uint8Array(worldWidth * worldHeight).fill(MAT.EMPTY);
         let ignitionTimer = new Uint8Array(worldWidth * worldHeight);
@@ -386,19 +399,19 @@
             chunkGrid = new Array(chunkWidth * chunkHeight);
 
             for (let i = 0; i < chunkGrid.length; i++) {
-                // We can store more chunk-specific data here later if needed
                 chunkGrid[i] = { index: i }; 
             }
 
-            // Initial activation: Check world grid for any non-empty cells
+            // Only activate chunks containing DYNAMIC materials.
             for (let y = 0; y < worldHeight; y++) {
                 for (let x = 0; x < worldWidth; x++) {
-                    if (grid[getIdx(x, y)] !== MAT.EMPTY) {
+                    const type = grid[getIdx(x, y)];
+                    // If the material is not empty AND not static, then activate its chunk.
+                    if (type !== MAT.EMPTY && !STATIC_MATERIALS.has(type)) {
                         activateChunkAt(x, y);
                     }
                 }
             }
-            // The first frame's active chunks are now in `nextActiveChunks`
         }
 
         function setGrid(idx, type) {
@@ -2861,40 +2874,54 @@
             }
         }
 
-        function loadInitialScene() {
-            // 1. Fill the entire world with solid material.
-            // for (let y = 0; y < worldHeight; y++) {
-            //     for (let x = 0; x < worldWidth; x++) {
-            //         const strataNoise = Math.sin(y / 150 + x / 400) * 10;
-            //         if (y > worldHeight / 2 + strataNoise) {
-            //             setGrid(getIdx(x, y), MAT.WOOD);
-            //         } else {
-            //             setGrid(getIdx(x, y), MAT.WALL);
-            //         }
-            //     }
-            // }
+        /**
+         * Takes all potentially active chunks, sorts them by priority (on-screen, then distance to player),
+         * and limits the number of off-screen chunks to be processed in a single frame.
+         * @returns {void} - This function directly modifies the global activeChunks and pendingActiveChunks variables.
+         */
+        function prioritizeAndLimitActiveChunks() {
+            // 1. Combine newly activated chunks with any that were deferred from the last frame.
+            const allChunksToConsider = new Set([...pendingActiveChunks, ...nextActiveChunks]);
+            nextActiveChunks.clear(); // Clear for the next simulation step.
 
-            // 2. Carve the new hierarchical cave system.
-            generateCavesWithPerlinNoise(worldWidth, worldHeight, grid);
+            // 2. Separate chunks into on-screen (high priority) and off-screen (lower priority).
+            const priorityChunks = new Set();
+            const otherChunks = [];
+            const camChunkX1 = Math.floor(camera.x / CHUNK_SIZE);
+            const camChunkX2 = Math.floor((camera.x + viewWidth) / CHUNK_SIZE);
+            const camChunkY1 = Math.floor(camera.y / CHUNK_SIZE);
+            const camChunkY2 = Math.floor((camera.y + viewHeight) / CHUNK_SIZE);
 
-            generateAlchemyStation();
-
-            // 3. Place indestructible borders.
-            for (let y = 0; y < worldHeight; y++) {
-                setGrid(getIdx(0, y), MAT.ADAMANTIUM);
-                setGrid(getIdx(1, y), MAT.ADAMANTIUM);
-                setGrid(getIdx(worldWidth - 1, y), MAT.ADAMANTIUM);
-                setGrid(getIdx(worldWidth - 2, y), MAT.ADAMANTIUM);
-            }
-             for (let x = 0; x < worldWidth; x++) {
-                setGrid(getIdx(x, 0), MAT.ADAMANTIUM);
-                setGrid(getIdx(x, 1), MAT.ADAMANTIUM);
-                setGrid(getIdx(x, worldHeight - 1), MAT.ADAMANTIUM);
-                setGrid(getIdx(x, worldHeight - 2), MAT.ADAMANTIUM);
+            for (const chunk of allChunksToConsider) {
+                const cx = chunk.index % chunkWidth;
+                const cy = Math.floor(chunk.index / chunkWidth);
+                if (cx >= camChunkX1 && cx <= camChunkX2 && cy >= camChunkY1 && cy <= camChunkY2) {
+                    priorityChunks.add(chunk);
+                } else {
+                    otherChunks.push(chunk);
+                }
             }
 
-            initializeChunks();
-            updateLighting();
+            // 3. Sort the off-screen chunks by their distance to the player (closest first).
+            const playerChunkX = Math.floor(player.x / CHUNK_SIZE);
+            const playerChunkY = Math.floor(player.y / CHUNK_SIZE);
+            otherChunks.sort((a, b) => {
+                const aX = a.index % chunkWidth;
+                const aY = Math.floor(a.index / chunkWidth);
+                const bX = b.index % chunkWidth;
+                const bY = Math.floor(b.index / chunkWidth);
+                const distA = (aX - playerChunkX)**2 + (aY - playerChunkY)**2;
+                const distB = (bX - playerChunkX)**2 + (bY - playerChunkY)**2;
+                return distA - distB;
+            });
+            
+            // 4. Create the final processing list for this frame.
+            const processingOrder = [...priorityChunks, ...otherChunks];
+
+            // 5. Apply the limit and update the global variables for the simulation.
+            const chunksToProcess = processingOrder.slice(0, priorityChunks.size + MAX_CHUNKS_PER_FRAME);
+            pendingActiveChunks = processingOrder.slice(priorityChunks.size + MAX_CHUNKS_PER_FRAME);
+            activeChunks = new Set(chunksToProcess);
         }
 
         // --- GAME LOOP ---
@@ -2907,8 +2934,7 @@
                 lastFpsTime = now;
             }
 
-            activeChunks = nextActiveChunks;
-            nextActiveChunks = new Set();
+            prioritizeAndLimitActiveChunks();
 
             // --- UPDATE LOGIC ---
             updatePlayer();
@@ -3123,6 +3149,69 @@
         }
 
         /**
+         * Updates the text content of the loading screen overlay.
+         * @param {string} message - The message to display.
+         */
+        function updateLoadingStatus(message) {
+            document.getElementById('loading-status').innerText = message;
+        }
+
+        /**
+         * Asynchronously loads all game assets and world data, updating the UI between steps.
+         */
+        async function mainLoader() {
+            const loadingOverlay = document.getElementById('loading-overlay');
+            
+            // A helper function to pause execution and allow the browser to render UI updates.
+            const yieldToBrowser = () => new Promise(resolve => setTimeout(resolve, 20)); // 20ms pause
+
+            updateLoadingStatus('Generating Perlin Caves...');
+            await yieldToBrowser();
+            generateCavesWithPerlinNoise(worldWidth, worldHeight, grid);
+
+            updateLoadingStatus('Constructing Ancient Structures...');
+            await yieldToBrowser();
+            generateAlchemyStation();
+
+            updateLoadingStatus('Securing World Borders...');
+            await yieldToBrowser();
+            for (let y = 0; y < worldHeight; y++) {
+                setGrid(getIdx(0, y), MAT.ADAMANTIUM);
+                setGrid(getIdx(1, y), MAT.ADAMANTIUM);
+                setGrid(getIdx(worldWidth - 1, y), MAT.ADAMANTIUM);
+                setGrid(getIdx(worldWidth - 2, y), MAT.ADAMANTIUM);
+            }
+             for (let x = 0; x < worldWidth; x++) {
+                setGrid(getIdx(x, 0), MAT.ADAMANTIUM);
+                setGrid(getIdx(x, 1), MAT.ADAMANTIUM);
+                setGrid(getIdx(x, worldHeight - 1), MAT.ADAMANTIUM);
+                setGrid(getIdx(x, worldHeight - 2), MAT.ADAMANTIUM);
+            }
+
+            updateLoadingStatus('Activating Dynamic Matter...');
+            await yieldToBrowser();
+            initializeChunks();
+
+            updateLoadingStatus('Igniting the First Light...');
+            await yieldToBrowser();
+            updateLighting(true);
+
+            updateLoadingStatus('Done!');
+            await new Promise(resolve => setTimeout(resolve, 100)); // Brief pause to see "Done!"
+
+            // Hide the overlay with a fade-out effect for a smooth transition
+            loadingOverlay.style.transition = 'opacity 0.5s';
+            loadingOverlay.style.opacity = '0';
+            await new Promise(resolve => setTimeout(() => {
+                loadingOverlay.style.display = 'none';
+                resolve();
+            }, 500));
+            
+            // The game is fully loaded, now we can start the main loop.
+            gameLoop();
+        }
+
+        /**
          * Renders the player's HP and Hover Energy bars in the top-left corner of the canvas.
          */
         function renderPlayerStatsUI() {
@@ -3171,8 +3260,9 @@
         }
 
 
-        loadInitialScene();
-        gameLoop();
+        //loadInitialScene();
+        //gameLoop();
+        mainLoader();
     </script>
 </body>
 </html>
