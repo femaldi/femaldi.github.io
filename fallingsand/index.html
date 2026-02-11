@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Falling Sand Platformer</title>
+    
     <style>
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -138,9 +139,32 @@
     <canvas id="canvas"></canvas>
 
     <script>
+        var Module = { TOTAL_MEMORY: 256*1024*1024 };
+    </script>
+    <script src="https://kripken.github.io/box2d.js/demo/webgl/Box2D_v2.2.1_min.js"></script>
+
+    <script>
         // --- CONFIGURATION ---
         const canvas = document.getElementById('canvas');
         const ctx = canvas.getContext('2d');
+
+        const B2_SCALE = 30; // 30 pixels = 1 meter in the physics world
+        let box2d;
+        let box2dWorld;
+        let rigidBodies = [];
+        let staticWorldBodies = []; // To hold temporary terrain colliders
+        let activeStaticChunks = new Set();
+        let bodiesToDestroy = [];   // NEW: A "kill list" for entire b2Bodies
+        let tempVec1 = null;
+        let tempVec2 = null;
+
+        // Box2D Aliases for easier access
+        let b2Vec2;
+        let b2BodyDef;
+        let b2Body;
+        let b2FixtureDef;
+        let b2World;
+        let b2PolygonShape;
 
         const CHUNK_SIZE = 16; // Chunks will be 16x16 pixels
         let chunkWidth, chunkHeight;
@@ -167,7 +191,7 @@
         canvas.style.imageRendering = "pixelated";
 
 
-        const worldWidth = viewWidth * 30;
+        const worldWidth = viewWidth * 15;
         const worldHeight = viewHeight * 10;
 
         const renderWidth = viewWidth;
@@ -343,9 +367,10 @@
         const MAX_STEP_HEIGHT = 2;
         const GRAVITY = 0.1;
         const MAX_FALL_SPEED = 4;
-        const MAX_HOVER_SPEED = 2;
+        const MAX_HOVER_SPEED = 4;
 
-        const MAX_CHUNKS_PER_FRAME = 250; // Max number of off-screen chunks to process per frame. On-screen chunks are always processed.
+        const MAX_CHUNKS_PER_FRAME = 250;
+        const REGEN_COOLDOWN = 250; // Max number of off-screen chunks to process per frame. On-screen chunks are always processed.
         let pendingActiveChunks = []; // An array to hold active chunks that were deferred from the previous frame.
         
         let grid = new Uint8Array(worldWidth * worldHeight).fill(MAT.EMPTY);
@@ -406,20 +431,133 @@
         const STORABLE_SOLIDS = new Set([MAT.SAND, MAT.SOIL, MAT.GUNPOWDER, MAT.COAL, MAT.GLASS, MAT.COPPER, MAT.SILVER, MAT.GOLD, MAT.PLATINUM]);
         const STORABLE_LIQUIDS = new Set([MAT.WATER, MAT.OIL, MAT.ACID]);
 
-        function initializeChunks() {
+        class RigidBody {
+            constructor(x, y, width, height, material) {
+                this.width = width;
+                this.height = height;
+                this.pixels = new Uint8Array(width * height);
+                this.moved = new Uint8Array(width * height);
+                this.materialType = material;
+                this.fixtureCount = 0;
+                
+                this.isDestroyed = false;
+                this.needsShapeUpdate = false;
+
+                this.pixels.fill(this.materialType);
+
+                // --- Create the Box2D Body ---
+                const bodyDef = new b2BodyDef();
+                bodyDef.set_type(box2d.b2_dynamicBody);
+                const position = new b2Vec2(x / B2_SCALE, y / B2_SCALE);
+                bodyDef.set_position(position);
+
+                this.b2Body = box2dWorld.CreateBody(bodyDef);
+                
+                // CORRECTED: Call the safe creation function, NOT rebuild.
+                this._createFixturesFromPixels(); 
+            }
+
+            rebuildFixtures() {
+                // --- YOUR CORRECTED LOGIC ---
+                // Loop a known, finite number of times, destroying the head of the list each time.
+                // This is immune to any iterator or GetNext() bugs.
+                for (let i = 0; i < this.fixtureCount; i++) {
+                    const fixture = this.b2Body.GetFixtureList();
+                    if (fixture) {
+                        //console.log(fixture)
+                        this.b2Body.DestroyFixture(fixture);
+                    } else {
+                        // This is a safety break in case the count is somehow wrong.
+                        // It should not be necessary but prevents an error.
+                        break;
+                    }
+                }
+
+                // Now that the body is clean, call the helper to build the new fixtures and get the new count.
+                this._createFixturesFromPixels();
+                
+                this.needsShapeUpdate = false;
+            }
+
+            _createFixturesFromPixels() {
+                this.fixtureCount = 0;
+                // If there are no solid pixels left, mark the body for destruction
+                if (!this.pixels.some(p => p !== MAT.EMPTY && p !== MAT.FIRE && p !== MAT.GAS)) {
+                    this.isDestroyed = true;
+                    return;
+                }
+
+                // Generate new, optimized fixtures (merging horizontal runs)
+                for (let y = 0; y < this.height; y++) {
+                    for (let x = 0; x < this.width; x++) {
+                        const type = this.pixels[y * this.width + x];
+                        if (type !== MAT.EMPTY && type !== MAT.FIRE && type !== MAT.GAS) {
+                            let runEndX = x;
+                            while (runEndX + 1 < this.width) {
+                                const nextType = this.pixels[y * this.width + (runEndX + 1)];
+                                if (nextType !== MAT.EMPTY && nextType !== MAT.FIRE && nextType !== MAT.GAS) {
+                                    runEndX++;
+                                } else {
+                                    break;
+                                }
+                            }
+                            
+                            const runWidth = (runEndX - x) + 1;
+                            const fixtureDef = new b2FixtureDef();
+                            
+                            const centerX = (x - this.width / 2) + runWidth / 2;
+                            const centerY = y - this.height / 2 + 0.5;
+                            
+                            const shape = new b2PolygonShape();
+                            shape.SetAsBox(
+                                (runWidth / 2) / B2_SCALE,
+                                0.5 / B2_SCALE,
+                                new b2Vec2(centerX / B2_SCALE, centerY / B2_SCALE),
+                                0
+                            );
+
+                            fixtureDef.set_shape(shape);
+                            fixtureDef.set_density(0.5);
+                            fixtureDef.set_friction(0.4);
+                            fixtureDef.set_restitution(0.2);
+                            //console.log("fixture created");
+                            this.b2Body.CreateFixture(fixtureDef);
+
+                            this.fixtureCount++;
+                            
+                            x = runEndX;
+                        }
+                    }
+                }
+                this.b2Body.ResetMassData();
+            }
+
+        }
+
+        function createChunkGrid() {
             chunkWidth = Math.ceil(worldWidth / CHUNK_SIZE);
             chunkHeight = Math.ceil(worldHeight / CHUNK_SIZE);
             chunkGrid = new Array(chunkWidth * chunkHeight);
 
             for (let i = 0; i < chunkGrid.length; i++) {
-                chunkGrid[i] = { index: i }; 
+                chunkGrid[i] = { 
+                    index: i,
+                    staticBody: null,
+                    dirty: true,
+                    lastRegenTime: 0 // NEW: Track when the body was last rebuilt
+                }; 
             }
+        }
 
-            // Only activate chunks containing DYNAMIC materials.
+        /**
+         * Scans the fully generated world and activates any chunks containing
+         * dynamic materials that need to be simulated from frame one.
+         * This must be called AFTER all terrain is generated.
+         */
+        function activateInitialChunks() {
             for (let y = 0; y < worldHeight; y++) {
                 for (let x = 0; x < worldWidth; x++) {
                     const type = grid[getIdx(x, y)];
-                    // If the material is not empty AND not static, then activate its chunk.
                     if (type !== MAT.EMPTY && !STATIC_MATERIALS.has(type)) {
                         activateChunkAt(x, y);
                     }
@@ -433,13 +571,26 @@
             const oldType = grid[idx];
             if (type === oldType) return;
 
-            // The 'lightingNeedsUpdate = true' line has been REMOVED from here.
-            
-            grid[idx] = type;
+            // --- THE CRITICAL OPTIMIZATION ---
+            // Only mark the chunk as dirty if the "solidness" of the pixel changes.
+            // This prevents sand moving over empty space from triggering an expensive physics rebuild.
+            const wasSolid = isSolidForPlayer(oldType);
+            const isSolid = isSolidForPlayer(type);
 
-            const x = idx % worldWidth;
-            const y = Math.floor(idx / worldWidth);
-            activateChunkAt(x, y);
+            if (wasSolid !== isSolid) {
+                const x = idx % worldWidth;
+                const y = Math.floor(idx / worldWidth);
+                const chunkX = Math.floor(x / CHUNK_SIZE);
+                const chunkY = Math.floor(y / CHUNK_SIZE);
+                const chunkIndex = chunkY * chunkWidth + chunkX;
+                if (chunkGrid[chunkIndex]) {
+                    chunkGrid[chunkIndex].dirty = true;
+                }
+            }
+            // --- END OPTIMIZATION ---
+
+            grid[idx] = type;
+            activateChunkAt(idx % worldWidth, Math.floor(idx / worldWidth));
         }
 
         /**
@@ -558,7 +709,7 @@
             const getCoalMineColor = (x, y) => {
                 const px = x >> 1; const py = y >> 1; // Use 2x2 pixel blocks
                 const rockNoise = (PerlinNoise.noise(px * 0.1, py * 0.1) + 1) / 2;
-                const seamNoise = PerlinNoise.noise(px * 0.01, py * 0.4);
+                const seamNoise = PerlinNoise.noise(px * 0.02, py * 0.15);
                 
                 if (Math.pow(seamNoise, 2) > 0.3) return [5, 3, 3];
                 
@@ -628,6 +779,7 @@
         const player = {
             x: 30, y: 80, vx: 0, vy: 0,
             width: 8, height: 16, speed: 1, onGround: false,
+            b2Body: null,
             canInteract: false,
             currentTrigger: null,
             maxHoverEnergy: 100,
@@ -678,6 +830,46 @@
             }
         });
         window.addEventListener('keyup', (e) => keys[e.code] = false);
+
+        /**
+         * Creates a dynamic b2Body for the player with a composite shape
+         * (box + circle) for better movement characteristics.
+         */
+        function createPlayerBody() {
+            const bodyDef = new b2BodyDef();
+            bodyDef.set_type(box2d.b2_dynamicBody);
+            bodyDef.set_position(new b2Vec2(player.x / B2_SCALE, player.y / B2_SCALE));
+            bodyDef.set_fixedRotation(true); // Prevents the player from tipping over
+            bodyDef.set_linearDamping(0.5); // Adds a bit of air/ground resistance
+
+            player.b2Body = box2dWorld.CreateBody(bodyDef);
+
+            // 1. Create the main torso fixture (a rectangle)
+            const torsoFixtureDef = new b2FixtureDef();
+            const torsoShape = new b2PolygonShape();
+            // Make the physics box slightly narrower than the graphics to avoid snagging
+            torsoShape.SetAsBox(
+                (player.width / 2 - 1) / B2_SCALE, 
+                (player.height / 2 - 2) / B2_SCALE,
+                // Center the torso higher up
+                new b2Vec2(0, -2 / B2_SCALE), 
+                0
+            );
+            torsoFixtureDef.set_shape(torsoShape);
+            torsoFixtureDef.set_density(1.0);
+            torsoFixtureDef.set_friction(0.3);
+            player.b2Body.CreateFixture(torsoFixtureDef);
+
+            // 2. Create the foot sensor fixture (a frictionless circle)
+            const footFixtureDef = new b2FixtureDef();
+            const footShape = new box2d.b2CircleShape(); // Use the global module for b2CircleShape
+            footShape.set_m_radius( (player.width / 2 - 1) / B2_SCALE );
+            // Position the circle at the player's feet
+            footShape.set_m_p( new b2Vec2(0, (player.height / 2 - 2) / B2_SCALE) );
+            footFixtureDef.set_shape(footShape);
+            footFixtureDef.set_friction(0.05); // Very low friction for smooth sliding
+            player.b2Body.CreateFixture(footFixtureDef);
+        }
 
         function setMaterial(name) {
             const map = {
@@ -838,91 +1030,52 @@
 
         function updatePlayer() {
             if (isAlchemyUIVisible) {
-                player.vx = 0; // Prevent sliding
+                player.b2Body.SetLinearVelocity(new b2Vec2(0, 0)); // Stop all movement
                 return;
             }
 
-            const wasOnGround = player.onGround;
+            const currentVel = player.b2Body.GetLinearVelocity();
+            let targetVelX = 0;
 
-            // --- 1. APPLY FORCES TO VELOCITY ---
-            // Horizontal input
+            // --- 1. Determine Target Velocity from Input ---
             if (keys['KeyA']) {
-                player.vx = -player.speed;
+                targetVelX = -player.speed * 2.5; // Multiply speed to feel responsive in Box2D
                 playerFacingRight = false;
             } else if (keys['KeyD']) {
-                player.vx = player.speed;
+                targetVelX = player.speed * 2.5;
                 playerFacingRight = true;
-            } else {
-                player.vx = 0;
-            }
-
-            // Levitation and Energy
-            if (keys['KeyW'] && player.hoverEnergy > 0) {
-                player.vy -= player.hoverForce;
-                player.hoverEnergy = Math.max(0, player.hoverEnergy - player.hoverDrainRate);
-                spawnLevitationParticles(2);
-            } else {
-                if (player.hoverEnergy < player.maxHoverEnergy && player.onGround) {
-                    player.hoverEnergy = Math.min(player.maxHoverEnergy, player.hoverEnergy + player.hoverRechargeRate);
-                }
             }
             
-            // Gravity and Velocity Clamping
-            player.vy += GRAVITY;
-            if (player.vy > MAX_FALL_SPEED) player.vy = MAX_FALL_SPEED;
-            if (player.vy < -MAX_HOVER_SPEED) player.vy = -MAX_HOVER_SPEED;
+            // --- 2. Handle Ground State and Jumping/Hovering ---
+            // A simple approximation for being on the ground: check if vertical velocity is near zero.
+            // A more robust method (raycast or contact listener) can be added later.
+            player.onGround = Math.abs(currentVel.get_y()) < 0.1;
 
-
-            // --- 2. RESOLVE HORIZONTAL MOVEMENT AND COLLISIONS FIRST ---
-            let nextX = player.x + player.vx;
-            if (player.vx !== 0) {
-                if (!collidesAtSides(nextX, player.y, Math.sign(player.vx))) {
-                    player.x = nextX;
-                } else {
-                    // Wall collision detected. Can we step up?
-                    // The step-up is now part of the horizontal check.
-                    let couldStepUp = false;
-                    if (wasOnGround) { // Only allow stepping from the ground
-                        for (let step = 1; step <= MAX_STEP_HEIGHT; step++) {
-                            const stepY = player.y - step;
-                            if (!collidesAt(player.x, stepY) && !collidesAtSides(nextX, stepY, Math.sign(player.vx))) {
-                                player.y = stepY;
-                                player.x = nextX;
-                                couldStepUp = true;
-                                break;
-                            }
-                        }
-                    }
-                    // If we hit a wall and couldn't step, stop horizontal movement.
-                    if (!couldStepUp) {
-                        player.vx = 0;
-                    }
-                }
+            if (keys['KeyW'] && player.hoverEnergy > 0) {
+                // Apply a consistent upward velocity for hovering
+                currentVel.set_y(-MAX_HOVER_SPEED); 
+                player.hoverEnergy = Math.max(0, player.hoverEnergy - player.hoverDrainRate);
+                spawnLevitationParticles(2);
+            }
+            
+            // --- 3. Recharge Energy ---
+            if (player.onGround && !keys['KeyW']) {
+                player.hoverEnergy = Math.min(player.maxHoverEnergy, player.hoverEnergy + player.hoverRechargeRate);
             }
 
+            // --- 4. Apply the new velocity to the physics body ---
+            player.b2Body.SetLinearVelocity(new b2Vec2(targetVelX, currentVel.get_y()));
+        }
 
-            // --- 3. RESOLVE VERTICAL MOVEMENT AND COLLISIONS SECOND ---
-            // By now, player.x is final for this frame.
-            let nextY = player.y + player.vy;
-            player.onGround = false;
-
-            if (!collidesAt(player.x, nextY)) {
-                player.y = nextY;
-            } else {
-                const dir = Math.sign(player.vy);
-
-                if (!collidesAt(player.x, player.y + dir)) {
-                    player.y += dir;
-                }
-
-                // If we collided while moving down, we are on the ground.
-                if (dir > 0) {
-                    player.onGround = true;
-                }
-                
-                // Stop vertical movement upon collision.
-                player.vy = 0;
-            }
+        /**
+         * Reads the position from the player's b2Body and updates the
+         * graphical player object to match.
+         */
+        function syncPlayerWithBody() {
+            const pos = player.b2Body.GetPosition();
+            // The position is the center of the body, so we offset by half size to get top-left
+            player.x = (pos.get_x() * B2_SCALE) - (player.width / 2);
+            player.y = (pos.get_y() * B2_SCALE) - (player.height / 2);
         }
 
         /**
@@ -1161,18 +1314,10 @@
             }
         }
 
-        /**
-         * Runs the simulation on a small, self-contained grid like the pouch or flask.
-         */
-        function runSimulationOnSmallGrid(moved, currentGrid, gridWidth, gridHeight) {
+        function runSimulationOnSmallGrid(moved, currentGrid, gridWidth, gridHeight, setter) {
              moved.fill(0);
              const localGetIdx = (x, y) => getIdx(x, y, gridWidth, gridHeight);
              const scanDir = (frameCount % 2 === 0);
-
-             // For sub-grids, the "setter" is a simple function that modifies the provided grid directly.
-             const setter = (idx, type) => {
-                if (idx !== -1) currentGrid[idx] = type;
-             };
 
             // PASS 1: solids, gas, fire
             for (let y = gridHeight - 1; y >= 0; y--) {
@@ -1824,6 +1969,35 @@
 
             renderBloom();
 
+            // --- NEW: RENDER RIGID BODIES ---
+            for (const body of rigidBodies) {
+                const pos = body.b2Body.GetPosition();
+                const angle = body.b2Body.GetAngle();
+
+                ctx.save(); // Save the current canvas state
+                
+                // Move and rotate the canvas to match the Box2D body
+                ctx.translate(pos.get_x() * B2_SCALE - camera.x, pos.get_y() * B2_SCALE - camera.y);
+                ctx.rotate(angle);
+
+                // Now, draw the body's pixels centered at (0,0)
+                for (let y = 0; y < body.height; y++) {
+                    for (let x = 0; x < body.width; x++) {
+                        const type = body.pixels[y * body.width + x];
+                        if (type !== MAT.EMPTY) {
+                            const [r, g, b] = varyColor(...COLORS[type], x, y, type, 8);
+                            ctx.fillStyle = `rgb(${r},${g},${b})`;
+                            
+                            // Draw the pixel, offsetting by half the width/height to center it
+                            ctx.fillRect(x - body.width / 2, y - body.height / 2, 1, 1);
+                        }
+                    }
+                }
+
+                ctx.restore(); // Restore the canvas state for the next object
+            }
+            // --- END OF NEW BLOCK ---
+
             const aimDX = mouse.worldX - (player.x + player.width / 2);
             const aimDY = (player.y + 9) - mouse.worldY;
             const aimAngle = Math.atan2(aimDY, aimDX);
@@ -1955,6 +2129,67 @@
 
             renderPlayerStatsUI();
             renderAlchemyUI();
+        }
+
+        function createWoodenBox(x, y) {
+            const box = new RigidBody(x, y, 16, 16, MAT.WOOD);
+            rigidBodies.push(box);
+        }
+
+        /**
+         * The core of the pixel-rigid body interaction. This function checks for external
+         * influences (like fire) and runs a falling sand simulation on each body's internal grid.
+         */
+        function updateRigidBodyInteractions() {
+            for (const body of rigidBodies) {
+                if (body.isDestroyed) continue;
+
+                const b2Body = body.b2Body;
+                const transform = b2Body.GetTransform();
+                let pixelsChanged = false;
+
+                // --- 1. Check for external interactions (e.g., world fire setting the box on fire) ---
+                for (let y = 0; y < body.height; y++) {
+                    for (let x = 0; x < body.width; x++) {
+                        const localIdx = y * body.width + x;
+                        const type = body.pixels[localIdx];
+
+                        // Only check the outer edges of the wood for ignition
+                        if (type === MAT.WOOD) {
+                            // CORRECTED: Use tempVec1 and set its value instead of creating a new object.
+                            tempVec1.set_x((x - body.width / 2 + 0.5) / B2_SCALE);
+                            tempVec1.set_y((y - body.height / 2 + 0.5) / B2_SCALE);
+                            
+                            // CORRECTED: Call the non-allocating version, writing the result into tempVec2.
+                            transformPoint(tempVec2, transform, tempVec1);
+                            const worldPoint = tempVec2; // Just for clarity
+                            
+                            const worldX = Math.floor(worldPoint.get_x() * B2_SCALE);
+                            const worldY = Math.floor(worldPoint.get_y() * B2_SCALE);
+
+                            const worldIdx = getIdx(worldX, worldY);
+                            if (worldIdx !== -1 && grid[worldIdx] === MAT.FIRE) {
+                                body.pixels[localIdx] = MAT.FIRE;
+                                pixelsChanged = true;
+                            }
+                        }
+                    }
+                }
+
+                // --- 2. Run the falling sand simulation on the body's internal pixel grid ---
+                const localSetter = (idx, type) => {
+                    if (idx !== -1 && body.pixels[idx] !== type) {
+                        body.pixels[idx] = type;
+                        pixelsChanged = true; // Flag that something changed this frame
+                    }
+                };
+                runSimulationOnSmallGrid(body.moved, body.pixels, body.width, body.height, localSetter);
+                
+                // --- 3. If any pixels changed, flag the body for a physics shape update ---
+                if (pixelsChanged) {
+                    body.needsShapeUpdate = true;
+                }
+            }
         }
 
         /**
@@ -2744,32 +2979,44 @@
             }
         }
 
+        /**
+         * Generates caves with Perlin noise, including four thick, unbroken, noisy
+         * horizontal bands that separate the world's five layers. Each band uses the
+         * wall material of the layer below it.
+         */
         function generateCavesWithPerlinNoise(width, height, grid) {
             const scale = 150;
-            const depthBiasStrength = 0.2;
+            const depthBiasStrength = 0.1;
             const layerHeight = height / 5;
 
-            // This array maps each of the 5 layers to a specific wall material.
             const layerWallMaterials = [
-                MAT.SANDSTONE_WALL, // Layer 1: Sand Cave
-                MAT.ROCK_WALL,      // Layer 2: Coal Mine (uses original Rock Wall)
-                MAT.VOLCANIC_WALL,  // Layer 3: Volcanic
-                MAT.LABYRINTH_WALL, // Layer 4: Labyrinth
-                MAT.MAGIC_WALL      // Layer 5: Magic Dungeon
+                MAT.SANDSTONE_WALL, // Layer 1 (index 0)
+                MAT.ROCK_WALL,      // Layer 2 (index 1)
+                MAT.VOLCANIC_WALL,  // Layer 3 (index 2)
+                MAT.LABYRINTH_WALL, // Layer 4 (index 3)
+                MAT.MAGIC_WALL      // Layer 5 (index 4)
             ];
-
             const GENERATION_TIERS = [
                 { material: MAT.COPPER,   threshold: 0.70 },
                 { material: MAT.SILVER,   threshold: 0.75 },
                 { material: MAT.GOLD,     threshold: 0.85 },
                 { material: MAT.PLATINUM, threshold: 0.99 }
             ];
-            
-            // --- MISSING LINES ADDED BACK HERE ---
             const octaves = 4;
             const persistence = 0.5;
             const lacunarity = 2;
-            // ------------------------------------
+
+            // --- Band Configuration ---
+            const bandCentersY = [
+                layerHeight,      // Between layer 1 and 2
+                layerHeight * 2,  // Between layer 2 and 3
+                layerHeight * 3,  // Between layer 3 and 4
+                layerHeight * 4   // Between layer 4 and 5
+            ];
+            const bandHalfHeight = 50;
+            const bandNoiseFrequency = 0.004;
+            const bandNoiseAmplitude = 60;
+            // We no longer use a single band material.
 
             PerlinNoise.seed(12345 * Math.random() + 10000);
 
@@ -2781,33 +3028,53 @@
                 const baseWallType = layerWallMaterials[layerIndex];
 
                 for (let x = 0; x < width; x++) {
+                    
+                    // --- Modified Band Generation Logic ---
+                    let isInBand = false;
+                    // Use an indexed loop to determine the correct material
+                    for (let i = 0; i < bandCentersY.length; i++) {
+                        const centerY = bandCentersY[i];
+                        // The band material is the wall type of the layer *below* it.
+                        // The first band (i=0) uses the wall from layer 2 (index 1).
+                        const bandMaterial = layerWallMaterials[i + 1];
+
+                        const noiseOffset = PerlinNoise.noise(x * bandNoiseFrequency, centerY) * bandNoiseAmplitude;
+                        const noisyCenterY = centerY + noiseOffset;
+
+                        if (y >= noisyCenterY - bandHalfHeight && y <= noisyCenterY + bandHalfHeight) {
+                            setGrid(getIdx(x, y), bandMaterial);
+                            isInBand = true;
+                            break;
+                        }
+                    }
+
+                    if (isInBand) {
+                        continue;
+                    }
+
+                    // --- Existing Cave & Ore Generation Logic ---
                     let totalNoise = 0;
                     let frequency = 1;
                     let amplitude = 1;
                     let maxAmplitude = 0;
-
                     for (let i = 0; i < octaves; i++) {
-                        const noiseValue = (PerlinNoise.noise(x * frequency / scale, y * frequency / scale) + 1) / 2;
+                        const noiseValue = (PerlinNoise.noise(x*frequency/scale, y*frequency/scale)+1)/2;
                         totalNoise += noiseValue * amplitude;
                         maxAmplitude += amplitude;
                         amplitude *= persistence;
                         frequency *= lacunarity;
                     }
-                    
                     const finalNoise = totalNoise / maxAmplitude;
 
                     let materialToPlace = MAT.EMPTY;
-
                     if (finalNoise >= 0.52 - currentDepthBias) {
                         materialToPlace = baseWallType;
                     }
-
                     for (const tier of GENERATION_TIERS) {
                         if (finalNoise >= tier.threshold - currentDepthBias) {
                             materialToPlace = tier.material;
                         }
                     }
-                    
                     if (materialToPlace !== MAT.EMPTY) {
                         setGrid(getIdx(x, y), materialToPlace);
                     }
@@ -2875,10 +3142,28 @@
                 lastFpsTime = now;
             }
 
+            for (const body of bodiesToDestroy) {
+                if (body) box2dWorld.DestroyBody(body);
+            }
+            bodiesToDestroy = [];
+
             prioritizeAndLimitActiveChunks();
 
             // --- UPDATE LOGIC ---
             updatePlayer();
+            updateRigidBodyInteractions();
+            updateRigidBodies(now);
+            syncPlayerWithBody();
+
+            // Rebuild shapes for any bodies that were changed/damaged
+            for (const body of rigidBodies) {
+                if (body.needsShapeUpdate) {
+                    body.rebuildFixtures();
+                }
+            }
+            
+            cleanupDestroyedBodies(); // Safely remove bodies that have burned away
+
             updatePouredParticles();
             processAlchemyJobs();
             updateMagicParticles();
@@ -2923,13 +3208,14 @@
 
             // --- SIMULATIONS ---
             for (let i = 0; i < SIMULATION_STEPS_PER_FRAME; i++) {
-                // Run main world simulation
                 runWorldSimulationWithChunks(movedWorld);
-                
-                // Run container simulations only once per frame to save performance
                 if (i === 0) {
-                   runSimulationOnSmallGrid(movedPouch, pouchGrid, pouchWidth, pouchHeight);
-                   runSimulationOnSmallGrid(movedFlask, flaskGrid, flaskWidth, flaskHeight);
+                   // These two lines are now only for the player's inventory
+                   const pouchSetter = (idx, type) => { if (idx !== -1) pouchGrid[idx] = type; };
+                   runSimulationOnSmallGrid(movedPouch, pouchGrid, pouchWidth, pouchHeight, pouchSetter);
+                   
+                   const flaskSetter = (idx, type) => { if (idx !== -1) flaskGrid[idx] = type; };
+                   runSimulationOnSmallGrid(movedFlask, flaskGrid, flaskWidth, flaskHeight, flaskSetter);
                 }
             }
             
@@ -2947,6 +3233,18 @@
             }
 
             requestAnimationFrame(gameLoop);
+        }
+
+        function cleanupDestroyedBodies() {
+            rigidBodies = rigidBodies.filter(body => {
+                if (body.isDestroyed) {
+                    // "Collect" the b2Body for destruction later.
+                    bodiesToDestroy.push(body.b2Body);
+                    // Remove the wrapper object from our game's array.
+                    return false; 
+                }
+                return true;
+            });
         }
 
         function updateUI()
@@ -3010,10 +3308,14 @@
 
         /**
          * Checks the player's position against all triggers and manages interaction state.
+         * Now includes a vertical leeway to work correctly with the Box2D physics engine.
          */
         function updateTriggers() {
             const playerCheckX = player.x + player.width / 2;
             const playerCheckY = player.y + player.height;
+            
+            // NEW: A small tolerance to detect "standing on" a trigger in a physics world.
+            const verticalLeeway = 2; // 2 pixels
 
             let canCurrentlyInteract = false;
             let activeTrigger = null;
@@ -3022,12 +3324,12 @@
                 const isPlayerInside = (
                     playerCheckX >= trigger.x &&
                     playerCheckX <= trigger.x + trigger.width &&
-                    playerCheckY >= trigger.y &&
+                    // CORRECTED CHECK: Allow player's feet to be slightly *above* the trigger's top edge.
+                    playerCheckY >= trigger.y - verticalLeeway && 
                     playerCheckY <= trigger.y + trigger.height
                 );
 
                 if (isPlayerInside) {
-                    // We found a trigger the player is inside.
                     canCurrentlyInteract = true;
                     activeTrigger = trigger;
 
@@ -3043,7 +3345,6 @@
                 }
             }
 
-            // After checking all triggers, update the player's global state.
             player.canInteract = canCurrentlyInteract;
             player.currentTrigger = activeTrigger;
         }
@@ -3097,16 +3398,15 @@
             document.getElementById('loading-status').innerText = message;
         }
 
-        /**
-         * Asynchronously loads all game assets and world data, updating the UI between steps.
-         */
         async function mainLoader() {
             const loadingOverlay = document.getElementById('loading-overlay');
-            
-            // A helper function to pause execution and allow the browser to render UI updates.
-            const yieldToBrowser = () => new Promise(resolve => setTimeout(resolve, 20)); // 20ms pause
+            const yieldToBrowser = () => new Promise(resolve => setTimeout(resolve, 20));
 
-            updateLoadingStatus('Generating Background...');
+            updateLoadingStatus('Structuring World...');
+            await yieldToBrowser();
+            createChunkGrid();
+
+            updateLoadingStatus('Carving Background Strata...');
             await yieldToBrowser();
             skyImageData = generateCaveBackground(worldWidth, worldHeight);
 
@@ -3135,16 +3435,18 @@
 
             updateLoadingStatus('Activating Dynamic Matter...');
             await yieldToBrowser();
-            initializeChunks();
+            activateInitialChunks();
 
             updateLoadingStatus('Igniting the First Light...');
             await yieldToBrowser();
             updateLighting(true);
 
-            updateLoadingStatus('Done!');
-            await new Promise(resolve => setTimeout(resolve, 100)); // Brief pause to see "Done!"
+            createPlayerBody(); 
+            createWoodenBox(player.x + 20, player.y - 40);
 
-            // Hide the overlay with a fade-out effect for a smooth transition
+            updateLoadingStatus('Done!');
+            await new Promise(resolve => setTimeout(resolve, 100));
+
             loadingOverlay.style.transition = 'opacity 0.5s';
             loadingOverlay.style.opacity = '0';
             await new Promise(resolve => setTimeout(() => {
@@ -3152,7 +3454,7 @@
                 resolve();
             }, 500));
             
-            // The game is fully loaded, now we can start the main loop.
+            // The game loop will now be started from the new entry point.
             gameLoop();
         }
 
@@ -3204,10 +3506,188 @@
             ctx.fillText(`${Math.round(player.hoverEnergy)}/${player.maxHoverEnergy}`, x + barWidth / 2, y + barHeight / 2);
         }
 
+        /**
+         * Generates a single static b2Body for a chunk by merging horizontal runs of solid pixels
+         * into larger rectangular fixtures. This is much more efficient than one body per pixel.
+         * @param {object} chunk - The chunk to process.
+         * @returns {b2Body} The newly created static body for the chunk.
+         */
+        function generateStaticBodyForChunk(chunk) {
+            const bodyDef = new b2BodyDef();
+            bodyDef.set_type(box2d.b2_staticBody);
+            const body = box2dWorld.CreateBody(bodyDef);
 
-        //loadInitialScene();
-        //gameLoop();
-        mainLoader();
+            const startX = (chunk.index % chunkWidth) * CHUNK_SIZE;
+            const startY = Math.floor(chunk.index / chunkWidth) * CHUNK_SIZE;
+
+            for (let y = startY; y < startY + CHUNK_SIZE; y++) {
+                for (let x = startX; x < startX + CHUNK_SIZE; x++) {
+                    // If this pixel is solid and we're not already in a run
+                    if (isSolidForPlayer(grid[getIdx(x, y)])) {
+                        let runEndX = x;
+                        // Find the end of the horizontal run of solid pixels
+                        while (runEndX + 1 < startX + CHUNK_SIZE && isSolidForPlayer(grid[getIdx(runEndX + 1, y)])) {
+                            runEndX++;
+                        }
+                        
+                        const runWidth = (runEndX - x) + 1;
+                        const fixtureDef = new b2FixtureDef();
+                        const shape = new b2PolygonShape();
+                        
+                        // Create a single rectangle for the whole run
+                        const centerX = x + runWidth / 2;
+                        const centerY = y + 0.5;
+                        shape.SetAsBox(
+                            (runWidth / 2) / B2_SCALE, 
+                            0.5 / B2_SCALE, 
+                            new b2Vec2(centerX / B2_SCALE, centerY / B2_SCALE), 
+                            0
+                        );
+                        fixtureDef.set_shape(shape);
+                        body.CreateFixture(fixtureDef);
+
+                        // Skip the pixels we've already merged
+                        x = runEndX;
+                    }
+                }
+            }
+            body.SetActive(false); // Start inactive by default
+            return body;
+        }
+
+        /**
+         * The final, high-performance collider update. It activates/deactivates chunk bodies
+         * and intelligently throttles expensive mesh regeneration to prevent memory crashes.
+         * @param {number} now - The current time from performance.now().
+         */
+        function updateWorldColliders(now) {
+            const neededChunks = new Set();
+            const lookahead = 1; 
+
+            const allDynamicBodies = [...rigidBodies, player];
+
+            // 1. Determine which terrain chunks are needed.
+            for (const bodyObject of allDynamicBodies) {
+                if (!bodyObject.b2Body) continue;
+                const fixture = bodyObject.b2Body.GetFixtureList();
+                if (!fixture) continue;
+                const aabb = fixture.GetAABB(0);
+                
+                const minChunkX = Math.floor(aabb.get_lowerBound().get_x() * B2_SCALE / CHUNK_SIZE) - lookahead;
+                const maxChunkX = Math.ceil(aabb.get_upperBound().get_x() * B2_SCALE / CHUNK_SIZE) + lookahead;
+                const minChunkY = Math.floor(aabb.get_lowerBound().get_y() * B2_SCALE / CHUNK_SIZE) - lookahead;
+                const maxChunkY = Math.ceil(aabb.get_upperBound().get_y() * B2_SCALE / CHUNK_SIZE) + lookahead;
+
+                for (let cy = minChunkY; cy <= maxChunkY; cy++) {
+                    for (let cx = minChunkX; cx <= maxChunkX; cx++) {
+                        if (cx >= 0 && cx < chunkWidth && cy >= 0 && cy < chunkHeight) {
+                            neededChunks.add(chunkGrid[cy * chunkWidth + cx]);
+                        }
+                    }
+                }
+            }
+
+            // 2. Deactivate chunks that are no longer needed.
+            for (const chunk of activeStaticChunks) {
+                if (!neededChunks.has(chunk) && chunk.staticBody) {
+                    chunk.staticBody.SetActive(false);
+                }
+            }
+
+            // 3. Activate/Regenerate newly needed chunks.
+            for (const chunk of neededChunks) {
+                // --- THE CRITICAL THROTTLING LOGIC ---
+                // If a chunk is dirty and has an existing body, check the cooldown.
+                if (chunk.dirty && chunk.staticBody) {
+                    // Only destroy the body if enough time has passed since the last regen.
+                    if (now - chunk.lastRegenTime > REGEN_COOLDOWN) {
+                        box2dWorld.DestroyBody(chunk.staticBody);
+                        chunk.staticBody = null;
+                    } else {
+                        // Cooldown is active, so we don't regenerate yet, but we keep it dirty.
+                    }
+                }
+
+                // If the chunk needs a body (either new or just regenerated), create it.
+                if (!chunk.staticBody) {
+                    chunk.staticBody = generateStaticBodyForChunk(chunk);
+                    chunk.dirty = false; // It's clean now.
+                    chunk.lastRegenTime = now; // Stamp the time of this regeneration.
+                }
+                
+                chunk.staticBody.SetActive(true);
+            }
+
+            activeStaticChunks = neededChunks;
+        }
+
+        function updateRigidBodies(now) {
+            // First, update the terrain colliders based on the current state of the world
+            updateWorldColliders(now);
+
+            // Tell Box2D to step forward in time. 60fps, standard iterations.
+            box2dWorld.Step(1 / 60, 10, 10);
+            box2dWorld.ClearForces();
+        }
+
+        /**
+         * Custom implementation to transform a local point to a world point.
+         * This version is non-allocating; it writes the result into the 'out' vector.
+         * @param {b2Vec2} out - The vector to store the result in.
+         * @param {b2Transform} transform - The world transform of the body.
+         * @param {b2Vec2} localPoint - The point in the body's local coordinates.
+         */
+        function transformPoint(out, transform, localPoint) {
+            const p = transform.get_p();
+            const q = transform.get_q();
+
+            const localX = localPoint.get_x();
+            const localY = localPoint.get_y();
+
+            const rotatedX = localX * q.get_c() - localY * q.get_s();
+            const rotatedY = localX * q.get_s() + localY * q.get_c();
+
+            out.set_x(rotatedX + p.get_x());
+            out.set_y(rotatedY + p.get_y());
+        }
+
+        //mainLoader();
+
+        // --- NEW, CORRECT GAME ENTRY POINT ---
+
+        // This ensures the page is loaded before we try to run anything.
+        window.onload = function() {
+            const loadingStatus = document.getElementById('loading-status');
+            loadingStatus.innerText = 'Loading Physics Engine...';
+
+            // Call the Box2D function and wait for its promise to resolve.
+            Box2D().then(function(Box2DModule) {
+                // SUCCESS! The physics engine is ready.
+                // The 'Box2DModule' argument contains all the constructors.
+
+                loadingStatus.innerText = 'Initializing Physics...';
+                
+                // Assign our global aliases from the resolved module.
+                box2d = Box2DModule;
+                b2Vec2 = box2d.b2Vec2;
+                b2BodyDef = box2d.b2BodyDef;
+                b2Body = box2d.b2Body;
+                b2FixtureDef = box2d.b2FixtureDef;
+                b2World = box2d.b2World;
+                b2PolygonShape = box2d.b2PolygonShape;
+
+                // NEW: Initialize our global temp vectors
+                tempVec1 = new b2Vec2(0, 0);
+                tempVec2 = new b2Vec2(0, 0);
+
+                // Now it is safe to create the world.
+                box2dWorld = new b2World(new b2Vec2(0, 9.8), true);
+
+                // With physics ready, proceed to load the rest of the game.
+                mainLoader();
+
+            });
+        };
     </script>
 </body>
 </html>
