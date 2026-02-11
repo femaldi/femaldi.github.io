@@ -370,7 +370,8 @@
         const MAX_HOVER_SPEED = 4;
 
         const MAX_CHUNKS_PER_FRAME = 250;
-        const REGEN_COOLDOWN = 250; // Max number of off-screen chunks to process per frame. On-screen chunks are always processed.
+        const REGEN_COOLDOWN = 250;
+        const REBUILD_COOLDOWN = 250; // Max number of off-screen chunks to process per frame. On-screen chunks are always processed.
         let pendingActiveChunks = []; // An array to hold active chunks that were deferred from the previous frame.
         
         let grid = new Uint8Array(worldWidth * worldHeight).fill(MAT.EMPTY);
@@ -442,6 +443,7 @@
                 
                 this.isDestroyed = false;
                 this.needsShapeUpdate = false;
+                this.lastRebuildTime = 0;
 
                 this.pixels.fill(this.materialType);
 
@@ -530,6 +532,8 @@
                     }
                 }
                 this.b2Body.ResetMassData();
+
+                
             }
 
         }
@@ -2131,8 +2135,8 @@
             renderAlchemyUI();
         }
 
-        function createWoodenBox(x, y) {
-            const box = new RigidBody(x, y, 16, 16, MAT.WOOD);
+        function createWoodenBox(x, y, width = 16, height = 16) {
+            const box = new RigidBody(x, y, width, height, MAT.WOOD);
             rigidBodies.push(box);
         }
 
@@ -2159,18 +2163,29 @@
                             // CORRECTED: Use tempVec1 and set its value instead of creating a new object.
                             tempVec1.set_x((x - body.width / 2 + 0.5) / B2_SCALE);
                             tempVec1.set_y((y - body.height / 2 + 0.5) / B2_SCALE);
-                            
+
                             // CORRECTED: Call the non-allocating version, writing the result into tempVec2.
                             transformPoint(tempVec2, transform, tempVec1);
                             const worldPoint = tempVec2; // Just for clarity
-                            
+
                             const worldX = Math.floor(worldPoint.get_x() * B2_SCALE);
                             const worldY = Math.floor(worldPoint.get_y() * B2_SCALE);
-
                             const worldIdx = getIdx(worldX, worldY);
-                            if (worldIdx !== -1 && grid[worldIdx] === MAT.FIRE) {
-                                body.pixels[localIdx] = MAT.FIRE;
-                                pixelsChanged = true;
+
+                            if (worldIdx !== -1) {
+                                const worldMaterial = grid[worldIdx];
+                                
+                                // Check for fire
+                                if (worldMaterial === MAT.FIRE) {
+                                    body.pixels[localIdx] = MAT.FIRE;
+                                    pixelsChanged = true;
+                                } 
+                                // ADDED: Check for acid
+                                else if (worldMaterial === MAT.ACID) {
+                                    // Dissolve the wood pixel into empty space
+                                    body.pixels[localIdx] = MAT.EMPTY;
+                                    pixelsChanged = true;
+                                }
                             }
                         }
                     }
@@ -3157,8 +3172,12 @@
 
             // Rebuild shapes for any bodies that were changed/damaged
             for (const body of rigidBodies) {
-                if (body.needsShapeUpdate) {
-                    body.rebuildFixtures();
+                // Check if a rebuild is needed AND if enough time has passed
+                if (body.needsShapeUpdate && (now - body.lastRebuildTime > REBUILD_COOLDOWN)) {
+                    
+                    // Pass the current time to the function and update the timestamp
+                    body.rebuildFixtures(); 
+                    body.lastRebuildTime = now;
                 }
             }
             
@@ -3442,7 +3461,10 @@
             updateLighting(true);
 
             createPlayerBody(); 
-            createWoodenBox(player.x + 20, player.y - 40);
+            createWoodenBox(500, 150, 128, 16);
+            createWoodenBox(500, 120, 96, 16);
+            createWoodenBox(500, 90, 64, 16);
+            createWoodenBox(500, 60, 32, 16);
 
             updateLoadingStatus('Done!');
             await new Promise(resolve => setTimeout(resolve, 100));
