@@ -381,6 +381,9 @@
 		let projectiles = [];
         let alchemyJobs = [];
 
+        let tSimMs = 0, tRenderMs = 0, tOtherMs = 0;
+
+
         let lightGrid = new Uint8Array(worldWidth * worldHeight).fill(0); // 0 = black, 15 = brightest
         const MAX_LIGHT_LEVEL = 30;
         const LIGHTING_UPDATE_INTERVAL = 30;
@@ -1718,6 +1721,30 @@
             }
         }
 
+        function isRigidBodyAtPixel(worldX, worldY) {
+            // Build a tiny AABB around the pixel center in physics units
+            const pMin = pl.Vec2((worldX - 0.5) / B2_SCALE, (worldY - 0.5) / B2_SCALE);
+            const pMax = pl.Vec2((worldX + 0.5) / B2_SCALE, (worldY + 0.5) / B2_SCALE);
+            const aabb = new pl.AABB(pMin, pMax);
+
+            let hit = false;
+
+            world.queryAABB(aabb, (fixture) => {
+                const body = fixture.getBody();
+                const ud = body.getUserData();
+
+                // Your rigid bodies set userData to the RigidBody instance :contentReference[oaicite:1]{index=1}
+                if (ud && ud.pixels && ud.width && ud.height) {
+                    hit = true;
+                    return false; // stop query early
+                }
+                return true;
+            });
+
+            return hit;
+        }
+
+
         /**
          * Updates the position and state of all particles currently being poured.
          */
@@ -1740,7 +1767,10 @@
                 }
                 
                 // 2. Check for an obstruction at that future position
-                const isObstructed = grid[worldIdx] !== MAT.EMPTY && grid[worldIdx] !== MAT.GAS;
+                const gridBlocked = grid[worldIdx] !== MAT.EMPTY && grid[worldIdx] !== MAT.GAS;
+                const rigidBlocked = isRigidBodyAtPixel(nextIX, nextIY);
+                const isObstructed = gridBlocked || rigidBlocked;
+
                 const hasStopped = (p.vx * p.vx + p.vy * p.vy < 1.0);
 
                 // 3. If a collision is predicted OR the particle has stopped, materialize it
@@ -2018,7 +2048,7 @@
             }
             if (Math.random() < (nearbyFuel ? 0.0 : 0.15))
             {
-                if (Math.random() < 0.25) {
+                if (Math.random() < 0.15) {
                     setter(targetIdx, MAT.GAS);
                 } else {
                     setter(targetIdx, MAT.EMPTY);
@@ -2040,7 +2070,10 @@
                 const aboveIdx = getIdx(x, y - 1);
                 if (aboveIdx !== -1 && grid[aboveIdx] === MAT.EMPTY) setter(aboveIdx, MAT.FIRE);
             }
-            if (Math.random() < 0.003) setter(idx, MAT.GAS);
+            if (Math.random() < 0.003)
+            {
+                setter(idx, Math.random() < 0.15 ? MAT.GAS : MAT.EMPTY);
+            } 
             if (grid[idx] === MAT.COAL_BURNING && setter === setGrid) activateChunkAt(x, y);
         }
         
@@ -2056,7 +2089,9 @@
                 const aboveIdx = getIdx(x, y - 1);
                 if (aboveIdx !== -1 && grid[aboveIdx] === MAT.EMPTY) setter(aboveIdx, MAT.FIRE);
             }
-            if (Math.random() < 0.008) setter(idx, MAT.GAS);
+            if (Math.random() < 0.008){
+                setter(idx, Math.random() < 0.15 ? MAT.GAS : MAT.EMPTY);
+            } 
             if (grid[idx] === MAT.OIL_BURNING && setter === setGrid) activateChunkAt(x, y);
         }
 
@@ -2434,6 +2469,8 @@
             }
         }
 
+        let playerMaskCanvas, playerMaskCtx;
+
         // --- RENDERING ---
         function setPixel(x, y, r, g, b, a = 255) {
             const i = (y * renderWidth + x) * 4;
@@ -2446,16 +2483,6 @@
         function render() {
             // --- WORLD ---
             firePixelsCoords = [];
-
-            // Ensure fluid overlay buffers exist and match size
-            if (!fluidsCanvas || fluidsCanvas.width !== renderWidth || fluidsCanvas.height !== renderHeight) {
-                fluidsCanvas = document.createElement('canvas');
-                fluidsCanvas.width = renderWidth;
-                fluidsCanvas.height = renderHeight;
-                fluidsCtx = fluidsCanvas.getContext('2d', { alpha: true });
-                fluidsImageData = fluidsCtx.createImageData(renderWidth, renderHeight);
-                fluidsPixels = fluidsImageData.data;
-            }
 
             // ---- PASS 0: Background into BASE buffer (opaque) ----
             const bgPixels = skyImageData.data;
@@ -2477,16 +2504,13 @@
                 }
             }
 
-            // ---- PASS 0b: Clear FLUID overlay to transparent ----
-            fluidsPixels.fill(0);
-
             const time = frameCount * 0.04;
 
             // Camera top-left in world pixels
             const startX = Math.floor(camera.x);
             const startY = Math.floor(camera.y);
 
-            // ---- PASS 1/2: Build BASE + FLUID overlay ----
+            // ---- PASS 1: Build BASE + inline FLUID blend ----
             for (let screenY = 0; screenY < viewHeight; screenY++) {
                 const worldY = screenY + startY;
 
@@ -2497,12 +2521,11 @@
                     if (idx === -1) continue;
 
                     const type = grid[idx];
-
                     if (type === MAT.EMPTY || type === MAT.RIGID_BODY_STUB) continue;
 
                     const lightLevel = lightGrid[idx];
 
-                    // If fully dark and not always visible: skip both passes
+                    // If fully dark and not always visible
                     if (lightLevel === 0 && !ALWAYS_VISIBLE_MATERIALS.has(type)) {
                         setPixel(screenX, screenY, 0, 0, 0);
                         continue;
@@ -2518,10 +2541,8 @@
                         firePixelsCoords.push({ x: screenX, y: screenY });
                     } else if (type === MAT.OIL_BURNING || type === MAT.COAL_BURNING) {
                         firePixelsCoords.push({ x: screenX, y: screenY });
-                        //[r, g, b] = animateLiquidColor(r, g, b, worldX, worldY, type, time);
                         [r, g, b] = varyColor(...COLORS[type], worldX, worldY, type, 4);
                     } else if (LIQUIDS.has(type)) {
-                        //[r, g, b] = animateLiquidColor(r, g, b, worldX, worldY, type, time);
                         [r, g, b] = varyColor(...COLORS[type], worldX, worldY, type, 4);
                     } else {
                         if (SHIMMERING_METALS.has(type)) {
@@ -2545,22 +2566,19 @@
                     // Lighting
                     if (!ALWAYS_VISIBLE_MATERIALS.has(type)) {
                         const brightness = lightLevel / MAX_LIGHT_LEVEL;
-                        r *= brightness;
-                        g *= brightness;
-                        b *= brightness;
+                        r = (r * brightness) | 0;
+                        g = (g * brightness) | 0;
+                        b = (b * brightness) | 0;
                     }
 
-                    // Decide pass
                     const destI = (screenY * renderWidth + screenX) * 4;
 
                     if (isFluid(type)) {
-                        // ---- FLUID OVERLAY PASS (with alpha) ----
-                        fluidsPixels[destI]     = r | 0;
-                        fluidsPixels[destI + 1] = g | 0;
-                        fluidsPixels[destI + 2] = b | 0;
-                        fluidsPixels[destI + 3] = fluidAlpha(type);
+                        // Inline alpha blend into base pixels
+                        const a = fluidAlpha(type); // 0..255
+                        blendPixel(pixels, destI, r | 0, g | 0, b | 0, a);
                     } else {
-                        // ---- BASE PASS (opaque) ----
+                        // Opaque write
                         pixels[destI]     = r | 0;
                         pixels[destI + 1] = g | 0;
                         pixels[destI + 2] = b | 0;
@@ -2569,11 +2587,11 @@
                 }
             }
 
-            // Draw BASE
+            // Draw BASE (now includes fluids)
             ctx.putImageData(imageData, 0, 0);
 
             // Bloom still based on firePixelsCoords from base world draw
-            renderBloom();
+            // renderBloom();
 
             // --- RENDER RIGID BODIES (Planck version) ---
             for (const body of rigidBodies) {
@@ -2583,12 +2601,10 @@
                 const angle = body.body.getAngle();
 
                 ctx.save();
-
                 ctx.translate(
                     pos.x * B2_SCALE - camera.x,
                     pos.y * B2_SCALE - camera.y
                 );
-
                 ctx.rotate(angle);
 
                 for (let y = 0; y < body.height; y++) {
@@ -2612,70 +2628,12 @@
             }
             // --- END BLOCK ---
 
-            // ---- PLAYER (unchanged) ----
-            const aimDX = mouse.worldX - (player.x + player.width / 2);
-            const aimDY = (player.y + 9) - mouse.worldY;
-            const aimAngle = Math.atan2(aimDY, aimDX);
-            const wandDir = angleToDir16(aimAngle);
-
-            playerFacingRight = aimDX >= 0;
-
-            const playerScreenX = Math.round(player.x - camera.x);
-            const playerScreenY = Math.round(player.y - camera.y);
-
-            const cloakColor = '#4a2d5e';
-            const faceColor = '#211e20';
-            let wandScreenX, wandScreenY;
-
-            ctx.imageSmoothingEnabled = false;
-
-            if (playerFacingRight) {
-                ctx.fillStyle = cloakColor;
-                ctx.fillRect(playerScreenX + 2, playerScreenY, 6, 2);
-                ctx.fillRect(playerScreenX, playerScreenY + 2, 8, 12);
-                ctx.fillRect(playerScreenX + 2, playerScreenY + 14, 4, 2);
-
-                ctx.fillStyle = faceColor;
-                ctx.fillRect(playerScreenX + 4, playerScreenY + 2, 2, 4);
-
-                wandScreenX = playerScreenX + 11;
-                wandScreenY = playerScreenY + 9;
-            } else {
-                ctx.fillStyle = cloakColor;
-                ctx.fillRect(playerScreenX, playerScreenY, 6, 2);
-                ctx.fillRect(playerScreenX, playerScreenY + 2, 8, 12);
-                ctx.fillRect(playerScreenX + 2, playerScreenY + 14, 4, 2);
-
-                ctx.fillStyle = faceColor;
-                ctx.fillRect(playerScreenX + 2, playerScreenY + 2, 2, 4);
-
-                wandScreenX = playerScreenX - 3;
-                wandScreenY = playerScreenY + 9;
-            }
-
-            const handX = playerFacingRight ? playerScreenX + 8 : playerScreenX - 1;
-            const handY = playerScreenY + 9;
-
-            const wandLen = 3;
-            const dx = wandDir.x;
-            const dy = wandDir.y;
-            const mag = Math.max(Math.abs(dx), Math.abs(dy));
-
-            ctx.fillStyle = '#bfa76a';
-            for (let i = 0; i < wandLen; i++) {
-                ctx.fillRect(
-                    handX + Math.round(dx * i / mag),
-                    handY + Math.round(dy * i / mag),
-                    1, 1
-                );
-            }
-
-            ctx.fillStyle = '#ffcc66';
-            ctx.fillRect(
-                handX + Math.round(dx * wandLen / mag),
-                handY + Math.round(dy * wandLen / mag),
-                1, 1
-            );
+            // ---- PLAYER (scaled + 2-frame anim, modular) ----
+            const aim = computePlayerAim();
+            const anim = getPlayerAnimFrame();
+            const playerDraw = renderPlayer(aim, anim);
+            wandScreenX = playerDraw.wandOriginX;
+            wandScreenY = playerDraw.wandOriginY;
 
             // --- RENDER POURED PARTICLES ---
             for (const p of pouredParticles) {
@@ -2722,14 +2680,333 @@
             ctx.lineTo(mouse.x / scale, mouse.y / scale);
             ctx.stroke();
 
-            // ✅ COMPOSITE FLUIDS IN FRONT OF PLAYER (true alpha blending)
-            fluidsCtx.putImageData(fluidsImageData, 0, 0);
-            ctx.drawImage(fluidsCanvas, 0, 0);
+            // ✅ fluids compositing removed
 
-            //drawPhysicsOutlines();
+            //debugDrawActiveChunks(activeChunks);
             renderPlayerStatsUI();
             renderAlchemyUI();
         }
+
+        // 8x16 base sprite pixels (local coords). Keep it simple.
+        const PLAYER_PIXELS = {
+            cloak: [
+                // hood/top
+                [2,0],[3,0],[4,0],[5,0],[6,0],[7,0],
+                [0,2],[1,2],[2,2],[3,2],[4,2],[5,2],[6,2],[7,2],
+                // body fill (rough)
+                // you can tweak these lists later
+            ],
+            body: [
+                // fill a block-ish cloak body
+                ...(() => {
+                const pts = [];
+                for (let y=3; y<=13; y++) for (let x=0; x<=7; x++) pts.push([x,y]);
+                return pts;
+                })(),
+                // feet
+                [2,14],[3,14],[4,14],[5,14],[2,15],[3,15],[4,15],[5,15],
+            ],
+            faceR: [[4,2],[5,2],[4,3],[5,3],[4,4],[5,4],[4,5],[5,5]],
+            faceL: [[2,2],[3,2],[2,3],[3,3],[2,4],[3,4],[2,5],[3,5]],
+        };
+
+        // 8x16 sprite masks (strings). '.' = transparent, '#' = cloak/body, 'F' = face.
+        // Frame 0/1 are very similar; frame 1 shifts arms/torso by 1 px to fake motion.
+        const PLAYER_SPRITE = [
+        [
+            "....##..", // 0
+            "...####.", // 1
+            "..######", // 2
+            "..##F##.", // 3
+            "..##F##.", // 4
+            "..######", // 5
+            ".#######", // 6
+            ".#######", // 7
+            ".#######", // 8
+            ".#######", // 9
+            "..######", //10
+            "..######", //11
+            "...####.", //12
+            "..######", //13  (robe hem)
+            ".######.", //14  (feet)
+            "########"  //15
+        ],
+        [
+            "....##..", // 0
+            "...####.", // 1
+            "..######", // 2
+            "..##F##.", // 3
+            "..##F##.", // 4
+            "..######", // 5
+            ".#######", // 6
+            ".#######", // 7
+            ".#######", // 8
+            ".#######", // 9
+            "..######", //10
+            "...#####", //11  (slight shift)
+            "..#####.", //12  (slight shift)
+            "..######", //13
+            ".######.", //14
+            "########"  //15
+        ],
+        ];
+
+
+        function drawPlayerBodyScreen(baseScreenX, baseScreenY, facingRight, bob, frameIdx) {
+            // Colors (same as before)
+            const cloak = [0x4a, 0x2d, 0x5e];
+            const face  = [0x21, 0x1e, 0x20];
+
+            const sprite = PLAYER_SPRITE[frameIdx & 1];
+
+            for (let y = 0; y < 16; y++) {
+                const row = sprite[y];
+                for (let x = 0; x < 8; x++) {
+                    const ch = row[x];
+                    if (ch === '.') continue;
+
+                    // Flip horizontally when facing left
+                    const fx = facingRight ? x : (7 - x);
+
+                    const sx = baseScreenX + fx;
+                    const sy = baseScreenY + y + bob;
+
+                    if (ch === 'F') {
+                        drawPlayerPx(sx, sy, face[0], face[1], face[2]);
+                    } else {
+                        drawPlayerPx(sx, sy, cloak[0], cloak[1], cloak[2]);
+                    }
+                }
+            }
+        }
+
+
+
+
+        // Alpha blend (src over dst) directly into the main pixel buffer.
+        // a = 0..255
+        function blendPixel(pixels, destI, r, g, b, a) {
+            // If fully opaque, just write
+            if (a >= 255) {
+                pixels[destI]     = r;
+                pixels[destI + 1] = g;
+                pixels[destI + 2] = b;
+                pixels[destI + 3] = 255;
+                return;
+            }
+            // If fully transparent, do nothing
+            if (a <= 0) return;
+
+            const invA = 255 - a;
+
+            // dst is already opaque background/world in your pipeline
+            pixels[destI]     = ((r * a + pixels[destI]     * invA) / 255) | 0;
+            pixels[destI + 1] = ((g * a + pixels[destI + 1] * invA) / 255) | 0;
+            pixels[destI + 2] = ((b * a + pixels[destI + 2] * invA) / 255) | 0;
+            pixels[destI + 3] = 255;
+        }
+
+        function getWorldTypeAtScreen(screenX, screenY) {
+            const worldX = (screenX + camera.x) | 0;
+            const worldY = (screenY + camera.y) | 0;
+            const idx = getIdx(worldX, worldY);
+            return (idx === -1) ? MAT.EMPTY : grid[idx];
+        }
+
+        // Returns 0..1 alpha for drawing player pixels at this screen coord.
+        // If liquid is present, player becomes more transparent so liquid appears “in front”.
+        function playerAlphaAtScreen(screenX, screenY) {
+            const t = getWorldTypeAtScreen(screenX, screenY);
+            if (!isFluid(t)) return 1;
+
+            // fluidAlpha(t) is 0..255. Higher means “more opaque liquid”.
+            const a = fluidAlpha(t) / 255;
+
+            // Tune these:
+            // - minAlpha: how visible player remains under very opaque liquid
+            // - strength: how strongly fluid alpha suppresses player
+            const minAlpha = 0.20;
+            const strength = 0.85;
+
+            const out = 1 - a * strength;
+            return out < minAlpha ? minAlpha : out;
+        }
+
+        // Draw a single player pixel with automatic “under-liquid” alpha.
+        function drawPlayerPx(screenX, screenY, r, g, b) {
+            const a = playerAlphaAtScreen(screenX, screenY);
+            if (a >= 0.999) {
+                ctx.fillStyle = `rgb(${r|0},${g|0},${b|0})`;
+                ctx.fillRect(screenX, screenY, 1, 1);
+                return;
+            }
+            ctx.save();
+            ctx.globalAlpha = a;
+            ctx.fillStyle = `rgb(${r|0},${g|0},${b|0})`;
+            ctx.fillRect(screenX, screenY, 1, 1);
+            ctx.restore();
+        }
+
+
+
+        // ---- PLAYER RENDERING (modular) ----
+        const PLAYER_SPRITE_SCALE = 1.0;
+
+        // Returns: { facingRight, wandDir, aimAngle }
+        function computePlayerAim() {
+            const aimDX = mouse.worldX - (player.x + player.width / 2);
+            const aimDY = (player.y + 9) - mouse.worldY; // keep your existing "aim from chest" feel
+            const aimAngle = Math.atan2(aimDY, aimDX);
+            const wandDir = angleToDir16(aimAngle);
+
+            playerFacingRight = aimDX >= 0;
+
+            return { facingRight: playerFacingRight, wandDir, aimAngle };
+        }
+
+        // Simple 2-frame animation. Faster when moving, slower when idle.
+        // Returns: { bob, armBob }
+        function getPlayerAnimFrame() {
+            const moving =
+                keys['KeyA'] || keys['KeyD'] || keys['KeyW'] ||
+                Math.abs(player.vx) > 0.05 || Math.abs(player.vy) > 0.05;
+
+            const rate = moving ? 6 : 14;
+            const frameIdx = ((frameCount / rate) | 0) & 1;
+
+            const bob = frameIdx ? 1 : 0;
+            const armBob = frameIdx ? 1 : 0;
+
+            return { bob, armBob, frameIdx };
+        }
+
+
+        // Draws cloak + face at sprite-local coords (8x16 base)
+        function drawPlayerBody(ctx, facingRight, bob) {
+            const cloakColor = '#4a2d5e';
+            const faceColor  = '#211e20';
+
+            ctx.fillStyle = cloakColor;
+
+            if (facingRight) {
+                ctx.fillRect(2, 0 + bob, 6, 2);
+                ctx.fillRect(0, 2 + bob, 8, 12);
+                ctx.fillRect(2, 14 + bob, 4, 2);
+
+                ctx.fillStyle = faceColor;
+                ctx.fillRect(4, 2 + bob, 2, 4);
+            } else {
+                ctx.fillRect(0, 0 + bob, 6, 2);
+                ctx.fillRect(0, 2 + bob, 8, 12);
+                ctx.fillRect(2, 14 + bob, 4, 2);
+
+                ctx.fillStyle = faceColor;
+                ctx.fillRect(2, 2 + bob, 2, 4);
+            }
+        }
+
+        // Draws wand pixels from a hand point (sprite-local), returns wand origin in SCREEN coords
+        function drawWand(ctx, baseScreenX, baseScreenY, facingRight, wandDir, bob, armBob) {
+            // Hand point in sprite-local coords (these matched your old numbers)
+            const handLocalX = facingRight ? 8 : -1;
+            const handLocalY = 9 + bob - armBob;
+
+            // Convert to screen coords
+            const handX = baseScreenX + handLocalX;
+            const handY = baseScreenY + handLocalY;
+
+            const wandLen = 3;
+            const dx = wandDir.x;
+            const dy = wandDir.y;
+            const mag = Math.max(Math.abs(dx), Math.abs(dy)) || 1;
+
+            ctx.fillStyle = '#bfa76a';
+            for (let i = 0; i < wandLen; i++) {
+                ctx.fillRect(
+                    handX + Math.round(dx * i / mag),
+                    handY + Math.round(dy * i / mag),
+                    1, 1
+                );
+            }
+
+            // Tip
+            ctx.fillStyle = '#ffcc66';
+            ctx.fillRect(
+                handX + Math.round(dx * wandLen / mag),
+                handY + Math.round(dy * wandLen / mag),
+                1, 1
+            );
+
+            // Use wand origin for your aim line start
+            return { wandOriginX: handX, wandOriginY: handY };
+        }
+
+        function drawWandScreen(handX, handY, wandDir) {
+            const wandLen = 3;
+            const dx = wandDir.x, dy = wandDir.y;
+            const mag = Math.max(Math.abs(dx), Math.abs(dy)) || 1;
+
+            // shaft
+            for (let i = 0; i < wandLen; i++) {
+                drawPlayerPx(
+                    handX + Math.round(dx * i / mag),
+                    handY + Math.round(dy * i / mag),
+                    0xbf, 0xa7, 0x6a
+                );
+            }
+            // tip
+            drawPlayerPx(
+                handX + Math.round(dx * wandLen / mag),
+                handY + Math.round(dy * wandLen / mag),
+                0xff, 0xcc, 0x66
+            );
+        }
+
+
+        // Orchestrator: scales sprite 1.5x around feet so it "grows" nicely.
+        // Returns: { wandOriginX, wandOriginY }
+        function renderPlayer(aim, anim) {
+            const facingRight = aim.facingRight;
+            const wandDir = aim.wandDir;
+            const bob = anim.bob;
+            const armBob = anim.armBob;
+
+            // Base sprite size (your original)
+            const baseW = 8;
+            const baseH = 16;
+
+            const playerScreenX = Math.round(player.x - camera.x);
+            const playerScreenY = Math.round(player.y - camera.y);
+
+            ctx.imageSmoothingEnabled = false;
+
+            // Anchor at feet-center, then scale, then draw at (-baseW/2, -baseH)
+            const anchorX = playerScreenX + (baseW / 2);
+            const anchorY = playerScreenY + baseH;
+
+            ctx.save();
+            ctx.translate(anchorX, anchorY);
+            ctx.scale(PLAYER_SPRITE_SCALE, PLAYER_SPRITE_SCALE);
+
+            // Sprite-local top-left
+            const localX = -baseW / 2;
+            const localY = -baseH;
+
+            ctx.translate(localX, localY);
+
+            // IMPORTANT: wand is drawn in SCREEN coords, so we draw it *after* restoring
+            ctx.restore();
+            
+            // To draw wand at the correct place with scaling, we compute where the scaled sprite's
+            // local origin ended up in screen space:
+            const scaledBaseX = Math.round(anchorX + localX * PLAYER_SPRITE_SCALE);
+            const scaledBaseY = Math.round(anchorY + localY * PLAYER_SPRITE_SCALE);
+            
+            drawPlayerBodyScreen(scaledBaseX, scaledBaseY, facingRight, bob, anim.frameIdx);
+            // Wand is drawn in screen pixels (1x1 rects), so it looks crisp.
+            return drawWand(ctx, scaledBaseX, scaledBaseY, facingRight, wandDir, bob, armBob);
+        }
+
 
 
         function createWoodenBox(x, y, width = 16, height = 16) {
@@ -4007,6 +4284,8 @@
                 lastFpsTime = now;
             }
 
+            const t0 = performance.now();
+
             if (frameCount % VISIBLE_LIQUID_SCAN_INTERVAL === 0) {
                 findAndActivateVisibleLiquidSurfaces();
             }
@@ -4105,6 +4384,7 @@
                 activateChunkAt(mouse.worldX, mouse.worldY);
             }
 
+            const t1 = performance.now();
             // --- SIMULATIONS ---
             for (let i = 0; i < SIMULATION_STEPS_PER_FRAME; i++) {
                 runWorldSimulationWithChunks(movedWorld);
@@ -4117,21 +4397,35 @@
                    runSimulationOnSmallGrid(movedFlask, flaskGrid, flaskWidth, flaskHeight, flaskSetter);
                 }
             }
+
+            tSimMs = performance.now() - t1;
             
             updateCamera();
             mouse.worldX = Math.floor(camera.x + mouse.x / scale);
             mouse.worldY = Math.floor(camera.y + mouse.y / scale);
 
+            const t2 = performance.now();
             // --- RENDER LOGIC ---
             render();
             renderContainers();
             drawHUD();
+            tRenderMs = performance.now() - t2;
             
             if ((frameCount % 2) === 0) { // Update hover material at 30fps
                 updateHoverMaterial();
             }
 
             requestAnimationFrame(gameLoop);
+
+            tOtherMs = performance.now() - t0 - tSimMs - tRenderMs;
+
+            ctx.fillStyle = "white";
+            ctx.font = "12px monospace";
+            ctx.textAlign = "right";
+            ctx.fillText(`simulation: ${tSimMs.toFixed(2)}ms`, renderWidth - 6, renderHeight - 30);
+            ctx.fillText(`render: ${tRenderMs.toFixed(2)}ms`, renderWidth - 6, renderHeight - 50);
+            ctx.fillText(`other: ${tOtherMs.toFixed(2)}ms`, renderWidth - 6, renderHeight - 70);
+            ctx.textAlign = "left";
         }
 
         function destroyOrphanDynamicBodies() {
@@ -4544,6 +4838,38 @@
             ctx.textBaseline = 'middle';
             ctx.fillText(`${Math.round(player.hoverEnergy)}/${player.maxHoverEnergy}`, x + barWidth / 2, y + barHeight / 2);
         }
+
+        // Draws a rectangle outline for each active chunk.
+        // Call at the end of render() (after world is drawn), every frame.
+        function debugDrawActiveChunks(activeChunks) {
+            if (!activeChunks || activeChunks.size === 0) return;
+            console.log(activeChunks.size);
+
+            ctx.save();
+            ctx.lineWidth = 1;
+            ctx.globalAlpha = 0.9;
+
+            // Bright visible outline (no fill)
+            ctx.strokeStyle = "rgba(255,255,255,0.9)";
+
+            // Helps crisp 1px lines on pixel art canvas
+            const camX = camera.x | 0;
+            const camY = camera.y | 0;
+
+            for (const ch of activeChunks) {
+                let cx, cy;
+
+                const chunkX = ch.index % chunkWidth;
+                const chunkY = Math.floor(ch.index / chunkWidth);
+                const startX = chunkX * CHUNK_SIZE;
+                const startY = chunkY * CHUNK_SIZE;
+
+                ctx.strokeRect(startX - camX, startY - camY, CHUNK_SIZE, CHUNK_SIZE);
+            }
+
+            ctx.restore();
+        }
+
 
         function generateStaticBodyForChunk(chunk) {
 
