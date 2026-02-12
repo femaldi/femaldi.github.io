@@ -138,27 +138,33 @@
 
     <canvas id="canvas"></canvas>
 
-    <script src="https://cdn.jsdelivr.net/npm/earcut@2.2.4/dist/earcut.min.js"></script>
-    <script src="https://unpkg.com/planck-js@0.3.0/dist/planck.min.js"></script>
-
+    <script>
+        var Module = { TOTAL_MEMORY: 256*1024*1024 };
+    </script>
+    <script src="https://kripken.github.io/box2d.js/demo/webgl/Box2D_v2.2.1_min.js"></script>
 
     <script>
         // --- CONFIGURATION ---
         const canvas = document.getElementById('canvas');
         const ctx = canvas.getContext('2d');
-        const pl = planck;
-
-        const world = new pl.World({
-            gravity: pl.Vec2(0, 10)
-        });
 
         const B2_SCALE = 30; // 30 pixels = 1 meter in the physics world
+        let box2d;
+        let box2dWorld;
         let rigidBodies = [];
         let staticWorldBodies = []; // To hold temporary terrain colliders
         let activeStaticChunks = new Set();
         let bodiesToDestroy = [];   // NEW: A "kill list" for entire b2Bodies
         let tempVec1 = null;
         let tempVec2 = null;
+
+        // Box2D Aliases for easier access
+        let b2Vec2;
+        let b2BodyDef;
+        let b2Body;
+        let b2FixtureDef;
+        let b2World;
+        let b2PolygonShape;
 
         const CHUNK_SIZE = 16; // Chunks will be 16x16 pixels
         let chunkWidth, chunkHeight;
@@ -185,8 +191,8 @@
         canvas.style.imageRendering = "pixelated";
 
 
-        const worldWidth = 3000;
-        const worldHeight = 10000;
+        const worldWidth = viewWidth * 15;
+        const worldHeight = viewHeight * 10;
 
         const renderWidth = viewWidth;
         const renderHeight = viewHeight;
@@ -367,7 +373,7 @@
         const MAX_CHUNKS_PER_FRAME = 250;
         const REGEN_COOLDOWN = 250;
         const REBUILD_COOLDOWN = 250;
-        const MIN_ISLAND_PIXELS = 5;
+        const MIN_ISLAND_PIXELS = 5; // Max number of off-screen chunks to process per frame. On-screen chunks are always processed.
         let pendingActiveChunks = []; // An array to hold active chunks that were deferred from the previous frame.
         
         let grid = new Uint8Array(worldWidth * worldHeight).fill(MAT.EMPTY);
@@ -431,21 +437,6 @@
         const STORABLE_SOLIDS = new Set([MAT.SAND, MAT.SOIL, MAT.GUNPOWDER, MAT.COAL, MAT.GLASS, MAT.COPPER, MAT.SILVER, MAT.GOLD, MAT.PLATINUM]);
         const STORABLE_LIQUIDS = new Set([MAT.WATER, MAT.OIL, MAT.ACID]);
 
-        function validatePolygon(points) {
-            for (let i = 0; i < points.length; i++) {
-                for (let j = i + 1; j < points.length; j++) {
-                    const dx = points[i].x - points[j].x;
-                    const dy = points[i].y - points[j].y;
-                    const distSq = dx*dx + dy*dy;
-
-                    if (distSq < 0.0001) {
-                        console.error("Duplicate or near-duplicate vertices:", i, j, points[i], points[j]);
-                    }
-                }
-            }
-        }
-
-
         class RigidBody {
             constructor(x, y, width, height, material) {
                 this.width = width;
@@ -463,22 +454,31 @@
                 this.pixels.fill(this.materialType);
 
                 // --- Create the Box2D Body ---
-                this.body = world.createBody({
-                    type: 'dynamic',
-                    position: pl.Vec2(x / B2_SCALE, y / B2_SCALE)
-                });
+                const bodyDef = new b2BodyDef();
+                bodyDef.set_type(box2d.b2_dynamicBody);
+                const position = new b2Vec2(x / B2_SCALE, y / B2_SCALE);
+                bodyDef.set_position(position);
 
+                this.b2Body = box2dWorld.CreateBody(bodyDef);
                 
                 // CORRECTED: Call the safe creation function, NOT rebuild.
                 this._createFixturesFromPixels(); 
             }
 
             rebuildFixtures() {
-                let f = this.body.getFixtureList();
-                while (f) {
-                    const next = f.getNext();
-                    this.body.destroyFixture(f);
-                    f = next;
+                // --- YOUR CORRECTED LOGIC ---
+                // Loop a known, finite number of times, destroying the head of the list each time.
+                // This is immune to any iterator or GetNext() bugs.
+                for (let i = 0; i < this.fixtureCount; i++) {
+                    const fixture = this.b2Body.GetFixtureList();
+                    if (fixture) {
+                        //console.log(fixture)
+                        this.b2Body.DestroyFixture(fixture);
+                    } else {
+                        // This is a safety break in case the count is somehow wrong.
+                        // It should not be necessary but prevents an error.
+                        break;
+                    }
                 }
 
                 // Now that the body is clean, call the helper to build the new fixtures and get the new count.
@@ -487,298 +487,66 @@
                 this.needsShapeUpdate = false;
             }
 
-            getBinaryMask() {
-                const mask = new Uint8Array(this.width * this.height);
-                for (let i = 0; i < mask.length; i++) {
-                    const t = this.pixels[i];
-                    mask[i] = (t !== MAT.EMPTY && t !== MAT.FIRE && t !== MAT.GAS) ? 1 : 0;
-                }
-                return mask;
-            }
-
             _createFixturesFromPixels() {
-
                 this.fixtureCount = 0;
-
-                const w = this.width;
-                const h = this.height;
-
-                const mask = new Uint8Array(w * h);
-
-                // Build solidity mask
-                for (let i = 0; i < mask.length; i++) {
-                    const t = this.pixels[i];
-                    mask[i] = (t !== MAT.EMPTY && t !== MAT.FIRE && t !== MAT.GAS) ? 1 : 0;
-                }
-
-                // If nothing solid remains → destroy body
-                if (!mask.some(v => v === 1)) {
+                // If there are no solid pixels left, mark the body for destruction
+                if (!this.pixels.some(p => p !== MAT.EMPTY && p !== MAT.FIRE && p !== MAT.GAS)) {
                     this.isDestroyed = true;
                     return;
                 }
 
-                const islands = extractIslands(mask, w, h);
-
-                for (const island of islands) {
-
-                    const outline = marchingSquares(island, w, h);
-                    if (outline.length < 3) continue;
-
-                    const preSimplified = simplifyDouglasPeucker(outline, 1.0);
-                    if (preSimplified.length < 3) continue;
-
-                    const simplified = removeCollinear(preSimplified, 0.01);
-                    if (simplified.length < 3) continue;
-
-                    validatePolygon(simplified);
-
-                    // Flatten for earcut
-                    const flat = [];
-                    for (const p of simplified) {
-                        flat.push(p.x, p.y);
-                    }
-
-                    const indices = earcut(flat);
-
-                    for (let i = 0; i < indices.length; i += 3) {
-
-                        const p0 = simplified[indices[i]];
-                        const p1 = simplified[indices[i + 1]];
-                        const p2 = simplified[indices[i + 2]];
-
-                        // Convert to local body coordinates
-                        const ax = (p0.x - w / 2) / B2_SCALE;
-                        const ay = (p0.y - h / 2) / B2_SCALE;
-
-                        const bx = (p1.x - w / 2) / B2_SCALE;
-                        const by = (p1.y - h / 2) / B2_SCALE;
-
-                        const cx = (p2.x - w / 2) / B2_SCALE;
-                        const cy = (p2.y - h / 2) / B2_SCALE;
-
-                        // ---- Skip degenerate triangles ----
-
-                        const area = Math.abs(
-                            ax * (by - cy) +
-                            bx * (cy - ay) +
-                            cx * (ay - by)
-                        ) * 0.5;
-
-                        if (area < 0.00001) continue;
-
-                        // ---- Ensure CCW winding (Planck requirement) ----
-
-                        const cross =
-                            (bx - ax) * (cy - ay) -
-                            (by - ay) * (cx - ax);
-
-                        let verts;
-
-                        if (cross < 0) {
-                            // Reverse winding
-                            verts = [
-                                pl.Vec2(ax, ay),
-                                pl.Vec2(cx, cy),
-                                pl.Vec2(bx, by)
-                            ];
-                        } else {
-                            verts = [
-                                pl.Vec2(ax, ay),
-                                pl.Vec2(bx, by),
-                                pl.Vec2(cx, cy)
-                            ];
-                        }
-
-                        try {
-                            this.body.createFixture(
-                                pl.Polygon(verts),
-                                {
-                                    density: 0.5,
-                                    friction: 0.4,
-                                    restitution: 0.2
+                // Generate new, optimized fixtures (merging horizontal runs)
+                for (let y = 0; y < this.height; y++) {
+                    for (let x = 0; x < this.width; x++) {
+                        const type = this.pixels[y * this.width + x];
+                        if (type !== MAT.EMPTY && type !== MAT.FIRE && type !== MAT.GAS) {
+                            let runEndX = x;
+                            while (runEndX + 1 < this.width) {
+                                const nextType = this.pixels[y * this.width + (runEndX + 1)];
+                                if (nextType !== MAT.EMPTY && nextType !== MAT.FIRE && nextType !== MAT.GAS) {
+                                    runEndX++;
+                                } else {
+                                    break;
                                 }
+                            }
+                            
+                            const runWidth = (runEndX - x) + 1;
+                            const fixtureDef = new b2FixtureDef();
+                            
+                            const centerX = (x - this.width / 2) + runWidth / 2;
+                            const centerY = y - this.height / 2 + 0.5;
+                            
+                            const shape = new b2PolygonShape();
+                            shape.SetAsBox(
+                                (runWidth / 2) / B2_SCALE,
+                                0.5 / B2_SCALE,
+                                new b2Vec2(centerX / B2_SCALE, centerY / B2_SCALE),
+                                0
                             );
 
+                            fixtureDef.set_shape(shape);
+                            fixtureDef.set_density(0.5);
+                            fixtureDef.set_friction(0.4);
+                            fixtureDef.set_restitution(0.2);
+                            //console.log("fixture created");
+                            this.b2Body.CreateFixture(fixtureDef);
+
                             this.fixtureCount++;
-                        } catch (e) {
-                            // If Planck rejects it, just skip triangle
-                            continue;
+                            
+                            x = runEndX;
                         }
                     }
                 }
+                this.b2Body.ResetMassData();
 
-                this.body.resetMassData();
+                
             }
 
-
-            
-
-        }
-
-        function extractIslands(mask, w, h) {
-            const visited = new Uint8Array(mask.length);
-            const islands = [];
-
-            const dirs = [[1,0],[-1,0],[0,1],[0,-1]];
-
-            for (let y = 0; y < h; y++) {
-                for (let x = 0; x < w; x++) {
-
-                    const idx = y*w+x;
-                    if (!mask[idx] || visited[idx]) continue;
-
-                    const stack = [[x,y]];
-                    const island = new Set();
-
-                    visited[idx] = 1;
-
-                    while (stack.length) {
-                        const [cx, cy] = stack.pop();
-                        island.add(cy*w+cx);
-
-                        for (const [dx,dy] of dirs) {
-                            const nx = cx+dx;
-                            const ny = cy+dy;
-                            if (nx<0||ny<0||nx>=w||ny>=h) continue;
-
-                            const nIdx = ny*w+nx;
-                            if (mask[nIdx] && !visited[nIdx]) {
-                                visited[nIdx]=1;
-                                stack.push([nx,ny]);
-                            }
-                        }
-                    }
-
-                    islands.push(island);
-                }
-            }
-
-            return islands;
-        }
-
-        function marchingSquares(island, w, h) {
-
-            const isSolid = (x, y) => {
-                if (x < 0 || y < 0 || x >= w || y >= h) return false;
-                return island.has(y * w + x);
-            };
-
-            // Find starting boundary pixel
-            let start = null;
-            for (const idx of island) {
-                const x = idx % w;
-                const y = Math.floor(idx / w);
-                if (!isSolid(x - 1, y)) { // left edge exposed
-                    start = { x, y };
-                    break;
-                }
-            }
-
-            if (!start) return [];
-
-            const outline = [];
-            let x = start.x;
-            let y = start.y;
-            let dir = 0; // 0=up,1=right,2=down,3=left
-
-            const dirs = [
-                [0, -1],
-                [1, 0],
-                [0, 1],
-                [-1, 0]
-            ];
-
-            do {
-                outline.push({ x: x + 0.5, y: y + 0.5 });
-
-                // Check directions clockwise
-                for (let i = 0; i < 4; i++) {
-                    const ndir = (dir + 3 + i) % 4;
-                    const nx = x + dirs[ndir][0];
-                    const ny = y + dirs[ndir][1];
-
-                    if (isSolid(nx, ny)) {
-                        x = nx;
-                        y = ny;
-                        dir = ndir;
-                        break;
-                    }
-                }
-
-            } while (!(x === start.x && y === start.y));
-
-            return outline;
-        }
-
-        function simplifyDouglasPeucker(points, epsilon) {
-            if (points.length < 3) return points;
-
-            const sqDist = (p, a, b) => {
-                const dx = b.x - a.x;
-                const dy = b.y - a.y;
-                const t = ((p.x-a.x)*dx + (p.y-a.y)*dy)/(dx*dx+dy*dy);
-                const proj = {x:a.x+t*dx,y:a.y+t*dy};
-                return (p.x-proj.x)**2 + (p.y-proj.y)**2;
-            };
-
-            const simplify = (pts) => {
-                let maxDist = 0;
-                let index = 0;
-
-                for (let i=1;i<pts.length-1;i++){
-                    const d = sqDist(pts[i], pts[0], pts[pts.length-1]);
-                    if (d>maxDist){maxDist=d;index=i;}
-                }
-
-                if (Math.sqrt(maxDist) > epsilon){
-                    const left = simplify(pts.slice(0,index+1));
-                    const right = simplify(pts.slice(index));
-                    return left.slice(0,-1).concat(right);
-                }
-
-                return [pts[0], pts[pts.length-1]];
-            };
-
-            return simplify(points);
-        }
-
-        function removeCollinear(points, epsilon = 0.001) {
-            const result = [];
-
-            for (let i = 0; i < points.length; i++) {
-                const prev = points[(i - 1 + points.length) % points.length];
-                const curr = points[i];
-                const next = points[(i + 1) % points.length];
-
-                const ax = curr.x - prev.x;
-                const ay = curr.y - prev.y;
-                const bx = next.x - curr.x;
-                const by = next.y - curr.y;
-
-                const cross = ax * by - ay * bx;
-
-                if (Math.abs(cross) > epsilon) {
-                    result.push(curr);
-                }
-            }
-
-            return result;
-        }
-
-        /**
-         * Determines if a pixel type should be considered solid for the purpose of
-         * checking structural connectivity. This should match the logic used for building physics fixtures.
-         * @param {number} type - The material ID of the pixel.
-         * @returns {boolean} True if the pixel is structural, false otherwise.
-         */
-        function isPixelSolidForConnectivity(type) {
-            return type !== MAT.EMPTY && type !== MAT.FIRE && type !== MAT.GAS;
         }
 
         /**
          * Uses a flood-fill (BFS) algorithm to find all separate, contiguous "islands"
-         * of solid pixels within a single rigid body's pixel grid. This version checks
-         * 8 directions to correctly handle diagonal connections.
+         * of solid pixels within a single rigid body's pixel grid.
          * @param {Uint8Array} pixels - The body's internal pixel array.
          * @param {number} width - The width of the body's grid.
          * @param {number} height - The height of the body's grid.
@@ -793,8 +561,8 @@
                 for (let x = 0; x < width; x++) {
                     const idx = getIdx(x, y);
 
-                    // If this pixel is solid (using the new check) and we haven't visited it yet, we've found a new island.
-                    if (isPixelSolidForConnectivity(pixels[idx]) && !visited[idx]) {
+                    // If this pixel is solid and we haven't visited it yet, we've found a new island.
+                    if (pixels[idx] !== MAT.EMPTY && !visited[idx]) {
                         const newIsland = [];
                         const queue = [{ x, y }];
                         visited[idx] = 1;
@@ -803,19 +571,15 @@
                             const current = queue.shift();
                             newIsland.push(current);
 
-                            // THE FIX: Check all 8 neighbors, including diagonals.
-                            const neighbors = [
-                                { dx: 0, dy: 1 }, { dx: 0, dy: -1 }, { dx: 1, dy: 0 }, { dx: -1, dy: 0 },
-                                { dx: 1, dy: 1 }, { dx: 1, dy: -1 }, { dx: -1, dy: 1 }, { dx: -1, dy: -1 }
-                            ];
+                            // Check neighbors (top, bottom, left, right)
+                            const neighbors = [{ dx: 0, dy: 1 }, { dx: 0, dy: -1 }, { dx: 1, dy: 0 }, { dx: -1, dy: 0 }];
                             for (const n of neighbors) {
                                 const nx = current.x + n.dx;
                                 const ny = current.y + n.dy;
 
                                 if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
                                     const nIdx = getIdx(nx, ny);
-                                    // Also use the new check here.
-                                    if (isPixelSolidForConnectivity(pixels[nIdx]) && !visited[nIdx]) {
+                                    if (pixels[nIdx] !== MAT.EMPTY && !visited[nIdx]) {
                                         visited[nIdx] = 1;
                                         queue.push({ x: nx, y: ny });
                                     }
@@ -829,37 +593,37 @@
             return islands;
         }
 
+        /**
+         * Checks if a rigid body has split into multiple pieces. If it has, it
+         * destroys the original body and creates new, separate rigid bodies for each piece.
+         * @param {RigidBody} body - The body to check for splits.
+         * @returns {Array<RigidBody>|null} An array of new bodies if a split occurred, otherwise null.
+         */
         function checkForSplits(body) {
-
             const islands = findPixelIslands(body.pixels, body.width, body.height);
 
-            if (islands.length <= 1) return null;
+            // If there's only one island (or none), no split has occurred.
+            if (islands.length <= 1) {
+                return null;
+            }
 
-            const MIN_ISLAND_PIXELS = 6;
-
-            const oldBody = body.body;
-
-            // Cache motion/pose
-            const oldAngle = oldBody.getAngle();
-            const oldLinVel = oldBody.getLinearVelocity();   // Vec2
-            const oldAngVel = oldBody.getAngularVelocity();  // number
-
+            // A split has been detected!
+            body.isSplit = true; // Mark the original body for destruction.
             const newBodies = [];
 
             for (const island of islands) {
+                if (island.length < MIN_ISLAND_PIXELS) {
+                    continue; // Skip to the next island.
+                }
 
-                if (island.length < MIN_ISLAND_PIXELS) continue;
-
-                // --- bounding box + centroid ---
-                let minX = Infinity, minY = Infinity;
-                let maxX = -Infinity, maxY = -Infinity;
+                // 1. Find the bounding box of the new island.
+                let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
                 let sumX = 0, sumY = 0;
-
                 for (const p of island) {
-                    if (p.x < minX) minX = p.x;
-                    if (p.y < minY) minY = p.y;
-                    if (p.x > maxX) maxX = p.x;
-                    if (p.y > maxY) maxY = p.y;
+                    minX = Math.min(minX, p.x);
+                    minY = Math.min(minY, p.y);
+                    maxX = Math.max(maxX, p.x);
+                    maxY = Math.max(maxY, p.y);
                     sumX += p.x;
                     sumY += p.y;
                 }
@@ -867,60 +631,39 @@
                 const newWidth = maxX - minX + 1;
                 const newHeight = maxY - minY + 1;
 
-                // Center in original body local pixel coords
+                // 2. Calculate the island's center point in the *original* body's local coordinates.
                 const localCenterX = (sumX / island.length) - body.width / 2 + 0.5;
                 const localCenterY = (sumY / island.length) - body.height / 2 + 0.5;
 
-                // Convert to world space using Planck
-                const worldCenter = oldBody.getWorldPoint(
-                    pl.Vec2(localCenterX / B2_SCALE, localCenterY / B2_SCALE)
-                );
+                // 3. Transform that local center point to a global world position.
+                tempVec1.set_x(localCenterX / B2_SCALE);
+                tempVec1.set_y(localCenterY / B2_SCALE);
+                transformPoint(tempVec2, body.b2Body.GetTransform(), tempVec1);
+                const worldX = tempVec2.get_x() * B2_SCALE;
+                const worldY = tempVec2.get_y() * B2_SCALE;
+                
+                // 4. Create the new rigid body.
+                const newBody = new RigidBody(worldX, worldY, newWidth, newHeight, body.materialType);
+                newBody.pixels.fill(MAT.EMPTY); // Clear the default fill.
 
-                const worldX = worldCenter.x * B2_SCALE;
-                const worldY = worldCenter.y * B2_SCALE;
-
-                // Copy pixels into tight buffer
-                const newPixels = new Uint8Array(newWidth * newHeight).fill(MAT.EMPTY);
-
+                // 5. Copy the pixels from the island into the new body's smaller grid.
                 for (const p of island) {
-                    const nx = p.x - minX;
-                    const ny = p.y - minY;
-                    newPixels[ny * newWidth + nx] =
-                        body.pixels[p.y * body.width + p.x];
+                    const newX = p.x - minX;
+                    const newY = p.y - minY;
+                    const newIdx = newY * newWidth + newX;
+                    const oldIdx = p.y * body.width + p.x;
+                    newBody.pixels[newIdx] = body.pixels[oldIdx];
                 }
 
-                // Create new rigid body wrapper
-                const nb = new RigidBody(worldX, worldY, newWidth, newHeight, body.materialType);
-
-                // Overwrite pixels, then rebuild fixtures
-                nb.pixels = newPixels;
-                nb.rebuildFixtures();
-
-                // Copy pose + velocities
-                nb.body.setAngle(oldAngle);
-                nb.body.setLinearVelocity(pl.Vec2(oldLinVel.x, oldLinVel.y));
-                nb.body.setAngularVelocity(oldAngVel);
-
-                // Optional: prevent immediate explosion
-                nb.body.setAwake(false);
-
-                newBodies.push(nb);
+                // Apply some of the old body's velocity to the new piece.
+                newBody.b2Body.SetLinearVelocity(body.b2Body.GetLinearVelocity());
+                newBody.b2Body.SetAngularVelocity(body.b2Body.GetAngularVelocity());
+                
+                newBodies.push(newBody);
             }
-
-            // If filtering removed everything, don't split
-            if (newBodies.length <= 1) return null;
-
-            // Destroy original physics body NOW (clean approach)
-            world.destroyBody(oldBody);
-
-            // Mark wrapper so it gets removed from rigidBodies without trying to destroy twice
-            body.isDestroyed = true;
 
             return newBodies;
         }
-
-
-
 
         function createChunkGrid() {
             chunkWidth = Math.ceil(worldWidth / CHUNK_SIZE);
@@ -1206,7 +949,7 @@
         const player = {
             x: 30, y: 80, vx: 0, vy: 0,
             width: 8, height: 16, speed: 1, onGround: false,
-            body: null,
+            b2Body: null,
             canInteract: false,
             currentTrigger: null,
             maxHoverEnergy: 100,
@@ -1259,56 +1002,44 @@
         window.addEventListener('keyup', (e) => keys[e.code] = false);
 
         /**
-         * Creates a dynamic Planck body for the player with a composite shape
+         * Creates a dynamic b2Body for the player with a composite shape
          * (box + circle) for better movement characteristics.
          */
         function createPlayerBody() {
+            const bodyDef = new b2BodyDef();
+            bodyDef.set_type(box2d.b2_dynamicBody);
+            bodyDef.set_position(new b2Vec2(player.x / B2_SCALE, player.y / B2_SCALE));
+            bodyDef.set_fixedRotation(true); // Prevents the player from tipping over
+            bodyDef.set_linearDamping(0.5); // Adds a bit of air/ground resistance
 
-            // Create dynamic body
-            player.body = world.createBody({
-                type: 'dynamic',
-                position: pl.Vec2(player.x / B2_SCALE, player.y / B2_SCALE),
-                fixedRotation: true,   // Prevent tipping
-                linearDamping: 0.5     // Air/ground resistance
-            });
+            player.b2Body = box2dWorld.CreateBody(bodyDef);
 
-            // --------------------------------------------------
-            // 1. Torso Fixture (Rectangle)
-            // --------------------------------------------------
-
-            const halfWidth  = (player.width / 2 - 1) / B2_SCALE;
-            const halfHeight = (player.height / 2 - 2) / B2_SCALE;
-
-            player.body.createFixture(
-                pl.Box(
-                    halfWidth,
-                    halfHeight,
-                    pl.Vec2(0, -2 / B2_SCALE), // shift torso upward slightly
-                    0
-                ),
-                {
-                    density: 1.0,
-                    friction: 0.3
-                }
+            // 1. Create the main torso fixture (a rectangle)
+            const torsoFixtureDef = new b2FixtureDef();
+            const torsoShape = new b2PolygonShape();
+            // Make the physics box slightly narrower than the graphics to avoid snagging
+            torsoShape.SetAsBox(
+                (player.width / 2 - 1) / B2_SCALE, 
+                (player.height / 2 - 2) / B2_SCALE,
+                // Center the torso higher up
+                new b2Vec2(0, -2 / B2_SCALE), 
+                0
             );
+            torsoFixtureDef.set_shape(torsoShape);
+            torsoFixtureDef.set_density(1.0);
+            torsoFixtureDef.set_friction(0.3);
+            player.b2Body.CreateFixture(torsoFixtureDef);
 
-            // --------------------------------------------------
-            // 2. Foot Fixture (Circle)
-            // --------------------------------------------------
-
-            const footRadius = (player.width / 2 - 1) / B2_SCALE;
-
-            player.body.createFixture(
-                pl.Circle(
-                    pl.Vec2(0, (player.height / 2 - 2) / B2_SCALE),
-                    footRadius
-                ),
-                {
-                    friction: 0.05 // very low friction for smooth sliding
-                }
-            );
+            // 2. Create the foot sensor fixture (a frictionless circle)
+            const footFixtureDef = new b2FixtureDef();
+            const footShape = new box2d.b2CircleShape(); // Use the global module for b2CircleShape
+            footShape.set_m_radius( (player.width / 2 - 1) / B2_SCALE );
+            // Position the circle at the player's feet
+            footShape.set_m_p( new b2Vec2(0, (player.height / 2 - 2) / B2_SCALE) );
+            footFixtureDef.set_shape(footShape);
+            footFixtureDef.set_friction(0.05); // Very low friction for smooth sliding
+            player.b2Body.CreateFixture(footFixtureDef);
         }
-
 
         function setMaterial(name) {
             const map = {
@@ -1468,53 +1199,48 @@
         }
 
         /**
-         * Stamps a "no-go" zone onto the rigidBodyGrid for terrain generation.
-         * Planck.js version.
+         * Stamps a "no-go" zone onto the rigidBodyGrid for the terrain generator.
+         * This zone includes the body's pixels AND a 1-pixel buffer around them,
+         * creating a definitive "bubble" of empty space that prevents the static terrain
+         * from ever touching or conflicting with a dynamic body.
          */
         function updateRigidBodyGrid() {
-
-            // 1️⃣ Clear previous frame
+            // 1. Clear the grid from the previous frame
             rigidBodyGrid.fill(0);
+            const buffer = 1; // The size of our safety buffer in pixels
 
-            const buffer = 1; // safety buffer in pixels
-
-            // 2️⃣ Iterate dynamic bodies
+            // 2. Iterate through all rigid bodies
             for (const body of rigidBodies) {
-
                 if (body.isDestroyed) continue;
 
+                const transform = body.b2Body.GetTransform();
+
+                // 3. For each solid pixel within the body...
                 for (let y = 0; y < body.height; y++) {
                     for (let x = 0; x < body.width; x++) {
+                        if (body.pixels[y * body.width + x] !== MAT.EMPTY) {
+                            // Find its world position
+                            tempVec1.set_x((x - body.width / 2 + 0.5) / B2_SCALE);
+                            tempVec1.set_y((y - body.height / 2 + 0.5) / B2_SCALE);
+                            transformPoint(tempVec2, transform, tempVec1);
+                            const worldX = Math.floor(tempVec2.get_x() * B2_SCALE);
+                            const worldY = Math.floor(tempVec2.get_y() * B2_SCALE);
 
-                        if (body.pixels[y * body.width + x] === MAT.EMPTY) continue;
+                            // 4. Stamp not just the pixel, but a buffered area around it.
+                            for (let dy = -buffer; dy <= buffer; dy++) {
+                                for (let dx = -buffer; dx <= buffer; dx++) {
+                                    const stampX = worldX + dx;
+                                    const stampY = worldY + dy;
+                                    const stampIdx = getIdx(stampX, stampY);
 
-                        // Convert local pixel → world position (Planck)
-                        const localPos = pl.Vec2(
-                            (x - body.width / 2 + 0.5) / B2_SCALE,
-                            (y - body.height / 2 + 0.5) / B2_SCALE
-                        );
-
-                        const worldPos = body.body.getWorldPoint(localPos);
-
-                        const worldX = Math.floor(worldPos.x * B2_SCALE);
-                        const worldY = Math.floor(worldPos.y * B2_SCALE);
-
-                        // 3️⃣ Stamp buffer zone
-                        for (let dy = -buffer; dy <= buffer; dy++) {
-                            for (let dx = -buffer; dx <= buffer; dx++) {
-
-                                const stampX = worldX + dx;
-                                const stampY = worldY + dy;
-
-                                const stampIdx = getIdx(stampX, stampY);
-
-                                if (stampIdx !== -1) {
-                                    rigidBodyGrid[stampIdx] = 1;
-
-                                    // Optional sand displacement:
-                                    // if (grid[stampIdx] !== MAT.EMPTY) {
-                                    //     setGrid(stampIdx, MAT.EMPTY);
-                                    // }
+                                    if (stampIdx !== -1) {
+                                        // Mark this spot as a "no-go" zone for terrain generation
+                                        rigidBodyGrid[stampIdx] = 1;
+                                        // Also displace any sand currently there
+                                        // if (grid[stampIdx] !== MAT.EMPTY) {
+                                        //     setGrid(stampIdx, MAT.EMPTY);
+                                        // }
+                                    }
                                 }
                             }
                         }
@@ -1523,80 +1249,56 @@
             }
         }
 
-
         
 
         function updatePlayer() {
-
             if (isAlchemyUIVisible) {
-                player.body.setLinearVelocity(pl.Vec2(0, 0));
+                player.b2Body.SetLinearVelocity(new b2Vec2(0, 0)); // Stop all movement
                 return;
             }
 
-            const currentVel = player.body.getLinearVelocity();
+            const currentVel = player.b2Body.GetLinearVelocity();
             let targetVelX = 0;
 
-            // --------------------------------------------------
-            // 1. Horizontal Movement
-            // --------------------------------------------------
-
+            // --- 1. Determine Target Velocity from Input ---
             if (keys['KeyA']) {
-                targetVelX = -player.speed * 2.5;
+                targetVelX = -player.speed * 2.5; // Multiply speed to feel responsive in Box2D
                 playerFacingRight = false;
-            }
-            else if (keys['KeyD']) {
+            } else if (keys['KeyD']) {
                 targetVelX = player.speed * 2.5;
                 playerFacingRight = true;
             }
-
-            // --------------------------------------------------
-            // 2. Ground Check (simple velocity check)
-            // --------------------------------------------------
-
-            player.onGround = Math.abs(currentVel.y) < 0.1;
-
-            // --------------------------------------------------
-            // 3. Hover / Jump
-            // --------------------------------------------------
-
-            let newVelY = currentVel.y;
+            
+            // --- 2. Handle Ground State and Jumping/Hovering ---
+            // A simple approximation for being on the ground: check if vertical velocity is near zero.
+            // A more robust method (raycast or contact listener) can be added later.
+            player.onGround = Math.abs(currentVel.get_y()) < 0.1;
 
             if (keys['KeyW'] && player.hoverEnergy > 0) {
-                newVelY = -MAX_HOVER_SPEED;
+                // Apply a consistent upward velocity for hovering
+                currentVel.set_y(-MAX_HOVER_SPEED); 
                 player.hoverEnergy = Math.max(0, player.hoverEnergy - player.hoverDrainRate);
                 spawnLevitationParticles(2);
             }
-
-            // --------------------------------------------------
-            // 4. Recharge Energy
-            // --------------------------------------------------
-
+            
+            // --- 3. Recharge Energy ---
             if (player.onGround && !keys['KeyW']) {
-                player.hoverEnergy = Math.min(
-                    player.maxHoverEnergy,
-                    player.hoverEnergy + player.hoverRechargeRate
-                );
+                player.hoverEnergy = Math.min(player.maxHoverEnergy, player.hoverEnergy + player.hoverRechargeRate);
             }
 
-            // --------------------------------------------------
-            // 5. Apply Velocity
-            // --------------------------------------------------
-
-            player.body.setLinearVelocity(
-                pl.Vec2(targetVelX, newVelY)
-            );
+            // --- 4. Apply the new velocity to the physics body ---
+            player.b2Body.SetLinearVelocity(new b2Vec2(targetVelX, currentVel.get_y()));
         }
-
 
         /**
          * Reads the position from the player's b2Body and updates the
          * graphical player object to match.
          */
         function syncPlayerWithBody() {
-            const pos = player.body.getPosition();
+            const pos = player.b2Body.GetPosition();
             // The position is the center of the body, so we offset by half size to get top-left
-            player.x = (pos.x * B2_SCALE) - (player.width / 2);
-            player.y = (pos.y * B2_SCALE) - (player.height / 2);
+            player.x = (pos.get_x() * B2_SCALE) - (player.width / 2);
+            player.y = (pos.get_y() * B2_SCALE) - (player.height / 2);
         }
 
         /**
@@ -1992,7 +1694,7 @@
                 if (nType === MAT.COAL) { setter(nIdx, MAT.COAL_BURNING); return; }
                 if (nType === MAT.WOOD) {
                     nearbyFuel = true;
-                    if (Math.random() < 0.02) { setter(nIdx, MAT.FIRE); moved[nIdx] = 1; }
+                    if (Math.random() < 0.01) { setter(nIdx, MAT.FIRE); moved[nIdx] = 1; }
                 }
                 if (nType === MAT.WATER) { setter(nIdx, MAT.GAS); setter(idx, MAT.GAS); return; }
             }
@@ -2006,15 +1708,7 @@
                     moved[nextIdx] = 1; targetIdx = nextIdx;
                 }
             }
-            if (Math.random() < (nearbyFuel ? 0.0 : 0.15))
-            {
-                if (Math.random() < 0.25) {
-                    setter(targetIdx, MAT.GAS);
-                } else {
-                setter(targetIdx, MAT.EMPTY);
-                }
-            } 
-                
+            if (Math.random() < (nearbyFuel ? 0.0 : 0.15)) setter(targetIdx, MAT.GAS);
         }
 
         function updateBurningCoal(x, y, idx, moved, grid, w, h, getIdx, setter) {
@@ -2105,10 +1799,10 @@
                     const nIdx = getIdx(x + n.x, y + n.y);
                     if (nIdx === -1) continue;
                     const nType = grid[nIdx];
-                    const isImmune = [MAT.EMPTY, MAT.GLASS, MAT.GAS, MAT.GLASS_WALL, MAT.ADAMANTIUM, MAT.RUNE_WALL].includes(nType);
+                    const isImmune = [MAT.EMPTY, MAT.GLASS, MAT.GAS, MAT.GLASS_WALL, MAT.ADAMANTIUM].includes(nType);
                     if (!isImmune && !isLiquid(nType) && Math.random() < 0.25) {
                         setter(nIdx, MAT.EMPTY);
-                        if (Math.random() < 0.2) { setter(idx, MAT.EMPTY); consumed = true; break; }
+                        if (Math.random() < 0.1) { setter(idx, MAT.EMPTY); consumed = true; break; }
                     }
                 }
                 if (consumed) { moved[idx] = 1; return; }
@@ -2496,11 +2190,7 @@
                     } else if (LIQUIDS.has(type)) {
                         [r, g, b] = animateLiquidColor(r, g, b, worldX, worldY, type, time);
                     } else {
-                        if (SHIMMERING_METALS.has(type)) {
-                            [r, g, b] = metallicColor(worldX, worldY, COLORS[type]);
-                        } else {
-                            [r, g, b] = varyColor(...COLORS[type], worldX, worldY, type, 16);
-                        }
+                        [r, g, b] = varyColor(r, g, b, worldX, worldY, type, 16);
                     }
 
                     // 2. NEW: Apply shimmer effect if the material is a metal.
@@ -2534,50 +2224,34 @@
 
             renderBloom();
 
-            // --- RENDER RIGID BODIES (Planck version) ---
+            // --- NEW: RENDER RIGID BODIES ---
             for (const body of rigidBodies) {
+                const pos = body.b2Body.GetPosition();
+                const angle = body.b2Body.GetAngle();
 
-                const pos = body.body.getPosition();
-                const angle = body.body.getAngle();
-
-                ctx.save();
-
-                // Move and rotate canvas to match physics body
-                ctx.translate(
-                    pos.x * B2_SCALE - camera.x,
-                    pos.y * B2_SCALE - camera.y
-                );
-
+                ctx.save(); // Save the current canvas state
+                
+                // Move and rotate the canvas to match the Box2D body
+                ctx.translate(pos.get_x() * B2_SCALE - camera.x, pos.get_y() * B2_SCALE - camera.y);
                 ctx.rotate(angle);
 
-                // Draw body pixels centered at (0, 0)
+                // Now, draw the body's pixels centered at (0,0)
                 for (let y = 0; y < body.height; y++) {
                     for (let x = 0; x < body.width; x++) {
-
                         const type = body.pixels[y * body.width + x];
-                        if (type === MAT.EMPTY) continue;
-
-                        if (SHIMMERING_METALS.has(type)) {
-                            [r, g, b] = metallicColor(x, y, COLORS[type]);
-                        } else {
-                            [r, g, b] = varyColor(...COLORS[type], x, y, type, 8);
+                        if (type !== MAT.EMPTY) {
+                            const [r, g, b] = varyColor(...COLORS[type], x, y, type, 8);
+                            ctx.fillStyle = `rgb(${r},${g},${b})`;
+                            
+                            // Draw the pixel, offsetting by half the width/height to center it
+                            ctx.fillRect(x - body.width / 2, y - body.height / 2, 1, 1);
                         }
-
-                        ctx.fillStyle = `rgb(${r},${g},${b})`;
-
-                        ctx.fillRect(
-                            x - body.width / 2,
-                            y - body.height / 2,
-                            1,
-                            1
-                        );
                     }
                 }
 
-                ctx.restore();
+                ctx.restore(); // Restore the canvas state for the next object
             }
-            // --- END BLOCK ---
-
+            // --- END OF NEW BLOCK ---
 
             const aimDX = mouse.worldX - (player.x + player.width / 2);
             const aimDY = (player.y + 9) - mouse.worldY;
@@ -2708,7 +2382,6 @@
             ctx.lineTo(mouse.x / scale, mouse.y / scale);
             ctx.stroke();
 
-            //drawPhysicsOutlines();
             renderPlayerStatsUI();
             renderAlchemyUI();
         }
@@ -2720,72 +2393,73 @@
 
         /**
          * Handles interactions between the world grid and rigid bodies.
-         * Planck.js version (no WASM, no manual memory management needed).
+         * This version is memory-safe and performant, reusing global temporary
+         * vectors instead of allocating new ones in a loop, preventing crashes.
          */
         function updateRigidBodyInteractions() {
-
             for (const body of rigidBodies) {
                 if (body.isDestroyed) continue;
 
+                const transform = body.b2Body.GetTransform();
                 let pixelsChanged = false;
 
                 body_pixel_loop:
                 for (let y = 0; y < body.height; y++) {
                     for (let x = 0; x < body.width; x++) {
-
                         const localIdx = y * body.width + x;
                         const type = body.pixels[localIdx];
 
                         if (type === MAT.EMPTY) continue;
 
-                        // --------------------------------------------------
-                        // Convert local pixel → world position (Planck way)
-                        // --------------------------------------------------
+                        // --- THE MEMORY FIX ---
+                        // REUSE the global tempVec1 instead of creating a 'new b2Vec2'.
+                        tempVec1.set_x((x - body.width / 2 + 0.5) / B2_SCALE);
+                        tempVec1.set_y((y - body.height / 2 + 0.5) / B2_SCALE);
 
-                        const localPos = pl.Vec2(
-                            (x - body.width / 2 + 0.5) / B2_SCALE,
-                            (y - body.height / 2 + 0.5) / B2_SCALE
-                        );
+                        // REUSE the existing non-allocating transformPoint function.
+                        // The result is safely stored in the global tempVec2.
+                        transformPoint(tempVec2, transform, tempVec1);
+                        const worldX = Math.floor(tempVec2.get_x() * B2_SCALE);
+                        const worldY = Math.floor(tempVec2.get_y() * B2_SCALE);
+                        // --- END OF FIX ---
 
-                        const worldPos = body.body.getWorldPoint(localPos);
 
-                        const worldX = Math.floor(worldPos.x * B2_SCALE);
-                        const worldY = Math.floor(worldPos.y * B2_SCALE);
+                        // --- MUTUALLY EXCLUSIVE LOGIC (UNCHANGED) ---
 
-                        // --------------------------------------------------
-                        // BEHAVIOR 2: WOOD reacts to environment
-                        // --------------------------------------------------
-
-                        if (type === MAT.WOOD) {
-
+                        // BEHAVIOR 1: If this pixel is ALREADY FIRE, its job is to emit fire outwards.
+                        if (type === MAT.FIRE) {
+                            if (Math.random() < 0.05) {
+                                const neighbors = [{ dx: 0, dy: 1 }, { dx: 0, dy: -1 }, { dx: 1, dy: 0 }, { dx: -1, dy: 0 }];
+                                for (const n of neighbors) {
+                                    const checkIdx = getIdx(worldX + n.dx, worldY + n.dy);
+                                    if (checkIdx !== -1 && (grid[checkIdx] === MAT.EMPTY || grid[checkIdx] === MAT.GAS)) {
+                                        setGrid(checkIdx, MAT.FIRE);
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        // BEHAVIOR 2: If this pixel is WOOD, its job is to look for external fire.
+                        else if (type === MAT.WOOD) {
                             const searchRadius = 2;
-
                             for (let dy = -searchRadius; dy <= searchRadius; dy++) {
                                 for (let dx = -searchRadius; dx <= searchRadius; dx++) {
-
                                     const checkIdx = getIdx(worldX + dx, worldY + dy);
-                                    if (checkIdx === -1) continue;
-
-                                    const worldMaterial = grid[checkIdx];
-
-                                    // A) Acid destroys wood
-                                    if (worldMaterial === MAT.ACID) {
-                                        body.pixels[localIdx] = MAT.EMPTY;
-                                        setGrid(checkIdx, MAT.EMPTY);
-                                        pixelsChanged = true;
-                                        continue body_pixel_loop;
-                                    }
-
-                                    // B) Fire ignites wood
-                                    if (
-                                        (worldMaterial === MAT.FIRE ||
-                                        worldMaterial === MAT.OIL_BURNING ||
-                                        worldMaterial === MAT.COAL_BURNING)
-                                        && Math.random() < 0.25
-                                    ) {
-                                        body.pixels[localIdx] = MAT.FIRE;
-                                        pixelsChanged = true;
-                                        continue body_pixel_loop;
+                                    if (checkIdx !== -1) {
+                                        const worldMaterial = grid[checkIdx];
+                                        // A) Check for Acid
+                                        if (worldMaterial === MAT.ACID) {
+                                            body.pixels[localIdx] = MAT.EMPTY;
+                                            setGrid(checkIdx, MAT.EMPTY);
+                                            pixelsChanged = true;
+                                            continue body_pixel_loop;
+                                        }
+                                        // B) Check for Fire Sources
+                                        else if ([MAT.FIRE, MAT.OIL_BURNING, MAT.COAL_BURNING].includes(worldMaterial)) {
+                                            body.pixels[localIdx] = MAT.FIRE;
+                                            pixelsChanged = true;
+                                            continue body_pixel_loop;
+                                        }
                                     }
                                 }
                             }
@@ -2793,111 +2467,20 @@
                     }
                 }
 
-                // --------------------------------------------------
-                // Run internal simulation (fire spreading inside body)
-                // --------------------------------------------------
-
-                // Per-body budget so big burning objects don't spam gas
-                let rbGasBudget = 10;     // tune: 5–20
-                const RB_GAS_CHANCE = 0.25; // tune: 0.1–0.4
-
-                function emitGasFromLocalIndex(localIdx) {
-                    // Convert localIdx -> local (x,y)
-                    const lx = localIdx % body.width;
-                    const ly = (localIdx / body.width) | 0;
-
-                    // Local pixel center -> world
-                    const localPos = pl.Vec2(
-                        (lx - body.width / 2 + 0.5) / B2_SCALE,
-                        (ly - body.height / 2 + 0.5) / B2_SCALE
-                    );
-
-                    const worldPos = body.body.getWorldPoint(localPos);
-                    const wx = Math.floor(worldPos.x * B2_SCALE);
-                    const wy = Math.floor(worldPos.y * B2_SCALE);
-
-                    const wIdx = getIdx(wx, wy);
-                    if (wIdx === -1) return;
-
-                    // Only spawn gas into empty-ish cells
-                    if (grid[wIdx] === MAT.EMPTY || grid[wIdx] === MAT.GAS) {
-                        setGrid(wIdx, MAT.GAS);
-                    }
-                }
-
-                // Intercept GAS
+                // Run the body's internal simulation (fire spreading within the wood)
                 const localSetter = (idx, type) => {
-                    if (idx === -1) return;
-
-                    // If the local sim wants to create GAS, emit to world instead
-                    if (type === MAT.GAS) {
-                        if (rbGasBudget > 0 && Math.random() < RB_GAS_CHANCE) {
-                            emitGasFromLocalIndex(idx);
-                            rbGasBudget--;
-                        }
-
-                        // Local grids don't keep GAS:
-                        // either clear the pixel...
-                        if (body.pixels[idx] !== MAT.EMPTY) {
-                            body.pixels[idx] = MAT.EMPTY;
-                            pixelsChanged = true;
-                        }
-
-                        return;
-                    }
-
-                    // Normal behavior
-                    if (body.pixels[idx] !== type) {
+                    if (idx !== -1 && body.pixels[idx] !== type) {
                         body.pixels[idx] = type;
                         pixelsChanged = true;
                     }
                 };
-
-                runSimulationOnSmallGrid(
-                    body.moved,
-                    body.pixels,
-                    body.width,
-                    body.height,
-                    localSetter
-                );
+                runSimulationOnSmallGrid(body.moved, body.pixels, body.width, body.height, localSetter);
 
                 if (pixelsChanged) {
-                    // leak at most N fire cells outward per frame
-                    let leaks = 0;
-                    const MAX_LEAKS = 3;
-
-                    for (let y = 0; y < body.height && leaks < MAX_LEAKS; y++) {
-                        for (let x = 0; x < body.width && leaks < MAX_LEAKS; x++) {
-
-                            const localIdx = y * body.width + x;
-                            if (body.pixels[localIdx] !== MAT.FIRE) continue;
-
-                            const localPos = pl.Vec2(
-                                (x - body.width / 2 + 0.5) / B2_SCALE,
-                                (y - body.height / 2 + 0.5) / B2_SCALE
-                            );
-
-                            const worldPos = body.body.getWorldPoint(localPos);
-                            const worldX = Math.floor(worldPos.x * B2_SCALE);
-                            const worldY = Math.floor(worldPos.y * B2_SCALE);
-
-                            const dirs = [{dx:1,dy:0},{dx:-1,dy:0},{dx:0,dy:1},{dx:0,dy:-1}];
-                            const d = dirs[(Math.random() * dirs.length) | 0];
-
-                            const checkIdx = getIdx(worldX + d.dx, worldY + d.dy);
-                            if (checkIdx !== -1 && (grid[checkIdx] === MAT.EMPTY || grid[checkIdx] === MAT.GAS)) {
-                                setGrid(checkIdx, MAT.FIRE);
-                                leaks++;
-                            }
-                        }
-                    }
-                    
                     body.needsShapeUpdate = true;
                 }
-
             }
         }
-
 
         /**
          * Top-level function to draw both inventory containers on the screen.
@@ -2927,12 +2510,7 @@
                 for (let x = 0; x < cW; x++) {
                     const type = cGrid[getIdx(x, y, cW, cH)];
                     if (type !== MAT.EMPTY) {
-                        if (SHIMMERING_METALS.has(type)) {
-                            [r, g, b] = metallicColor(x, y, COLORS[type]);
-                        } else {
-                            [r, g, b] = varyColor(...COLORS[type], x, y, type, 8);
-                        }
-
+                        const [r, g, b] = varyColor(...COLORS[type], x, y, type, 8);
                         ctx.fillStyle = `rgb(${r},${g},${b})`;
                         ctx.fillRect(screenX + x, screenY + y, 1, 1);
                     }
@@ -3039,38 +2617,6 @@
             h = (h ^ (h >> 13)) * 1274126177;
             return (h ^ (h >> 16)) & 0xff; // 0..255
         }
-
-        function metallicColor(x, y, baseRGB) {
-            const [br, bg, bb] = baseRGB;
-
-            // Deterministic "brushed metal" stripes (smooth, not grain)
-            // Use low-frequency sine + a diagonal component
-            const stripe =
-                0.5 +
-                0.5 * Math.sin((x * 0.35) + (y * 0.18));
-
-            // Subtle second layer to avoid flatness
-            const stripe2 =
-                0.5 +
-                0.5 * Math.sin((x * 0.08) - (y * 0.12));
-
-            // Combine, keep it subtle
-            const t = 0.65 * stripe + 0.35 * stripe2; // 0..1
-
-            // "Specular" glint: occasional thin highlight bands
-            const glint = (Math.sin(x * 0.9 + y * 0.25) > 0.985) ? 0.25 : 0.0;
-
-            // Final brightness multiplier
-            const m = 0.85 + 0.35 * t + glint;
-
-            // Keep it in a steel-ish range (slightly bluer)
-            const r = Math.min(255, Math.max(0, br * m));
-            const g = Math.min(255, Math.max(0, bg * (m * 0.98)));
-            const b = Math.min(255, Math.max(0, bb * (m * 1.05)));
-
-            return [r | 0, g | 0, b | 0];
-        }
-
 
         function varyColor(r, g, b, x, y, type, strength = 18) {
             // strength = max brightness change (try 12–24)
@@ -3412,48 +2958,49 @@
 
         /**
          * Manages alchemy jobs by teleporting materials from a manifest
-         * to a location above the target cauldron (semicircle geometry).
+         * to a location above the target cauldron.
          */
         function processAlchemyJobs() {
             if (alchemyJobs.length === 0) return;
 
-            const particlesToTeleportThisFrame = 5;
+            // How many particles to teleport per frame. Controls the stream's speed.
+            const particlesToTeleportThisFrame = 5; 
 
             for (let i = alchemyJobs.length - 1; i >= 0; i--) {
                 const job = alchemyJobs[i];
-                const target = job.target; // {cx, cy, r}
 
                 for (let j = 0; j < particlesToTeleportThisFrame; j++) {
+                    // If the manifest is empty, the job is complete.
                     if (job.manifest.length === 0) {
                         alchemyJobs.splice(i, 1);
-                        break;
+                        break; 
                     }
 
+                    // Pull one particle's info from the manifest.
                     const materialInfo = job.manifest.shift();
 
-                    // Spawn zone ABOVE the rim of the semicircle
-                    // Rim is at y = target.cy
-                    const rimX = target.cx;
-                    const rimY = target.cy;
+                    // --- THE FIX: The Teleportation ---
+                    // 1. Define a spawn zone in the air above the target cauldron.
+                    const spawnX = job.target.x + (job.target.w * 0.1) + (Math.random() * job.target.w * 0.5);
+                    const spawnY = job.target.y - (5 + Math.random() * 10); // 5 to 15 pixels above the rim.
 
-                    // Spawn within ~60% of bowl width so it falls inside
-                    const span = target.r * 0.6;
-                    const spawnX = Math.floor(rimX + (Math.random() * 2 - 1) * span);
-                    const spawnY = Math.floor(rimY - (30 + Math.random() * 10)); // 5..15 px above rim
-
+                    // 2. Find the grid index for this spawn point.
                     const spawnIdx = getIdx(spawnX, spawnY);
 
+                    // 3. If the spot in the air is empty, place the material there.
                     if (spawnIdx !== -1 && grid[spawnIdx] === MAT.EMPTY) {
                         setGrid(spawnIdx, materialInfo.type);
+                        
+                        // 4. Activate the chunk to let the main physics engine take over.
                         activateChunkAt(spawnX, spawnY);
                     } else {
-                        // Put it back to try again next frame
+                        // If the air is somehow crowded, put the particle back in the job to try again next frame.
+                        // This guarantees no material is ever lost.
                         job.manifest.unshift(materialInfo);
                     }
                 }
             }
         }
-
 
         // --- THE ALCHEMY REACTION REGISTRY ---
         const ALCHEMY_REACTIONS = {
@@ -3462,84 +3009,93 @@
                 description: "Moves materials from the left cauldron to the right, based on the sampler.",
                 execute: function(station) {
                     console.log("Executing Filter Material reaction!");
-
-                    const filterMaterial = getDominantMaterialInSemicircle(station.sampler);
+                    
+                    const filterMaterial = getDominantMaterialInArea(
+                        station.sampler.x, station.sampler.y, station.sampler.w, station.sampler.h
+                    );
 
                     if (filterMaterial === null) {
                         console.log("Sampler is empty. Nothing to filter.");
                         return;
                     }
-
                     console.log(`Filtering for: ${MATERIAL_NAME[filterMaterial]}`);
 
                     const source = station.cauldrons.left;
                     const target = station.cauldrons.right;
+                    let translationManifest = [];
 
-                    const translationManifest = [];
-
-                    // 1) Build manifest from source semicircle
-                    forEachInDownwardSemicircle(source, (x, y, idx) => {
-                        if (grid[idx] === filterMaterial) {
-                            translationManifest.push({ type: filterMaterial });
-                            setGrid(idx, MAT.EMPTY);
-                            activateChunkAt(x, y);
+                    // 1. Create a simple manifest of the material to be moved.
+                    for (let y = source.y; y < source.y + source.h; y++) {
+                        for (let x = source.x; x < source.x + source.w; x++) {
+                            const idx = getIdx(x, y);
+                            if (idx !== -1 && grid[idx] === filterMaterial) {
+                                // The manifest now only needs the type. The source location is irrelevant.
+                                translationManifest.push({ type: grid[idx] });
+                                setGrid(idx, MAT.EMPTY);
+                                activateChunkAt(x, y);
+                            }
                         }
-                    });
+                    }
 
                     if (translationManifest.length === 0) {
                         console.log("No matching materials found.");
                         return;
                     }
 
-                    // 2) Create job (target is now semicircle geometry)
+                    // 2. Create the job, providing the manifest and the target geometry.
                     alchemyJobs.push({
                         manifest: translationManifest,
                         target: target
                     });
                 }
             },
+            // --- START OF NEW CODE ---
             'heat_material': {
                 name: "Heat Material",
                 description: "Heats the material in the left cauldron, causing reactions.",
                 execute: function(station) {
                     console.log("Executing Heat Material reaction!");
-
                     const source = station.cauldrons.left;
 
-                    // Visual effect centered on semicircle
-                    spawnMagicParticles(50, source.cx, source.cy + source.r * 0.5, [255, 100, 0]);
+                    // Spawn some fire/heat particles for visual effect
+                    spawnMagicParticles(50, source.x + source.w / 2, source.y + source.h / 2, [255, 100, 0]);
 
-                    forEachInDownwardSemicircle(source, (x, y, idx) => {
-                        const type = grid[idx];
-                        let changed = true;
+                    for (let y = source.y; y < source.y + source.h; y++) {
+                        for (let x = source.x; x < source.x + source.w; x++) {
+                            const idx = getIdx(x, y);
+                            if (idx === -1) continue;
 
-                        switch (type) {
-                            case MAT.SAND:
-                                setGrid(idx, MAT.GLASS);
-                                break;
-                            case MAT.WOOD:
-                                setGrid(idx, MAT.FIRE);
-                                break;
-                            case MAT.OIL:
-                                setGrid(idx, MAT.OIL_BURNING);
-                                break;
-                            case MAT.COAL:
-                                setGrid(idx, MAT.COAL_BURNING);
-                                break;
-                            case MAT.GUNPOWDER:
-                                setGrid(idx, MAT.GUNPOWDER_IGNITED);
-                                ignitionTimer[idx] = 8 + Math.floor(Math.random() * 6);
-                                break;
-                            case MAT.WATER:
-                                setGrid(idx, MAT.GAS);
-                                break;
-                            default:
-                                changed = false;
-                                break;
+                            const type = grid[idx];
+                            let changed = true;
+                            switch (type) {
+                                case MAT.SAND:
+                                    setGrid(idx, MAT.GLASS);
+                                    break;
+                                case MAT.WOOD:
+                                    setGrid(idx, MAT.FIRE);
+                                    break;
+                                case MAT.OIL:
+                                    setGrid(idx, MAT.OIL_BURNING);
+                                    break;
+                                case MAT.COAL:
+                                    setGrid(idx, MAT.COAL_BURNING);
+                                    break;
+                                case MAT.GUNPOWDER:
+                                    setGrid(idx, MAT.GUNPOWDER_IGNITED);
+                                    ignitionTimer[idx] = 8 + Math.floor(Math.random() * 6);
+                                    break;
+                                case MAT.WATER:
+                                    setGrid(idx, MAT.GAS);
+                                    break;
+                                default:
+                                    changed = false;
+                                    break;
+                            }
+                            if (changed) {
+                                activateChunkAt(x, y);
+                            }
                         }
-
-                        if (changed) activateChunkAt(x, y);
-                    });
+                    }
                 }
             },
             'clear_cauldrons': {
@@ -3547,7 +3103,6 @@
                 description: "Clears all materials from both cauldrons and the sampler.",
                 execute: function(station) {
                     console.log("Executing Clear Cauldrons reaction!");
-
                     const areasToClear = [
                         station.cauldrons.left,
                         station.cauldrons.right,
@@ -3555,67 +3110,22 @@
                     ];
 
                     for (const area of areasToClear) {
-
-                        spawnMagicParticles(30, area.cx, area.cy, [200, 200, 255]);
-
-                        forEachInDownwardSemicircle(area, (x, y, idx) => {
-                            // don't delete the bowl walls
-                            if (grid[idx] !== MAT.ADAMANTIUM && grid[idx] !== MAT.RUNE_WALL) {
-                                setGrid(idx, MAT.EMPTY);
-                                activateChunkAt(x, y);
+                        // Visual effect for clearing
+                        spawnMagicParticles(30, area.x + area.w / 2, area.y, [200, 200, 255]);
+                        for (let y = area.y; y < area.y + area.h; y++) {
+                            for (let x = area.x; x < area.x + area.w; x++) {
+                                const idx = getIdx(x, y);
+                                if (idx !== -1 && grid[idx] !== MAT.ADAMANTIUM) {
+                                    setGrid(idx, MAT.EMPTY);
+                                    activateChunkAt(x, y);
+                                }
                             }
-                        });
+                        }
                     }
                 }
             }
-
-
             // ... more reactions can be added here ...
         };
-
-        function forEachInDownwardSemicircle(area, fn) {
-            const cx = area.cx, cy = area.cy, r = area.r;
-            const r2 = r * r;
-
-            const minX = Math.floor(cx - r);
-            const maxX = Math.ceil(cx + r);
-            const minY = Math.floor(cy);
-            const maxY = Math.ceil(cy + r);
-
-            for (let y = minY; y <= maxY; y++) {
-                const dy = y - cy;
-                const dy2 = dy * dy;
-                for (let x = minX; x <= maxX; x++) {
-                    const dx = x - cx;
-                    if (dx * dx + dy2 <= r2) {
-                        const idx = getIdx(x, y);
-                        if (idx !== -1) fn(x, y, idx);
-                    }
-                }
-            }
-        }
-
-        function getDominantMaterialInSemicircle(area) {
-            const counts = new Map();
-
-            forEachInDownwardSemicircle(area, (x, y, idx) => {
-                const t = grid[idx];
-                // ignore empty and the bowl material itself
-                if (t === MAT.EMPTY || t === MAT.ADAMANTIUM || t === MAT.RUNE_WALL) return;
-                counts.set(t, (counts.get(t) || 0) + 1);
-            });
-
-            let bestType = null;
-            let bestCount = 0;
-            for (const [t, c] of counts) {
-                if (c > bestCount) {
-                    bestType = t;
-                    bestCount = c;
-                }
-            }
-            return bestType;
-        }
-
 
         /**
          * Clears a large space and generates the fixed alchemy station with a solid floor.
@@ -3660,32 +3170,21 @@
             const rimHeightAboveFloor = 15;
             const cauldronRimY = floorY - rimHeightAboveFloor;
 
-            const CAULDRON_RADIUS = 32;
-            const CAULDRON_THICKNESS = 4;
-            const CAULDRON_INNER_R = CAULDRON_RADIUS - CAULDRON_THICKNESS;
-
-            const SAMPLER_RADIUS = 16;
-            const SAMPLER_THICKNESS = 4;
-            const SAMPLER_INNER_R = SAMPLER_RADIUS - SAMPLER_THICKNESS;
-
             // Use the new, correct function
             // Left Cauldron
-            createCauldron(leftCauldronX, cauldronRimY, CAULDRON_RADIUS, CAULDRON_THICKNESS, MAT.ADAMANTIUM, MAT.RUNE_WALL);
+            createCauldron(leftCauldronX, cauldronRimY, 32, 4, MAT.ADAMANTIUM);
             // Right Cauldron
-            createCauldron(rightCauldronX, cauldronRimY, CAULDRON_RADIUS, CAULDRON_THICKNESS, MAT.ADAMANTIUM, MAT.RUNE_WALL);
+            createCauldron(rightCauldronX, cauldronRimY, 32, 4, MAT.ADAMANTIUM);
             // Sampler in the middle
-            createCauldron(samplerX, floorY - 10, SAMPLER_RADIUS, SAMPLER_THICKNESS, MAT.ADAMANTIUM, MAT.RUNE_WALL);
-
-            
+            createCauldron(samplerX, floorY - 5, 8, 2, MAT.ADAMANTIUM);
 
             const stationGeometry = {
                 cauldrons: {
-                    left:  { cx: leftCauldronX,  cy: cauldronRimY, r: CAULDRON_INNER_R },
-                    right: { cx: rightCauldronX, cy: cauldronRimY, r: CAULDRON_INNER_R }
+                    left: { x: leftCauldronX - 25, y: cauldronRimY, w: 64, h: 32 },
+                    right: { x: rightCauldronX - 25, y: cauldronRimY, w: 64, h: 32 }
                 },
-                sampler: { cx: samplerX, cy: floorY - 10, r: SAMPLER_INNER_R }
+                sampler: { x: samplerX - 8, y: floorY - 5, w: 16, h: 8 }
             };
-
 
             // Create the trigger with our custom onEnter and onLeave logic
             createTrigger({
@@ -3730,60 +3229,37 @@
             });
         }
 
-        function pointInDownwardSemicircle(px, py, cx, cy, r) {
-            if (py < cy) return false;        // only below rim
-            const dx = px - cx;
-            const dy = py - cy;
-            return (dx*dx + dy*dy) <= (r*r);
-        }
-
-
         /**
          * Creates a hollow, downward-facing cauldron bowl, set into a surface.
-         * The outermost 1px layer uses edgeMaterial.
-         *
-         * @param {number} cx - Center X of cauldron
-         * @param {number} rimY - Y coordinate of rim
-         * @param {number} radius - Outer radius
-         * @param {number} thickness - Wall thickness
-         * @param {material} material - Main wall material
-         * @param {material} edgeMaterial - Outermost 1px edge material
+         * It draws a solid depression first, then carves the empty space inside.
+         * @param {number} cx - The center X coordinate of the cauldron.
+         * @param {number} rimY - The Y coordinate for the cauldron's rim (the surface level).
+         * @param {number} radius - The outer radius of the cauldron.
+         * @param {number} thickness - The thickness of the cauldron's wall and floor.
+         * @param {material} material - The material to build the cauldron from.
          */
-        function createCauldron(cx, rimY, radius, thickness, material, edgeMaterial) {
-
+        function createCauldron(cx, rimY, radius, thickness, material) {
             const outerRadiusSq = radius * radius;
-            const outerInnerRadius = radius - 1; // 1px outer shell
-            const outerInnerRadiusSq = outerInnerRadius * outerInnerRadius;
-
             const innerRadius = radius - thickness;
             const innerRadiusSq = innerRadius * innerRadius;
 
-            // 1️⃣ Draw solid outer bowl
-            for (let dy = 0; dy <= radius; dy++) {
+            // 1. Draw the SOLID outer shape of the cauldron's bowl, facing DOWN.
+            // This carves a solid half-sphere depression into the floor.
+            for (let dy = 0; dy <= radius; dy++) { // CHANGED: Loop from 0 to +radius
                 for (let dx = -radius; dx <= radius; dx++) {
-
-                    const distSq = dx * dx + dy * dy;
-                    if (distSq <= outerRadiusSq) {
-
+                    if (dx * dx + dy * dy <= outerRadiusSq) {
                         const idx = getIdx(cx + dx, rimY + dy);
-                        if (idx === -1) continue;
-
-                        // If within 1px of outer radius → edge material
-                        if (distSq > outerInnerRadiusSq) {
-                            setGrid(idx, edgeMaterial);
-                        } else {
+                        if (idx !== -1) {
                             setGrid(idx, material);
                         }
                     }
                 }
             }
 
-            // 2️⃣ Carve hollow interior
-            for (let dy = 0; dy < innerRadius; dy++) {
+            // 2. Carve the EMPTY hollow interior, leaving the walls and bottom intact.
+            for (let dy = 0; dy < innerRadius; dy++) { // CHANGED: Loop from 0 to +innerRadius
                 for (let dx = -innerRadius; dx <= innerRadius; dx++) {
-
-                    if (dx * dx + dy * dy <= innerRadiusSq) {
-
+                     if (dx * dx + dy * dy <= innerRadiusSq) {
                         const idx = getIdx(cx + dx, rimY + dy);
                         if (idx !== -1) {
                             setGrid(idx, MAT.EMPTY);
@@ -3792,7 +3268,6 @@
                 }
             }
         }
-
 
         /**
          * Generates caves with Perlin noise, including four thick, unbroken, noisy
@@ -3958,9 +3433,9 @@
             }
 
             for (const body of bodiesToDestroy) {
-                world.destroyBody(body);
+                if (body) box2dWorld.DestroyBody(body);
             }
-            bodiesToDestroy.length = 0;
+            bodiesToDestroy = [];
 
             if (frameCount % VISIBLE_LIQUID_SCAN_INTERVAL === 0) {
                 findAndActivateVisibleLiquidSurfaces();
@@ -3982,11 +3457,14 @@
                 const body = rigidBodies[i];
                 if (body.needsShapeUpdate && (now - body.lastRebuildTime > REBUILD_COOLDOWN)) {
                     
-                    const newBodies = checkForSplits(rigidBodies);
-                    if (newBodies && newBodies.length) {
-                        for (const nb of newBodies) rigidBodies.push(nb);
-                    }
-                    else {
+                    // First, check if the damage caused a split.
+                    const newPieces = checkForSplits(body);
+
+                    if (newPieces) {
+                        // If it split, add the new pieces to a temporary list.
+                        newBodiesFromSplits.push(...newPieces);
+                    } else {
+                        // If it didn't split, just rebuild its fixtures as normal.
                         body.rebuildFixtures();
                         body.lastRebuildTime = now;
                     }
@@ -4073,12 +3551,15 @@
 
         function cleanupDestroyedBodies() {
             rigidBodies = rigidBodies.filter(body => {
-                // body.isDestroyed bodies already had their Planck body destroyed (in split)
-                // or will be destroyed elsewhere explicitly
-                return !body.isDestroyed;
+                if (body.isDestroyed || body.isSplit) {
+                    // "Collect" the b2Body for destruction later.
+                    bodiesToDestroy.push(body.b2Body);
+                    // Remove the wrapper object from our game's array.
+                    return false; 
+                }
+                return true;
             });
         }
-
 
         function updateUI()
         {
@@ -4275,9 +3756,10 @@
             updateLighting(true);
 
             createPlayerBody(); 
-            createWoodenBox(450, 150, 24, 64);
-            createWoodenBox(450 + 128, 150, 24, 64);
-            createWoodenBox(450 + 64, 50, 128, 16);
+            createWoodenBox(500, 150, 128, 16);
+            createWoodenBox(500, 120, 96, 16);
+            createWoodenBox(500, 90, 64, 16);
+            createWoodenBox(500, 60, 32, 16);
 
             updateLoadingStatus('Done!');
             await new Promise(resolve => setTimeout(resolve, 100));
@@ -4291,65 +3773,6 @@
             
             // The game loop will now be started from the new entry point.
             gameLoop();
-        }
-
-        function drawPhysicsOutlines() {
-
-            ctx.save();
-            ctx.lineWidth = 1;
-
-            // --- Dynamic bodies (green) ---
-            ctx.strokeStyle = "rgba(0,255,0,0.8)";
-
-            for (const rb of rigidBodies) {
-                if (!rb.body || rb.isDestroyed) continue;
-                drawBodyFixtures(rb.body);
-            }
-
-            // --- Static chunk bodies (red) ---
-            ctx.strokeStyle = "rgba(255,0,0,0.6)";
-
-            for (const chunk of chunkGrid) {
-                if (!chunk.staticBody) continue;
-                drawBodyFixtures(chunk.staticBody);
-            }
-
-            ctx.restore();
-        }
-
-
-        function drawBodyFixtures(body) {
-
-            for (let fixture = body.getFixtureList(); fixture; fixture = fixture.getNext()) {
-                drawFixture(body, fixture);
-            }
-        }
-
-
-        function drawFixture(body, fixture) {
-
-            const shape = fixture.getShape();
-
-            if (shape.getType() !== 'polygon') return;
-
-            const vertices = shape.m_vertices; // local-space vertices
-            const vertexCount = vertices.length;
-
-            ctx.beginPath();
-
-            for (let i = 0; i < vertexCount; i++) {
-
-                const worldPoint = body.getWorldPoint(vertices[i]);
-
-                const screenX = Math.floor(worldPoint.x * B2_SCALE - camera.x);
-                const screenY = Math.floor(worldPoint.y * B2_SCALE - camera.y);
-
-                if (i === 0) ctx.moveTo(screenX, screenY);
-                else ctx.lineTo(screenX, screenY);
-            }
-
-            ctx.closePath();
-            ctx.stroke();
         }
 
         /**
@@ -4400,214 +3823,151 @@
             ctx.fillText(`${Math.round(player.hoverEnergy)}/${player.maxHoverEnergy}`, x + barWidth / 2, y + barHeight / 2);
         }
 
+        /**
+         * Generates a single static b2Body for a chunk by merging horizontal runs of solid pixels.
+         * This version respects the pre-calculated "no-go" zone in the rigidBodyGrid,
+         * refusing to create static fixtures where a dynamic body is currently located.
+         * This prevents physics conflicts and jitter.
+         * @param {object} chunk - The chunk to process.
+         * @returns {b2Body} The newly created static body for the chunk.
+         */
         function generateStaticBodyForChunk(chunk) {
-
-            const body = world.createBody({
-                type: 'static'
-            });
-
-            chunk.fixtureCount = 0;
+            const bodyDef = new b2BodyDef();
+            bodyDef.set_type(box2d.b2_staticBody);
+            const body = box2dWorld.CreateBody(bodyDef);
 
             const startX = (chunk.index % chunkWidth) * CHUNK_SIZE;
             const startY = Math.floor(chunk.index / chunkWidth) * CHUNK_SIZE;
 
-            // Build mask for this chunk
-            const mask = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE);
+            for (let y = startY; y < startY + CHUNK_SIZE; y++) {
+                for (let x = startX; x < startX + CHUNK_SIZE; x++) {
+                    const idx = getIdx(x, y);
 
-            for (let y = 0; y < CHUNK_SIZE; y++) {
-                for (let x = 0; x < CHUNK_SIZE; x++) {
+                    // If this pixel is a solid material...
+                    if (isSolidForPlayer(grid[idx])) {
 
-                    const worldX = startX + x;
-                    const worldY = startY + y;
-                    const idx = getIdx(worldX, worldY);
+                        // ...and it's NOT inside the buffered "no-go" zone around a dynamic body...
+                        if (rigidBodyGrid[idx] === 1) {
+                            continue; // ...then skip it. Do not create a fixture here.
+                        }
 
-                    mask[y * CHUNK_SIZE + x] =
-                        isSolidForPlayer(grid[idx]) &&
-                        rigidBodyGrid[idx] !== 1 ? 1 : 0;
+                        // Find the end of the horizontal run of valid, non-buffered solid pixels
+                        let runEndX = x;
+                        while (
+                            runEndX + 1 < startX + CHUNK_SIZE &&
+                            isSolidForPlayer(grid[getIdx(runEndX + 1, y)]) &&
+                            rigidBodyGrid[getIdx(runEndX + 1, y)] !== 1 // Ensure the next pixel is also safe
+                        ) {
+                            runEndX++;
+                        }
+                        
+                        // Create a single rectangular fixture for the entire run
+                        const runWidth = (runEndX - x) + 1;
+                        const fixtureDef = new b2FixtureDef();
+                        const shape = new b2PolygonShape();
+                        
+                        const centerX = x + runWidth / 2;
+                        const centerY = y + 0.5;
+                        shape.SetAsBox(
+                            (runWidth / 2) / B2_SCALE, 
+                            0.5 / B2_SCALE, 
+                            new b2Vec2(centerX / B2_SCALE, centerY / B2_SCALE), 
+                            0
+                        );
+                        fixtureDef.set_shape(shape);
+                        body.CreateFixture(fixtureDef);
+
+                        // Skip the pixels we've already merged into this fixture
+                        x = runEndX;
+                    }
                 }
             }
-
-            // Extract islands inside chunk
-            const islands = extractIslands(mask, CHUNK_SIZE, CHUNK_SIZE);
-
-            for (const island of islands) {
-
-                const outline = marchingSquares(island, CHUNK_SIZE, CHUNK_SIZE);
-                if (outline.length < 3) continue;
-
-                // Estimate size of the outline in pixels
-                let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-                for (const p of outline) {
-                if (p.x < minX) minX = p.x;
-                if (p.y < minY) minY = p.y;
-                if (p.x > maxX) maxX = p.x;
-                if (p.y > maxY) maxY = p.y;
-                }
-                const extent = Math.max(maxX - minX, maxY - minY);
-
-                // For small features, simplify MUCH less
-                const DP_EPS = extent < 12 ? 0.25 : extent < 24 ? 0.5 : 1.0;
-                const COL_EPS = extent < 12 ? 0.001 : extent < 24 ? 0.003 : 0.01;
-
-                const simplifiedPre = simplifyDouglasPeucker(outline, 0.2);
-                if (simplifiedPre.length < 3) continue;
-
-                const simplified = removeCollinear(simplifiedPre, 0.001);
-                if (simplified.length < 3) continue;
-
-                validatePolygon(simplified);
-
-                const flat = [];
-                for (const p of simplified) {
-                    flat.push(p.x, p.y);
-                }
-
-                const indices = earcut(flat);
-
-                for (let i = 0; i < indices.length; i += 3) {
-
-                    const p0 = simplified[indices[i]];
-                    const p1 = simplified[indices[i + 1]];
-                    const p2 = simplified[indices[i + 2]];
-
-                    const ax = (startX + p0.x) / B2_SCALE;
-                    const ay = (startY + p0.y) / B2_SCALE;
-
-                    const bx = (startX + p1.x) / B2_SCALE;
-                    const by = (startY + p1.y) / B2_SCALE;
-
-                    const cx = (startX + p2.x) / B2_SCALE;
-                    const cy = (startY + p2.y) / B2_SCALE;
-
-                    body.createFixture(
-                        pl.Polygon([
-                            pl.Vec2(ax, ay),
-                            pl.Vec2(bx, by),
-                            pl.Vec2(cx, cy)
-                        ])
-                    );
-
-                    chunk.fixtureCount++;
-                }
-            }
-
-            body.setActive(false);
+            body.SetActive(false); // Start inactive by default
             return body;
         }
 
-
-
-
         /**
-         * High-performance collider update (Planck version).
-         * Activates/deactivates chunk bodies and throttles regeneration.
-         * @param {number} now - performance.now()
+         * The final, high-performance collider update. It activates/deactivates chunk bodies
+         * and intelligently throttles expensive mesh regeneration to prevent memory crashes.
+         * @param {number} now - The current time from performance.now().
          */
         function updateWorldColliders(now) {
-
             const neededChunks = new Set();
-            const lookahead = 1;
+            const lookahead = 1; 
 
             const allDynamicBodies = [...rigidBodies, player];
 
-            // 1️⃣ Determine which terrain chunks are needed
+            // 1. Determine which terrain chunks are needed.
             for (const bodyObject of allDynamicBodies) {
-
-                if (!bodyObject.body) continue;
-
-                const body = bodyObject.body;
-
-                let combinedAABB = null;
-
-                for (let fixture = body.getFixtureList(); fixture; fixture = fixture.getNext()) {
-
-                    const aabb = fixture.getAABB(0);
-
-                    if (!combinedAABB) {
-                        combinedAABB = {
-                            lowerX: aabb.lowerBound.x,
-                            lowerY: aabb.lowerBound.y,
-                            upperX: aabb.upperBound.x,
-                            upperY: aabb.upperBound.y
-                        };
-                    } else {
-                        combinedAABB.lowerX = Math.min(combinedAABB.lowerX, aabb.lowerBound.x);
-                        combinedAABB.lowerY = Math.min(combinedAABB.lowerY, aabb.lowerBound.y);
-                        combinedAABB.upperX = Math.max(combinedAABB.upperX, aabb.upperBound.x);
-                        combinedAABB.upperY = Math.max(combinedAABB.upperY, aabb.upperBound.y);
-                    }
-                }
-
-                if (!combinedAABB) continue;
-
-                const minChunkX = Math.floor(combinedAABB.lowerX * B2_SCALE / CHUNK_SIZE) - lookahead;
-                const maxChunkX = Math.ceil(combinedAABB.upperX * B2_SCALE / CHUNK_SIZE) + lookahead;
-                const minChunkY = Math.floor(combinedAABB.lowerY * B2_SCALE / CHUNK_SIZE) - lookahead;
-                const maxChunkY = Math.ceil(combinedAABB.upperY * B2_SCALE / CHUNK_SIZE) + lookahead;
+                if (!bodyObject.b2Body) continue;
+                const fixture = bodyObject.b2Body.GetFixtureList();
+                if (!fixture) continue;
+                const aabb = fixture.GetAABB(0);
+                
+                const minChunkX = Math.floor(aabb.get_lowerBound().get_x() * B2_SCALE / CHUNK_SIZE) - lookahead;
+                const maxChunkX = Math.ceil(aabb.get_upperBound().get_x() * B2_SCALE / CHUNK_SIZE) + lookahead;
+                const minChunkY = Math.floor(aabb.get_lowerBound().get_y() * B2_SCALE / CHUNK_SIZE) - lookahead;
+                const maxChunkY = Math.ceil(aabb.get_upperBound().get_y() * B2_SCALE / CHUNK_SIZE) + lookahead;
 
                 for (let cy = minChunkY; cy <= maxChunkY; cy++) {
                     for (let cx = minChunkX; cx <= maxChunkX; cx++) {
-
-                        if (
-                            cx >= 0 && cx < chunkWidth &&
-                            cy >= 0 && cy < chunkHeight
-                        ) {
+                        if (cx >= 0 && cx < chunkWidth && cy >= 0 && cy < chunkHeight) {
                             neededChunks.add(chunkGrid[cy * chunkWidth + cx]);
                         }
                     }
                 }
             }
 
-
-            // 2️⃣ Deactivate chunks no longer needed
+            // 2. Deactivate chunks that are no longer needed.
             for (const chunk of activeStaticChunks) {
-
                 if (!neededChunks.has(chunk) && chunk.staticBody) {
-                    chunk.staticBody.setActive(false);
+                    chunk.staticBody.SetActive(false);
                 }
             }
 
-            // 3️⃣ Activate / Regenerate newly needed chunks
+            // 3. Activate/Regenerate newly needed chunks.
             for (const chunk of neededChunks) {
-
-                // --- Throttled regeneration ---
+                // --- THE CRITICAL THROTTLING LOGIC ---
+                // If a chunk is dirty and has an existing body, check the cooldown.
                 if (chunk.dirty && chunk.staticBody) {
-
+                    // Only destroy the body if enough time has passed since the last regen.
                     if (now - chunk.lastRegenTime > REGEN_COOLDOWN) {
-
-                        world.destroyBody(chunk.staticBody);
+                        box2dWorld.DestroyBody(chunk.staticBody);
                         chunk.staticBody = null;
-                        chunk.fixtureCount = 0;
-
                     } else {
-                        // Still in cooldown → keep dirty but don't regen yet
+                        // Cooldown is active, so we don't regenerate yet, but we keep it dirty.
                     }
                 }
 
-                // Create body if needed
+                // If the chunk needs a body (either new or just regenerated), create it.
                 if (!chunk.staticBody) {
-
                     chunk.staticBody = generateStaticBodyForChunk(chunk);
-
-                    chunk.dirty = false;
-                    chunk.lastRegenTime = now;
+                    chunk.dirty = false; // It's clean now.
+                    chunk.lastRegenTime = now; // Stamp the time of this regeneration.
                 }
-
-                chunk.staticBody.setActive(true);
+                
+                chunk.staticBody.SetActive(true);
             }
 
             activeStaticChunks = neededChunks;
         }
 
-
         function updateRigidBodies(now) {
             // First, update the terrain colliders based on the current state of the world
             updateWorldColliders(now);
 
-            world.step(1/60);
+            // Tell Box2D to step forward in time. 60fps, standard iterations.
+            box2dWorld.Step(1 / 60, 10, 10);
+            box2dWorld.ClearForces();
         }
 
-       
+        /**
+         * Custom implementation to transform a local point to a world point.
+         * This version is non-allocating; it writes the result into the 'out' vector.
+         * @param {b2Vec2} out - The vector to store the result in.
+         * @param {b2Transform} transform - The world transform of the body.
+         * @param {b2Vec2} localPoint - The point in the body's local coordinates.
+         */
         function transformPoint(out, transform, localPoint) {
             const p = transform.get_p();
             const q = transform.get_q();
@@ -4630,12 +3990,34 @@
         window.onload = function() {
             const loadingStatus = document.getElementById('loading-status');
             loadingStatus.innerText = 'Loading Physics Engine...';
-            
-            
 
-            // With physics ready, proceed to load the rest of the game.
-            mainLoader();
+            // Call the Box2D function and wait for its promise to resolve.
+            Box2D().then(function(Box2DModule) {
+                // SUCCESS! The physics engine is ready.
+                // The 'Box2DModule' argument contains all the constructors.
 
+                loadingStatus.innerText = 'Initializing Physics...';
+                
+                // Assign our global aliases from the resolved module.
+                box2d = Box2DModule;
+                b2Vec2 = box2d.b2Vec2;
+                b2BodyDef = box2d.b2BodyDef;
+                b2Body = box2d.b2Body;
+                b2FixtureDef = box2d.b2FixtureDef;
+                b2World = box2d.b2World;
+                b2PolygonShape = box2d.b2PolygonShape;
+
+                // NEW: Initialize our global temp vectors
+                tempVec1 = new b2Vec2(0, 0);
+                tempVec2 = new b2Vec2(0, 0);
+
+                // Now it is safe to create the world.
+                box2dWorld = new b2World(new b2Vec2(0, 9.8), true);
+
+                // With physics ready, proceed to load the rest of the game.
+                mainLoader();
+
+            });
         };
     </script>
 </body>
