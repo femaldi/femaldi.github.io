@@ -468,7 +468,7 @@
                     type: 'dynamic',
                     position: pl.Vec2(x / B2_SCALE, y / B2_SCALE)
                 });
-
+                this.body.setUserData(this);
                 
                 // CORRECTED: Call the safe creation function, NOT rebuild.
                 this._createFixturesFromPixels(); 
@@ -831,48 +831,54 @@
         }
 
         function checkForSplits(body) {
-
             const islands = findPixelIslands(body.pixels, body.width, body.height);
-
             if (islands.length <= 1) return null;
 
             const MIN_ISLAND_PIXELS = 6;
 
+            const validIslands = [];
+            const smallIslands = [];
+
+            for (const island of islands) {
+                if (island.length >= MIN_ISLAND_PIXELS) validIslands.push(island);
+                else smallIslands.push(island);
+            }
+
+            // If we don't have a real split, do nothing (and do NOT delete small bits here)
+            if (validIslands.length <= 1) return null;
+
+            // ✅ Remove tiny fragments from the old body's pixel grid so they don't hang around.
+            for (const island of smallIslands) {
+                for (const p of island) {
+                    body.pixels[p.y * body.width + p.x] = MAT.EMPTY;
+                }
+            }
+
             const oldBody = body.body;
 
-            // Cache motion/pose
             const oldAngle = oldBody.getAngle();
-            const oldLinVel = oldBody.getLinearVelocity();   // Vec2
-            const oldAngVel = oldBody.getAngularVelocity();  // number
+            const oldLinVel = oldBody.getLinearVelocity();
+            const oldAngVel = oldBody.getAngularVelocity();
 
             const newBodies = [];
 
-            for (const island of islands) {
-
-                if (island.length < MIN_ISLAND_PIXELS) continue;
-
-                // --- bounding box + centroid ---
+            for (const island of validIslands) {
                 let minX = Infinity, minY = Infinity;
                 let maxX = -Infinity, maxY = -Infinity;
-                let sumX = 0, sumY = 0;
 
                 for (const p of island) {
                     if (p.x < minX) minX = p.x;
                     if (p.y < minY) minY = p.y;
                     if (p.x > maxX) maxX = p.x;
                     if (p.y > maxY) maxY = p.y;
-                    sumX += p.x;
-                    sumY += p.y;
                 }
 
                 const newWidth = maxX - minX + 1;
                 const newHeight = maxY - minY + 1;
 
-                // ✅ Use bounding-box center so the newPixels buffer aligns with the new body's origin.
                 const localOriginX = (minX + newWidth / 2) - (body.width / 2);
                 const localOriginY = (minY + newHeight / 2) - (body.height / 2);
 
-                // Convert to world space (Planck meters)
                 const worldOrigin = oldBody.getWorldPoint(
                     pl.Vec2(localOriginX / B2_SCALE, localOriginY / B2_SCALE)
                 );
@@ -880,46 +886,32 @@
                 const worldX = worldOrigin.x * B2_SCALE;
                 const worldY = worldOrigin.y * B2_SCALE;
 
-                // Copy pixels into tight buffer
                 const newPixels = new Uint8Array(newWidth * newHeight).fill(MAT.EMPTY);
-
                 for (const p of island) {
                     const nx = p.x - minX;
                     const ny = p.y - minY;
-                    newPixels[ny * newWidth + nx] =
-                        body.pixels[p.y * body.width + p.x];
+                    newPixels[ny * newWidth + nx] = body.pixels[p.y * body.width + p.x];
                 }
 
-                // Create new rigid body wrapper
                 const nb = new RigidBody(worldX, worldY, newWidth, newHeight, body.materialType);
-
-                // Overwrite pixels, then rebuild fixtures
                 nb.pixels = newPixels;
                 nb.rebuildFixtures();
 
-                // Copy pose + velocities
                 nb.body.setAngle(oldAngle);
                 nb.body.setLinearVelocity(pl.Vec2(oldLinVel.x, oldLinVel.y));
                 nb.body.setAngularVelocity(oldAngVel);
 
-                // Optional: prevent immediate explosion
                 nb.body.setAwake(false);
 
                 newBodies.push(nb);
             }
 
-            // If filtering removed everything, don't split
-            if (newBodies.length <= 1) return null;
-
-            // Destroy original physics body NOW (clean approach)
             world.destroyBody(oldBody);
-
-            // Mark wrapper so it gets removed from rigidBodies without trying to destroy twice
+            body.body = null;
             body.isDestroyed = true;
 
             return newBodies;
         }
-
 
 
 
@@ -2709,7 +2701,7 @@
             ctx.lineTo(mouse.x / scale, mouse.y / scale);
             ctx.stroke();
 
-            drawPhysicsOutlines();
+            //drawPhysicsOutlines();
             renderPlayerStatsUI();
             renderAlchemyUI();
         }
@@ -3989,8 +3981,6 @@
                 lastFpsTime = now;
             }
 
-            let splitBudget = 2;
-
             if (frameCount % VISIBLE_LIQUID_SCAN_INTERVAL === 0) {
                 findAndActivateVisibleLiquidSurfaces();
             }
@@ -4013,21 +4003,17 @@
 
                 if (body.needsShapeUpdate && (now - body.lastRebuildTime > REBUILD_COOLDOWN)) {
 
-                    if (splitBudget > 0) {
-                        const newBodies = checkForSplits(body);
-                        
-                        if (newBodies && newBodies.length) {
-                            splitBudget--;
-                            newBodiesFromSplits.push(...newBodies);
-                            body.needsShapeUpdate = false;
-                        } else {
-                            body.rebuildFixtures();
-                            body.lastRebuildTime = now;
-                        }
-                    } else{
+                    const newBodies = checkForSplits(body);
+                    
+                    if (newBodies && newBodies.length) {
+                        newBodiesFromSplits.push(...newBodies);
+                        body.needsShapeUpdate = false;
+                        body.lastRebuildTime = now;
+                    } else {
                         body.rebuildFixtures();
                         body.lastRebuildTime = now;
                     }
+                    
                 }
             }
 
@@ -4037,6 +4023,19 @@
             }
 
             cleanupDestroyedBodies();
+
+            const worldDynamic = countDynamicBodiesInWorld();
+            const wrapperDynamic = rigidBodies.filter(rb => rb.body !== null).length + 1 //player;
+
+            if (worldDynamic !== wrapperDynamic) {
+                console.warn(
+                    "Mismatch!",
+                    "world dynamic =", worldDynamic,
+                    "rigidBodies =", wrapperDynamic
+                );
+                destroyOrphanDynamicBodies();
+            }
+
 
             updatePouredParticles();
             processAlchemyJobs();
@@ -4109,6 +4108,42 @@
             requestAnimationFrame(gameLoop);
         }
 
+        function destroyOrphanDynamicBodies() {
+            const toDestroy = [];
+
+            for (let b = world.getBodyList(); b; b = b.getNext()) {
+                if (b.getType() !== 'dynamic') continue;
+
+                const rb = b.getUserData();
+                if (!rb) {
+                    // ✅ orphan physics body
+                    toDestroy.push(b);
+                }
+            }
+
+            for (const b of toDestroy) {
+                b.setActive(false);
+                world.destroyBody(b);
+            }
+
+            if (toDestroy.length) {
+                console.warn("Destroyed orphan dynamic bodies:", toDestroy.length);
+            }
+        }
+
+
+        function countDynamicBodiesInWorld() {
+            let count = 0;
+
+            for (let b = world.getBodyList(); b; b = b.getNext()) {
+                if (b.getType() === 'dynamic') {
+                    count++;
+                }
+            }
+
+            return count;
+        }
+
         function cleanupDestroyedBodies() {
             const kept = [];
 
@@ -4120,6 +4155,7 @@
 
                 // rb is destroyed: remove its physics body if it still exists
                 if (rb.body) {
+                    rb.body.setUserData(null);
                     rb.body.setActive(false);   // stop collisions immediately
                     world.destroyBody(rb.body); // remove from physics world
                     rb.body = null;             // avoid double-destroy
@@ -4343,28 +4379,62 @@
         }
 
         function drawPhysicsOutlines() {
-
             ctx.save();
             ctx.lineWidth = 1;
 
-            // --- Dynamic bodies (green) ---
-            ctx.strokeStyle = "rgba(0,255,0,0.8)";
+            for (let body = world.getBodyList(); body; body = body.getNext()) {
 
-            for (const rb of rigidBodies) {
-                //if (!rb.body || rb.isDestroyed) continue;
-                drawBodyFixtures(rb.body);
-            }
+                const type = body.getType();
 
-            // --- Static chunk bodies (red) ---
-            ctx.strokeStyle = "rgba(255,0,0,0.6)";
+                if (type === 'dynamic') {
+                    ctx.strokeStyle = 'lime';
+                } else if (type === 'static') {
+                    ctx.strokeStyle = 'red';
+                } else {
+                    continue; // skip kinematic if you want
+                }
 
-            for (const chunk of chunkGrid) {
-                if (!chunk.staticBody) continue;
-                drawBodyFixtures(chunk.staticBody);
+                for (let fixture = body.getFixtureList(); fixture; fixture = fixture.getNext()) {
+                    const shape = fixture.getShape();
+
+                    if (shape.getType() === 'polygon') {
+                        const vertices = shape.m_vertices;
+
+                        ctx.beginPath();
+
+                        for (let i = 0; i < vertices.length; i++) {
+                            const worldPoint = body.getWorldPoint(vertices[i]);
+                            const px = worldPoint.x * B2_SCALE - camera.x;
+                            const py = worldPoint.y * B2_SCALE - camera.y;
+
+                            if (i === 0) ctx.moveTo(px, py);
+                            else ctx.lineTo(px, py);
+                        }
+
+                        ctx.closePath();
+                        ctx.stroke();
+                    }
+
+                    else if (shape.getType() === 'circle') {
+                        const center = body.getWorldPoint(shape.m_p);
+                        const radius = shape.m_radius * B2_SCALE;
+
+                        ctx.beginPath();
+                        ctx.arc(
+                            center.x * B2_SCALE,
+                            center.y * B2_SCALE,
+                            radius,
+                            0,
+                            Math.PI * 2
+                        );
+                        ctx.stroke();
+                    }
+                }
             }
 
             ctx.restore();
         }
+
 
 
         function drawBodyFixtures(body) {
