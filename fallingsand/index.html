@@ -2518,9 +2518,11 @@
                         firePixelsCoords.push({ x: screenX, y: screenY });
                     } else if (type === MAT.OIL_BURNING || type === MAT.COAL_BURNING) {
                         firePixelsCoords.push({ x: screenX, y: screenY });
-                        [r, g, b] = animateLiquidColor(r, g, b, worldX, worldY, type, time);
+                        //[r, g, b] = animateLiquidColor(r, g, b, worldX, worldY, type, time);
+                        [r, g, b] = varyColor(...COLORS[type], worldX, worldY, type, 4);
                     } else if (LIQUIDS.has(type)) {
-                        [r, g, b] = animateLiquidColor(r, g, b, worldX, worldY, type, time);
+                        //[r, g, b] = animateLiquidColor(r, g, b, worldX, worldY, type, time);
+                        [r, g, b] = varyColor(...COLORS[type], worldX, worldY, type, 4);
                     } else {
                         if (SHIMMERING_METALS.has(type)) {
                             [r, g, b] = metallicColor(worldX, worldY, COLORS[type]);
