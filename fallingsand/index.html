@@ -431,6 +431,23 @@
         const STORABLE_SOLIDS = new Set([MAT.SAND, MAT.SOIL, MAT.GUNPOWDER, MAT.COAL, MAT.GLASS, MAT.COPPER, MAT.SILVER, MAT.GOLD, MAT.PLATINUM]);
         const STORABLE_LIQUIDS = new Set([MAT.WATER, MAT.OIL, MAT.ACID]);
 
+        let fluidsCanvas = null;
+        let fluidsCtx = null;
+        let fluidsImageData = null;
+        let fluidsPixels = null;
+
+        // Tune per material/category
+        function fluidAlpha(type) {
+            if (type === MAT.GAS) return 80;     // ~30%
+            if (LIQUIDS.has(type)) return 140;   // ~55%
+            return 255;
+        }
+
+        function isFluid(type) {
+            return type === MAT.GAS || LIQUIDS.has(type);
+        }
+
+
         function validatePolygon(points) {
             return;
             for (let i = 0; i < points.length; i++) {
@@ -2429,18 +2446,28 @@
         function render() {
             // --- WORLD ---
             firePixelsCoords = [];
-            
+
+            // Ensure fluid overlay buffers exist and match size
+            if (!fluidsCanvas || fluidsCanvas.width !== renderWidth || fluidsCanvas.height !== renderHeight) {
+                fluidsCanvas = document.createElement('canvas');
+                fluidsCanvas.width = renderWidth;
+                fluidsCanvas.height = renderHeight;
+                fluidsCtx = fluidsCanvas.getContext('2d', { alpha: true });
+                fluidsImageData = fluidsCtx.createImageData(renderWidth, renderHeight);
+                fluidsPixels = fluidsImageData.data;
+            }
+
+            // ---- PASS 0: Background into BASE buffer (opaque) ----
             const bgPixels = skyImageData.data;
             const bgStartY = Math.floor(camera.y);
 
             for (let screenY = 0; screenY < renderHeight; screenY++) {
-                const worldY = screenY + bgStartY; // The Y-coordinate in the giant background image
+                const worldY = screenY + bgStartY;
 
                 for (let screenX = 0; screenX < renderWidth; screenX++) {
-                    const destI = (screenY * renderWidth + screenX) * 4; // Index for the canvas
-                    const sourceI = (worldY * worldWidth + screenX) * 4; 
+                    const destI = (screenY * renderWidth + screenX) * 4;
+                    const sourceI = (worldY * worldWidth + screenX) * 4;
 
-                    // Safety check to prevent reading out of bounds
                     if (sourceI >= 0 && sourceI < bgPixels.length) {
                         pixels[destI]     = bgPixels[sourceI];
                         pixels[destI + 1] = bgPixels[sourceI + 1];
@@ -2450,15 +2477,19 @@
                 }
             }
 
+            // ---- PASS 0b: Clear FLUID overlay to transparent ----
+            fluidsPixels.fill(0);
+
             const time = frameCount * 0.04;
 
-            // Get the top-left corner of the camera in world coordinates
+            // Camera top-left in world pixels
             const startX = Math.floor(camera.x);
-            const startY = Math.floor(camera.y); // THE CRITICAL MISSING PIECE
+            const startY = Math.floor(camera.y);
 
-            // Loop over every pixel on the SCREEN
+            // ---- PASS 1/2: Build BASE + FLUID overlay ----
             for (let screenY = 0; screenY < viewHeight; screenY++) {
                 const worldY = screenY + startY;
+
                 for (let screenX = 0; screenX < viewWidth; screenX++) {
                     const worldX = screenX + startX;
 
@@ -2466,26 +2497,28 @@
                     if (idx === -1) continue;
 
                     const type = grid[idx];
-                    
-                    if (type === MAT.EMPTY || type === MAT.RIGID_BODY_STUB) continue; 
 
-                    // --- NEW: Gradient Lighting Logic ---
+                    if (type === MAT.EMPTY || type === MAT.RIGID_BODY_STUB) continue;
+
                     const lightLevel = lightGrid[idx];
 
+                    // If fully dark and not always visible: skip both passes
                     if (lightLevel === 0 && !ALWAYS_VISIBLE_MATERIALS.has(type)) {
-                        setPixel(screenX, screenY, 0, 0, 0); // Completely dark
+                        setPixel(screenX, screenY, 0, 0, 0);
                         continue;
                     }
 
-                    // 1. Calculate the base color for the material.
-                    let [r, g, b] = COLORS[type];
+                    // Base color
+                    let r, g, b;
+                    [r, g, b] = COLORS[type];
 
+                    // Animate / vary
                     if (type === MAT.FIRE) {
                         r = 255; g = 80 + Math.random() * 80; b = 0;
                         firePixelsCoords.push({ x: screenX, y: screenY });
                     } else if (type === MAT.OIL_BURNING || type === MAT.COAL_BURNING) {
-                         firePixelsCoords.push({ x: screenX, y: screenY });
-                         [r, g, b] = animateLiquidColor(r, g, b, worldX, worldY, type, time);
+                        firePixelsCoords.push({ x: screenX, y: screenY });
+                        [r, g, b] = animateLiquidColor(r, g, b, worldX, worldY, type, time);
                     } else if (LIQUIDS.has(type)) {
                         [r, g, b] = animateLiquidColor(r, g, b, worldX, worldY, type, time);
                     } else {
@@ -2496,22 +2529,18 @@
                         }
                     }
 
-                    // 2. NEW: Apply shimmer effect if the material is a metal.
+                    // Metal shimmer “spark”
                     if (SHIMMERING_METALS.has(type)) {
-                        // This hash creates a pseudo-random value based on position and time.
-                        // Dividing frameCount makes the shimmer slower and less frantic.
                         const shimmerHash = hashCell(worldX, worldY, Math.floor(frameCount / 4));
-                        
-                        // Only apply a shimmer on rare occasions (when the hash is a high value).
                         if (shimmerHash > 254) {
-                            const shimmerBrightness = 35; // How much brighter to make the pixel.
+                            const shimmerBrightness = 35;
                             r = Math.min(255, r + shimmerBrightness);
                             g = Math.min(255, g + shimmerBrightness);
                             b = Math.min(255, b + shimmerBrightness);
                         }
                     }
 
-                    // 3. Apply brightness based on light level
+                    // Lighting
                     if (!ALWAYS_VISIBLE_MATERIALS.has(type)) {
                         const brightness = lightLevel / MAX_LIGHT_LEVEL;
                         r *= brightness;
@@ -2519,23 +2548,40 @@
                         b *= brightness;
                     }
 
-                    setPixel(screenX, screenY, r, g, b);
+                    // Decide pass
+                    const destI = (screenY * renderWidth + screenX) * 4;
+
+                    if (isFluid(type)) {
+                        // ---- FLUID OVERLAY PASS (with alpha) ----
+                        fluidsPixels[destI]     = r | 0;
+                        fluidsPixels[destI + 1] = g | 0;
+                        fluidsPixels[destI + 2] = b | 0;
+                        fluidsPixels[destI + 3] = fluidAlpha(type);
+                    } else {
+                        // ---- BASE PASS (opaque) ----
+                        pixels[destI]     = r | 0;
+                        pixels[destI + 1] = g | 0;
+                        pixels[destI + 2] = b | 0;
+                        pixels[destI + 3] = 255;
+                    }
                 }
             }
 
+            // Draw BASE
             ctx.putImageData(imageData, 0, 0);
 
+            // Bloom still based on firePixelsCoords from base world draw
             renderBloom();
 
             // --- RENDER RIGID BODIES (Planck version) ---
             for (const body of rigidBodies) {
+                if (!body.body) continue;
 
                 const pos = body.body.getPosition();
                 const angle = body.body.getAngle();
 
                 ctx.save();
 
-                // Move and rotate canvas to match physics body
                 ctx.translate(
                     pos.x * B2_SCALE - camera.x,
                     pos.y * B2_SCALE - camera.y
@@ -2543,27 +2589,20 @@
 
                 ctx.rotate(angle);
 
-                // Draw body pixels centered at (0, 0)
                 for (let y = 0; y < body.height; y++) {
                     for (let x = 0; x < body.width; x++) {
-
                         const type = body.pixels[y * body.width + x];
                         if (type === MAT.EMPTY) continue;
 
+                        let r, g, b;
                         if (SHIMMERING_METALS.has(type)) {
                             [r, g, b] = metallicColor(x, y, COLORS[type]);
                         } else {
                             [r, g, b] = varyColor(...COLORS[type], x, y, type, 8);
                         }
 
-                        ctx.fillStyle = `rgb(${r},${g},${b})`;
-
-                        ctx.fillRect(
-                            x - body.width / 2,
-                            y - body.height / 2,
-                            1,
-                            1
-                        );
+                        ctx.fillStyle = `rgb(${r|0},${g|0},${b|0})`;
+                        ctx.fillRect(x - body.width / 2, y - body.height / 2, 1, 1);
                     }
                 }
 
@@ -2571,7 +2610,7 @@
             }
             // --- END BLOCK ---
 
-
+            // ---- PLAYER (unchanged) ----
             const aimDX = mouse.worldX - (player.x + player.width / 2);
             const aimDY = (player.y + 9) - mouse.worldY;
             const aimAngle = Math.atan2(aimDY, aimDX);
@@ -2579,54 +2618,43 @@
 
             playerFacingRight = aimDX >= 0;
 
-            // --- PLAYER (SNAPPED FOR SHARPNESS) ---
             const playerScreenX = Math.round(player.x - camera.x);
             const playerScreenY = Math.round(player.y - camera.y);
 
-            // Noita-like sprite colors
             const cloakColor = '#4a2d5e';
             const faceColor = '#211e20';
-            const handColor = '#9d81a2';
             let wandScreenX, wandScreenY;
 
-            ctx.imageSmoothingEnabled = false; // Ensure sharp pixels
+            ctx.imageSmoothingEnabled = false;
 
-            // --- 2x SCALED SPRITE DRAWING ---
             if (playerFacingRight) {
-                // --- Body & Cloak ---
                 ctx.fillStyle = cloakColor;
-                ctx.fillRect(playerScreenX + 2, playerScreenY, 6, 2);     // Hood top
-                ctx.fillRect(playerScreenX, playerScreenY + 2, 8, 12);    // Main body
-                ctx.fillRect(playerScreenX + 2, playerScreenY + 14, 4, 2);    // Feet area
-                // --- Face ---
+                ctx.fillRect(playerScreenX + 2, playerScreenY, 6, 2);
+                ctx.fillRect(playerScreenX, playerScreenY + 2, 8, 12);
+                ctx.fillRect(playerScreenX + 2, playerScreenY + 14, 4, 2);
+
                 ctx.fillStyle = faceColor;
                 ctx.fillRect(playerScreenX + 4, playerScreenY + 2, 2, 4);
-                // Set aim origin
+
                 wandScreenX = playerScreenX + 11;
                 wandScreenY = playerScreenY + 9;
-            } else { // Facing Left
-                // --- Body & Cloak ---
+            } else {
                 ctx.fillStyle = cloakColor;
-                ctx.fillRect(playerScreenX, playerScreenY, 6, 2);         // Hood top
-                ctx.fillRect(playerScreenX, playerScreenY + 2, 8, 12);    // Main body
-                ctx.fillRect(playerScreenX + 2, playerScreenY + 14, 4, 2);    // Feet area
-                // --- Face ---
+                ctx.fillRect(playerScreenX, playerScreenY, 6, 2);
+                ctx.fillRect(playerScreenX, playerScreenY + 2, 8, 12);
+                ctx.fillRect(playerScreenX + 2, playerScreenY + 14, 4, 2);
+
                 ctx.fillStyle = faceColor;
                 ctx.fillRect(playerScreenX + 2, playerScreenY + 2, 2, 4);
-                // Set aim origin
+
                 wandScreenX = playerScreenX - 3;
                 wandScreenY = playerScreenY + 9;
             }
 
-            // --- Wand ---
-            const handX = playerFacingRight
-                ? playerScreenX + 8
-                : playerScreenX - 1;
-
+            const handX = playerFacingRight ? playerScreenX + 8 : playerScreenX - 1;
             const handY = playerScreenY + 9;
 
             const wandLen = 3;
-
             const dx = wandDir.x;
             const dy = wandDir.y;
             const mag = Math.max(Math.abs(dx), Math.abs(dy));
@@ -2636,23 +2664,20 @@
                 ctx.fillRect(
                     handX + Math.round(dx * i / mag),
                     handY + Math.round(dy * i / mag),
-                    1,
-                    1
+                    1, 1
                 );
             }
 
-            // Tip
             ctx.fillStyle = '#ffcc66';
             ctx.fillRect(
                 handX + Math.round(dx * wandLen / mag),
                 handY + Math.round(dy * wandLen / mag),
-                1,
-                1
+                1, 1
             );
 
             // --- RENDER POURED PARTICLES ---
             for (const p of pouredParticles) {
-                const [r,g,b] = COLORS[p.type];
+                const [r, g, b] = COLORS[p.type];
                 ctx.fillStyle = `rgb(${r},${g},${b})`;
                 ctx.fillRect(Math.round(p.x - camera.x), Math.round(p.y - camera.y), 1, 1);
             }
@@ -2667,29 +2692,23 @@
             }
 
             // --- RENDER INTERACT HINT ---
-            // Check if the player can interact and that a trigger is currently active
             if (player.canInteract && player.currentTrigger) {
-                // Get the currently active trigger
                 const trigger = player.currentTrigger;
 
-                // 1. Calculate the base position: center-top of the trigger zone
                 const hintX = Math.round(trigger.x - camera.x + trigger.width / 2);
-                const hintY = Math.round(trigger.y - camera.y - 15); // 15 pixels above the slab
+                const hintY = Math.round(trigger.y - camera.y - 15);
 
-                // 2. Add the hover animation using a sine wave
-                const hoverAmplitude = 3; // How many pixels to move up and down
-                const hoverSpeed = 0.05;  // How fast to hover
+                const hoverAmplitude = 3;
+                const hoverSpeed = 0.05;
                 const animatedY = hintY + Math.sin(frameCount * hoverSpeed) * hoverAmplitude;
 
-                // Draw a simple background for visibility
                 ctx.fillStyle = 'rgba(0,0,0,0.7)';
                 ctx.fillRect(hintX - 8, animatedY - 12, 16, 16);
-                
-                // Draw the 'E'
+
                 ctx.font = 'bold 12px monospace';
                 ctx.fillStyle = 'white';
                 ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle'; // Center text vertically for smoother animation
+                ctx.textBaseline = 'middle';
                 ctx.fillText('E', hintX, animatedY);
             }
 
@@ -2701,10 +2720,15 @@
             ctx.lineTo(mouse.x / scale, mouse.y / scale);
             ctx.stroke();
 
+            // ✅ COMPOSITE FLUIDS IN FRONT OF PLAYER (true alpha blending)
+            fluidsCtx.putImageData(fluidsImageData, 0, 0);
+            ctx.drawImage(fluidsCanvas, 0, 0);
+
             //drawPhysicsOutlines();
             renderPlayerStatsUI();
             renderAlchemyUI();
         }
+
 
         function createWoodenBox(x, y, width = 16, height = 16) {
             const box = new RigidBody(x, y, width, height, MAT.WOOD);
