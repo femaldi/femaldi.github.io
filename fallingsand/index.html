@@ -432,15 +432,16 @@
         const STORABLE_LIQUIDS = new Set([MAT.WATER, MAT.OIL, MAT.ACID]);
 
         function validatePolygon(points) {
+            return;
             for (let i = 0; i < points.length; i++) {
                 for (let j = i + 1; j < points.length; j++) {
                     const dx = points[i].x - points[j].x;
                     const dy = points[i].y - points[j].y;
                     const distSq = dx*dx + dy*dy;
 
-                    if (distSq < 0.0001) {
-                        console.error("Duplicate or near-duplicate vertices:", i, j, points[i], points[j]);
-                    }
+                    // if (distSq < 0.0001) {
+                    //     console.error("Duplicate or near-duplicate vertices:", i, j, points[i], points[j]);
+                    // }
                 }
             }
         }
@@ -491,7 +492,7 @@
                 const mask = new Uint8Array(this.width * this.height);
                 for (let i = 0; i < mask.length; i++) {
                     const t = this.pixels[i];
-                    mask[i] = (t !== MAT.EMPTY && t !== MAT.FIRE && t !== MAT.GAS) ? 1 : 0;
+                    mask[i] = (t !== MAT.EMPTY && t !== MAT.GAS) ? 1 : 0;
                 }
                 return mask;
             }
@@ -508,7 +509,7 @@
                 // Build solidity mask
                 for (let i = 0; i < mask.length; i++) {
                     const t = this.pixels[i];
-                    mask[i] = (t !== MAT.EMPTY && t !== MAT.FIRE && t !== MAT.GAS) ? 1 : 0;
+                    mask[i] = (t !== MAT.EMPTY && t !== MAT.GAS) ? 1 : 0;
                 }
 
                 // If nothing solid remains → destroy body
@@ -772,7 +773,7 @@
          * @returns {boolean} True if the pixel is structural, false otherwise.
          */
         function isPixelSolidForConnectivity(type) {
-            return type !== MAT.EMPTY && type !== MAT.FIRE && type !== MAT.GAS;
+            return type !== MAT.EMPTY && type !== MAT.GAS;
         }
 
         /**
@@ -867,17 +868,17 @@
                 const newWidth = maxX - minX + 1;
                 const newHeight = maxY - minY + 1;
 
-                // Center in original body local pixel coords
-                const localCenterX = (sumX / island.length) - body.width / 2 + 0.5;
-                const localCenterY = (sumY / island.length) - body.height / 2 + 0.5;
+                // ✅ Use bounding-box center so the newPixels buffer aligns with the new body's origin.
+                const localOriginX = (minX + newWidth / 2) - (body.width / 2);
+                const localOriginY = (minY + newHeight / 2) - (body.height / 2);
 
-                // Convert to world space using Planck
-                const worldCenter = oldBody.getWorldPoint(
-                    pl.Vec2(localCenterX / B2_SCALE, localCenterY / B2_SCALE)
+                // Convert to world space (Planck meters)
+                const worldOrigin = oldBody.getWorldPoint(
+                    pl.Vec2(localOriginX / B2_SCALE, localOriginY / B2_SCALE)
                 );
 
-                const worldX = worldCenter.x * B2_SCALE;
-                const worldY = worldCenter.y * B2_SCALE;
+                const worldX = worldOrigin.x * B2_SCALE;
+                const worldY = worldOrigin.y * B2_SCALE;
 
                 // Copy pixels into tight buffer
                 const newPixels = new Uint8Array(newWidth * newHeight).fill(MAT.EMPTY);
@@ -2011,7 +2012,7 @@
                 if (Math.random() < 0.25) {
                     setter(targetIdx, MAT.GAS);
                 } else {
-                setter(targetIdx, MAT.EMPTY);
+                    setter(targetIdx, MAT.EMPTY);
                 }
             } 
                 
@@ -2708,7 +2709,7 @@
             ctx.lineTo(mouse.x / scale, mouse.y / scale);
             ctx.stroke();
 
-            //drawPhysicsOutlines();
+            drawPhysicsOutlines();
             renderPlayerStatsUI();
             renderAlchemyUI();
         }
@@ -2718,73 +2719,94 @@
             rigidBodies.push(box);
         }
 
-        /**
-         * Handles interactions between the world grid and rigid bodies.
-         * Planck.js version (no WASM, no manual memory management needed).
-         */
         function updateRigidBodyInteractions() {
+            const now = performance.now();
+
+            // Tuneables
+            const SPLIT_COOLDOWN_MS = 250;       // 150–500
+            const SPLIT_DELTA_THRESHOLD = 25;    // 10–80 depending on body size/burn rate
+
+            // Rigid-body internal fire → world gas emission limiter
+            const RB_GAS_BUDGET_PER_BODY = 10;   // 5–20
+            const RB_GAS_CHANCE = 0.25;          // 0.1–0.4
+
+            // IMPORTANT:
+            // FIRE is treated as STRUCTURAL inside rigid bodies.
+            // Collider only changes when pixels become EMPTY (or GAS).
+            const isStructural = (t) => (t !== MAT.EMPTY && t !== MAT.GAS);
 
             for (const body of rigidBodies) {
                 if (body.isDestroyed) continue;
 
-                let pixelsChanged = false;
+                // Lazy-init debounce fields
+                body.lastSplitTime = body.lastSplitTime ?? 0;
+                body.pendingStructuralDelta = body.pendingStructuralDelta ?? 0;
 
+                let pixelsChanged = false;
+                let structuralEditsThisTick = 0;
+
+                // --------------------------------------------------
+                // World interactions affecting rigid body pixels
+                // --------------------------------------------------
                 body_pixel_loop:
                 for (let y = 0; y < body.height; y++) {
                     for (let x = 0; x < body.width; x++) {
-
                         const localIdx = y * body.width + x;
                         const type = body.pixels[localIdx];
-
                         if (type === MAT.EMPTY) continue;
 
-                        // --------------------------------------------------
-                        // Convert local pixel → world position (Planck way)
-                        // --------------------------------------------------
-
+                        // local pixel -> world position
                         const localPos = pl.Vec2(
                             (x - body.width / 2 + 0.5) / B2_SCALE,
                             (y - body.height / 2 + 0.5) / B2_SCALE
                         );
-
                         const worldPos = body.body.getWorldPoint(localPos);
-
                         const worldX = Math.floor(worldPos.x * B2_SCALE);
                         const worldY = Math.floor(worldPos.y * B2_SCALE);
 
-                        // --------------------------------------------------
-                        // BEHAVIOR 2: WOOD reacts to environment
-                        // --------------------------------------------------
-
+                        // WOOD reacts to nearby materials
                         if (type === MAT.WOOD) {
-
                             const searchRadius = 2;
 
                             for (let dy = -searchRadius; dy <= searchRadius; dy++) {
                                 for (let dx = -searchRadius; dx <= searchRadius; dx++) {
-
                                     const checkIdx = getIdx(worldX + dx, worldY + dy);
                                     if (checkIdx === -1) continue;
 
                                     const worldMaterial = grid[checkIdx];
 
-                                    // A) Acid destroys wood
+                                    // Acid destroys wood
                                     if (worldMaterial === MAT.ACID) {
-                                        body.pixels[localIdx] = MAT.EMPTY;
-                                        setGrid(checkIdx, MAT.EMPTY);
-                                        pixelsChanged = true;
+                                        const oldT = body.pixels[localIdx];
+                                        const newT = MAT.EMPTY;
+
+                                        if (oldT !== newT) {
+                                            body.pixels[localIdx] = newT;
+                                            setGrid(checkIdx, MAT.EMPTY);
+
+                                            pixelsChanged = true;
+                                            if (isStructural(oldT) !== isStructural(newT)) structuralEditsThisTick++;
+                                        }
                                         continue body_pixel_loop;
                                     }
 
-                                    // B) Fire ignites wood
+                                    // Fire ignites wood (visual/state only; now STRUCTURAL stays true)
                                     if (
                                         (worldMaterial === MAT.FIRE ||
                                         worldMaterial === MAT.OIL_BURNING ||
                                         worldMaterial === MAT.COAL_BURNING)
                                         && Math.random() < 0.25
                                     ) {
-                                        body.pixels[localIdx] = MAT.FIRE;
-                                        pixelsChanged = true;
+                                        const oldT = body.pixels[localIdx];
+                                        const newT = MAT.FIRE;
+
+                                        if (oldT !== newT) {
+                                            body.pixels[localIdx] = newT;
+                                            pixelsChanged = true;
+
+                                            // With FIRE treated as structural, this does NOT trigger rebuilds.
+                                            if (isStructural(oldT) !== isStructural(newT)) structuralEditsThisTick++;
+                                        }
                                         continue body_pixel_loop;
                                     }
                                 }
@@ -2794,19 +2816,14 @@
                 }
 
                 // --------------------------------------------------
-                // Run internal simulation (fire spreading inside body)
+                // Internal simulation (fire spread inside rigid body)
                 // --------------------------------------------------
-
-                // Per-body budget so big burning objects don't spam gas
-                let rbGasBudget = 10;     // tune: 5–20
-                const RB_GAS_CHANCE = 0.25; // tune: 0.1–0.4
+                let rbGasBudget = RB_GAS_BUDGET_PER_BODY;
 
                 function emitGasFromLocalIndex(localIdx) {
-                    // Convert localIdx -> local (x,y)
                     const lx = localIdx % body.width;
                     const ly = (localIdx / body.width) | 0;
 
-                    // Local pixel center -> world
                     const localPos = pl.Vec2(
                         (lx - body.width / 2 + 0.5) / B2_SCALE,
                         (ly - body.height / 2 + 0.5) / B2_SCALE
@@ -2819,37 +2836,37 @@
                     const wIdx = getIdx(wx, wy);
                     if (wIdx === -1) return;
 
-                    // Only spawn gas into empty-ish cells
                     if (grid[wIdx] === MAT.EMPTY || grid[wIdx] === MAT.GAS) {
                         setGrid(wIdx, MAT.GAS);
                     }
                 }
 
-                // Intercept GAS
                 const localSetter = (idx, type) => {
                     if (idx === -1) return;
 
-                    // If the local sim wants to create GAS, emit to world instead
+                    const oldT = body.pixels[idx];
+
+                    // If local sim produces GAS, emit it to world and clear locally
                     if (type === MAT.GAS) {
                         if (rbGasBudget > 0 && Math.random() < RB_GAS_CHANCE) {
                             emitGasFromLocalIndex(idx);
                             rbGasBudget--;
                         }
 
-                        // Local grids don't keep GAS:
-                        // either clear the pixel...
-                        if (body.pixels[idx] !== MAT.EMPTY) {
-                            body.pixels[idx] = MAT.EMPTY;
+                        const newT = MAT.EMPTY;
+                        if (oldT !== newT) {
+                            body.pixels[idx] = newT;
                             pixelsChanged = true;
+                            if (isStructural(oldT) !== isStructural(newT)) structuralEditsThisTick++;
                         }
-
                         return;
                     }
 
-                    // Normal behavior
-                    if (body.pixels[idx] !== type) {
+                    // Normal set
+                    if (oldT !== type) {
                         body.pixels[idx] = type;
                         pixelsChanged = true;
+                        if (isStructural(oldT) !== isStructural(type)) structuralEditsThisTick++;
                     }
                 };
 
@@ -2861,14 +2878,15 @@
                     localSetter
                 );
 
+                // --------------------------------------------------
+                // Leak some FIRE out into world (optional)
+                // --------------------------------------------------
                 if (pixelsChanged) {
-                    // leak at most N fire cells outward per frame
                     let leaks = 0;
                     const MAX_LEAKS = 3;
 
                     for (let y = 0; y < body.height && leaks < MAX_LEAKS; y++) {
                         for (let x = 0; x < body.width && leaks < MAX_LEAKS; x++) {
-
                             const localIdx = y * body.width + x;
                             if (body.pixels[localIdx] !== MAT.FIRE) continue;
 
@@ -2876,7 +2894,6 @@
                                 (x - body.width / 2 + 0.5) / B2_SCALE,
                                 (y - body.height / 2 + 0.5) / B2_SCALE
                             );
-
                             const worldPos = body.body.getWorldPoint(localPos);
                             const worldX = Math.floor(worldPos.x * B2_SCALE);
                             const worldY = Math.floor(worldPos.y * B2_SCALE);
@@ -2891,12 +2908,27 @@
                             }
                         }
                     }
-                    
-                    body.needsShapeUpdate = true;
                 }
 
+                // --------------------------------------------------
+                // ✅ Debounced collider updates
+                // --------------------------------------------------
+                if (structuralEditsThisTick > 0) {
+                    body.pendingStructuralDelta += structuralEditsThisTick;
+                }
+
+                if (
+                    body.pendingStructuralDelta >= SPLIT_DELTA_THRESHOLD &&
+                    (now - body.lastSplitTime) > SPLIT_COOLDOWN_MS
+                ) {
+                    body.needsShapeUpdate = true;      // your rebuild loop will decide rebuild vs split
+                    body.pendingStructuralDelta = 0;
+                    body.lastSplitTime = now;
+                }
             }
         }
+
+
 
 
         /**
@@ -3957,10 +3989,7 @@
                 lastFpsTime = now;
             }
 
-            for (const body of bodiesToDestroy) {
-                world.destroyBody(body);
-            }
-            bodiesToDestroy.length = 0;
+            let splitBudget = 2;
 
             if (frameCount % VISIBLE_LIQUID_SCAN_INTERVAL === 0) {
                 findAndActivateVisibleLiquidSurfaces();
@@ -3980,13 +4009,22 @@
             // Use a reverse loop because we might be marking bodies for removal.
             for (let i = rigidBodies.length - 1; i >= 0; i--) {
                 const body = rigidBodies[i];
+                if (body.isDestroyed) continue;
+
                 if (body.needsShapeUpdate && (now - body.lastRebuildTime > REBUILD_COOLDOWN)) {
-                    
-                    const newBodies = checkForSplits(rigidBodies);
-                    if (newBodies && newBodies.length) {
-                        for (const nb of newBodies) rigidBodies.push(nb);
-                    }
-                    else {
+
+                    if (splitBudget > 0) {
+                        const newBodies = checkForSplits(body);
+                        
+                        if (newBodies && newBodies.length) {
+                            splitBudget--;
+                            newBodiesFromSplits.push(...newBodies);
+                            body.needsShapeUpdate = false;
+                        } else {
+                            body.rebuildFixtures();
+                            body.lastRebuildTime = now;
+                        }
+                    } else{
                         body.rebuildFixtures();
                         body.lastRebuildTime = now;
                     }
@@ -3997,8 +4035,8 @@
             if (newBodiesFromSplits.length > 0) {
                 rigidBodies.push(...newBodiesFromSplits);
             }
-            
-            cleanupDestroyedBodies(); // Safely remove bodies that have burned away
+
+            cleanupDestroyedBodies();
 
             updatePouredParticles();
             processAlchemyJobs();
@@ -4072,13 +4110,24 @@
         }
 
         function cleanupDestroyedBodies() {
-            rigidBodies = rigidBodies.filter(body => {
-                // body.isDestroyed bodies already had their Planck body destroyed (in split)
-                // or will be destroyed elsewhere explicitly
-                return !body.isDestroyed;
-            });
-        }
+            const kept = [];
 
+            for (const rb of rigidBodies) {
+                if (!rb.isDestroyed) {
+                    kept.push(rb);
+                    continue;
+                }
+
+                // rb is destroyed: remove its physics body if it still exists
+                if (rb.body) {
+                    rb.body.setActive(false);   // stop collisions immediately
+                    world.destroyBody(rb.body); // remove from physics world
+                    rb.body = null;             // avoid double-destroy
+                }
+            }
+
+            rigidBodies = kept;
+        }
 
         function updateUI()
         {
@@ -4302,7 +4351,7 @@
             ctx.strokeStyle = "rgba(0,255,0,0.8)";
 
             for (const rb of rigidBodies) {
-                if (!rb.body || rb.isDestroyed) continue;
+                //if (!rb.body || rb.isDestroyed) continue;
                 drawBodyFixtures(rb.body);
             }
 
