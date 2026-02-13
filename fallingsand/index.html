@@ -368,6 +368,21 @@
         const REGEN_COOLDOWN = 250;
         const REBUILD_COOLDOWN = 250;
         const MIN_ISLAND_PIXELS = 5;
+
+        // --- Add these new variables ---
+        const BLOOM_MATERIALS = {
+            [MAT.FIRE]: { color: [255, 150, 50], intensity: 0.9, radius: 12 },
+            [MAT.OIL_BURNING]: { color: [255, 165, 0], intensity: 0.8, radius: 10 },
+            [MAT.COAL_BURNING]: { color: [255, 140, 20], intensity: 0.7, radius: 8 },
+            [MAT.GUNPOWDER_IGNITED]: { color: [200, 100, 100], intensity: 0.5, radius: 4 },
+            [MAT.RUNE_WALL]: { color: [200, 180, 255], intensity: 0.3, radius: 6 }
+        };
+
+        // Off-screen canvas for the bloom effect
+        let bloomCanvas;
+        let bloomCtx;
+        // --- End of new variables ---
+
         let pendingActiveChunks = []; // An array to hold active chunks that were deferred from the previous frame.
         
         let grid = new Uint8Array(worldWidth * worldHeight).fill(MAT.EMPTY);
@@ -2591,7 +2606,7 @@
             ctx.putImageData(imageData, 0, 0);
 
             // Bloom still based on firePixelsCoords from base world draw
-            // renderBloom();
+            renderBloom();
 
             // --- RENDER RIGID BODIES (Planck version) ---
             for (const body of rigidBodies) {
@@ -3268,49 +3283,53 @@
         }
 
         function renderBloom() {
-            if (firePixelsCoords.length === 0) return;
-
             // --- Configuration ---
-            const bloomRadius = 6; // How far the glow extends, in pixels
-            const bloomIntensity = 0.01; // How bright the glow is (0.0 to 1.0)
-            const bloomColor = [180, 100, 50]; // The color of the glow (R, G, B)
-            
-            // Get the current canvas content so we can blend with it
-            const screenData = ctx.getImageData(0, 0, renderWidth, renderHeight);
-            const screenPixels = screenData.data;
-            
-            const r2 = bloomRadius * bloomRadius;
+            const bloomResolution = 4; // Must match the value in mainLoader
+            const blurPasses = 3;      // More passes = softer, wider glow
 
-            // Iterate ONLY through the fire pixels we found earlier
-            for (const p of firePixelsCoords) {
-                // For each fire pixel, draw a glow "stamp" around it
-                for (let dy = -bloomRadius; dy <= bloomRadius; dy++) {
-                    for (let dx = -bloomRadius; dx <= bloomRadius; dx++) {
-                        const distSq = dx * dx + dy * dy;
-                        if (distSq > r2) continue;
+            // 1. Clear the small bloom canvas with full transparency
+            bloomCtx.clearRect(0, 0, bloomCanvas.width, bloomCanvas.height);
+            bloomCtx.globalCompositeOperation = 'source-over';
 
-                        const px = p.x + dx;
-                        const py = p.y + dy;
+            // 2. Threshold Pass: Draw only the glowing materials from the main canvas
+            // onto the small bloom canvas.
+            const camX = Math.floor(camera.x);
+            const camY = Math.floor(camera.y);
 
-                        // Bounds check
-                        if (px < 0 || px >= renderWidth || py < 0 || py >= renderHeight) continue;
-                        
-                        // Calculate falloff: glow is strongest at the center
-                        const falloff = (1.0 - (distSq / r2)) * bloomIntensity;
-                        if (falloff <= 0) continue;
-                        
-                        const i = (py * renderWidth + px) * 4;
+            for (let y = 0; y < viewHeight; y++) {
+                for (let x = 0; x < viewWidth; x++) {
+                    const worldIdx = getIdx(x + camX, y + camY);
+                    if (worldIdx === -1) continue;
 
-                        // Additive blending
-                        screenPixels[i]     = Math.min(255, screenPixels[i]     + bloomColor[0] * falloff);
-                        screenPixels[i + 1] = Math.min(255, screenPixels[i + 1] + bloomColor[1] * falloff);
-                        screenPixels[i + 2] = Math.min(255, screenPixels[i + 2] + bloomColor[2] * falloff);
+                    const type = grid[worldIdx];
+                    const bloomConfig = BLOOM_MATERIALS[type];
+
+                    if (bloomConfig) {
+                        const [r, g, b] = bloomConfig.color;
+                        // The intensity is controlled by the alpha channel
+                        bloomCtx.fillStyle = `rgba(${r}, ${g}, ${b}, ${bloomConfig.intensity})`;
+                        bloomCtx.fillRect(x / bloomResolution, y / bloomResolution, 1, 1);
                     }
                 }
             }
 
-            // Put the modified pixel data (with bloom) back onto the canvas
-            ctx.putImageData(screenData, 0, 0);
+            // 3. Blur Passes: Downscale and blur the bloom canvas multiple times.
+            // This is the core of the high-performance gaussian-like blur effect.
+            bloomCtx.globalCompositeOperation = 'copy'; // Use 'copy' to stack blurs effectively
+            for (let i = 0; i < blurPasses; i++) {
+                // Applying a filter and drawing the canvas onto itself creates the blur
+                bloomCtx.filter = `blur(${1 << i}px)`; // Blur radius doubles each pass (1, 2, 4...)
+                bloomCtx.drawImage(bloomCanvas, 0, 0);
+            }
+            bloomCtx.filter = 'none'; // Reset filter for the final render
+
+            // 4. Final Composite Pass: Draw the small, blurred glow canvas back onto the main
+            // game canvas, scaled up and using an additive blend mode to create the bright glow.
+            ctx.save();
+            ctx.globalCompositeOperation = 'lighter'; // Additive blending
+            ctx.globalAlpha = 1.0; // Control overall bloom brightness here if needed
+            ctx.drawImage(bloomCanvas, 0, 0, renderWidth, renderHeight);
+            ctx.restore();
         }
 
         function angleToDir16(a) {
@@ -4643,6 +4662,12 @@
             updateLoadingStatus('Structuring World...');
             await yieldToBrowser();
             createChunkGrid();
+
+            const bloomResolution = 4; // Use a canvas 1/4th the size
+            bloomCanvas = document.createElement('canvas');
+            bloomCanvas.width = renderWidth / bloomResolution;
+            bloomCanvas.height = renderHeight / bloomResolution;
+            bloomCtx = bloomCanvas.getContext('2d');
 
             updateLoadingStatus('Carving Background Strata...');
             await yieldToBrowser();
