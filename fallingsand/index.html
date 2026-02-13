@@ -136,6 +136,10 @@
         Middle Click – Paint Brush
     </div>
 
+    <div id="generation-status" style="position: fixed; bottom: 10px; left: 10px; color: white; font-family: monospace; font-size: 14px; background: rgba(0,0,0,0.5); padding: 4px 8px; border-radius: 4px; pointer-events: none; display: none; z-index: 1001;">
+        Generating...
+    </div>
+
     <canvas id="canvas"></canvas>
 
     <script src="https://cdn.jsdelivr.net/npm/earcut@2.2.4/dist/earcut.min.js"></script>
@@ -147,6 +151,8 @@
         const canvas = document.getElementById('canvas');
         const ctx = canvas.getContext('2d');
         const pl = planck;
+
+        let WORLD_SEED = 10000;
 
         const world = new pl.World({
             gravity: pl.Vec2(0, 10)
@@ -213,6 +219,14 @@
         const scale = 3; // Smaller pixels
 
         const SIMULATION_STEPS_PER_FRAME = 2;
+
+        // --- NEW: SECTOR STREAMING CONFIGURATION ---
+        const SECTOR_SIZE = 512;
+        let sectorWidth, sectorHeight;
+        let sectorGrid = new Map(); // Will store { generated: bool, settled: bool } for each sector
+        let lastPlayerSectorX = -1; // Used to track when the player crosses a sector boundary
+        let lastPlayerSectorY = -1;
+        // --- END OF NEW BLOCK ---
 
         // canvas.width = viewWidth * scale; // Same canvas size: 300*4 = 1200
         // canvas.height = viewHeight * scale; // Same canvas size: 200*4 = 800
@@ -532,6 +546,246 @@
             }
         }
 
+        /**
+         * A "bare-bones" ASYNCHRONOUS generator for testing. It only carves the
+         * basic cave shape and does NOT generate bands, ores, or material pools.
+         * @param {number} sectorX - The horizontal index of the sector.
+         * @param {number} sectorY - The vertical index of the sector.
+         */
+        async function generateSector(sectorX, sectorY) {
+            const startX = sectorX * SECTOR_SIZE;
+            const startY = sectorY * SECTOR_SIZE;
+            const endX = startX + SECTOR_SIZE;
+            const endY = startY + SECTOR_SIZE;
+            const yieldToBrowser = () => new Promise(resolve => setTimeout(resolve, 10));
+
+            const scale = 220, octaves = 3, persistence = 0.5, lacunarity = 2.0;
+            const depthBiasStrength = 0.1;
+            const layerHeight = worldHeight / 5;
+            const layerWallMaterials = [ MAT.SANDSTONE_WALL, MAT.ROCK_WALL, MAT.VOLCANIC_WALL, MAT.LABYRINTH_WALL, MAT.MAGIC_WALL ];
+            
+            for (let y = startY; y < endY; y++) {
+                if (y >= worldHeight) continue;
+
+                if (y % 64 === 0) {
+                    await yieldToBrowser();
+                }
+                
+                const depthFactor = y / worldHeight;
+                const currentDepthBias = depthFactor * depthBiasStrength;
+                const layerIndex = Math.min(layerWallMaterials.length - 1, Math.floor(y / layerHeight));
+                const baseWallType = layerWallMaterials[layerIndex];
+
+                for (let x = startX; x < endX; x++) {
+                    if (x >= worldWidth) continue;
+
+                    // --- CORE CAVE SHAPE CALCULATION (Simplified) ---
+                    let totalNoise = 0, frequency = 1, amplitude = 1, maxAmplitude = 0;
+                    for (let i = 0; i < octaves; i++) {
+                        totalNoise += ((PerlinNoise.noise(x*frequency/scale, y*frequency/scale)+1)/2) * amplitude;
+                        maxAmplitude += amplitude;
+                        amplitude *= persistence;
+                        frequency *= lacunarity;
+                    }
+                    const finalNoise = totalNoise / maxAmplitude;
+
+                    // If the noise value is above the threshold, place a wall. Otherwise, do nothing (leave it empty).
+                    if (finalNoise >= 0.51 - currentDepthBias) {
+                         setGrid(getIdx(x, y), baseWallType);
+                    }
+                }
+            }
+        }
+
+        /**
+         * An empty, "bare-bones" version of the settling function for testing.
+         * Since no fallable materials are generated, there is nothing to settle.
+         */
+        async function preSettleSector(sectorX, sectorY) {
+            // This function is intentionally left empty for this performance test.
+            // It resolves instantly.
+            return Promise.resolve();
+        }
+
+        // --- NEW: ASYNCHRONOUS GENERATION WORKER & QUEUE ---
+        let generationQueue = [];
+        let isGenerating = false; // A lock to ensure only one sector is built at a time
+
+        /**
+         * The main background worker. Runs in a continuous loop, pulling sectors
+         * from a queue and generating them without blocking the main game thread.
+         */
+        async function generationWorker() {
+            const statusElement = document.getElementById('generation-status');
+
+            while (true) {
+                // If the queue is empty, hide the status UI and wait.
+                if (generationQueue.length === 0) {
+                    isGenerating = false;
+                    statusElement.style.display = 'none';
+                    // Wait for a short period before checking the queue again.
+                    await new Promise(resolve => setTimeout(resolve, 200));
+                    continue; // Go to the start of the next loop iteration.
+                }
+
+                // If we are here, there's work to do.
+                isGenerating = true;
+                statusElement.innerText = `Generating... (${generationQueue.length} sectors left)`;
+                statusElement.style.display = 'block';
+
+                const sector = generationQueue.shift();
+                const { sx, sy } = sector;
+                const key = `${sx},${sy}`;
+
+                // The heavy lifting is done here, with yields built into the functions.
+                await generateSector(sx, sy);
+                await preSettleSector(sx, sy);
+                
+                // This lighting bake is fast enough to run synchronously.
+                bakeLightingForSector(sx, sy);
+
+                // Mark the sector as fully generated and ready.
+                sectorGrid.set(key, 'ready');
+            }
+        }
+
+        /**
+         * Checks the player's current sector and adds any nearby "unloaded" sectors
+         * to the generation queue.
+         */
+        function updateSectors() {
+            const playerSectorX = Math.floor(player.x / SECTOR_SIZE);
+            const playerSectorY = Math.floor(player.y / SECTOR_SIZE);
+
+            if (playerSectorX === lastPlayerSectorX && playerSectorY === lastPlayerSectorY) {
+                return;
+            }
+            
+            lastPlayerSectorX = playerSectorX;
+            lastPlayerSectorY = playerSectorY;
+
+            // Check a 3x3 grid of sectors around the player
+            for (let sy = playerSectorY - 1; sy <= playerSectorY + 1; sy++) {
+                for (let sx = playerSectorX - 1; sx <= playerSectorX + 1; sx++) {
+                    if (sx < 0 || sx >= sectorWidth || sy < 0 || sy >= sectorHeight) continue;
+
+                    const key = `${sx},${sy}`;
+                    const sectorState = sectorGrid.get(key);
+
+                    // If a sector is 'unloaded', queue it up for generation.
+                    if (sectorState === 'unloaded') {
+                        sectorGrid.set(key, 'queued'); // Mark as queued to prevent re-adding
+                        generationQueue.push({ sx, sy });
+                    }
+                }
+            }
+        }
+
+        /**
+         * Bakes light for a new sector, merging with generated neighbors and
+         * correctly darkening walls that border un-generated sectors.
+         */
+        function bakeLightingForSector(sectorX, sectorY) {
+            const startX = sectorX * SECTOR_SIZE;
+            const startY = sectorY * SECTOR_SIZE;
+            const endX = Math.min(startX + SECTOR_SIZE, worldWidth);
+            const endY = Math.min(startY + SECTOR_SIZE, worldHeight);
+
+            const margin = MAX_LIGHT_LEVEL;
+            const bakeStartX = Math.max(0, startX - margin);
+            const bakeStartY = Math.max(0, startY - margin);
+            const bakeEndX = Math.min(worldWidth, endX + margin);
+            const bakeEndY = Math.min(worldHeight, endY + margin);
+
+            const queue = [];
+
+            // 1. Initialization pass for the core sector.
+            for (let y = startY; y < endY; y++) {
+                for (let x = startX; x < endX; x++) {
+                    const idx = getIdx(x, y);
+                    if (idx === -1) continue;
+                    if (grid[idx] === MAT.EMPTY) {
+                        lightGrid[idx] = MAX_LIGHT_LEVEL;
+                        queue.push(idx);
+                    } else {
+                        lightGrid[idx] = 0;
+                    }
+                }
+            }
+            
+            // 2. Propagation pass within the expanded bake area.
+            let head = 0;
+            const DIRS = [-1, 1, -worldWidth, worldWidth];
+            while (head < queue.length) {
+                const currentIdx = queue[head++];
+                const currentLight = lightGrid[currentIdx];
+                if (currentLight <= 1) continue;
+
+                for (const dir of DIRS) {
+                    const nextIdx = currentIdx + dir;
+                    const nextX = nextIdx % worldWidth;
+                    const nextY = Math.floor(nextIdx / worldWidth);
+                    
+                    if (nextIdx < 0 || nextIdx >= grid.length || 
+                        nextX < bakeStartX || nextX >= bakeEndX || 
+                        nextY < bakeStartY || nextY >= bakeEndY || 
+                        (dir === 1 && nextX === 0) || (dir === -1 && currentIdx % worldWidth === 0)) {
+                        continue;
+                    }
+                    
+                    const lightLoss = WALL_TYPES.has(grid[nextIdx]) ? 3 : 0;
+                    const nextLight = currentLight - lightLoss;
+
+                    if (nextLight > lightGrid[nextIdx]) {
+                        lightGrid[nextIdx] = nextLight;
+                        queue.push(nextIdx); 
+                    }
+                }
+            }
+
+            // --- YOUR IDEA IMPLEMENTED: Finalization pass ---
+            // This pass enforces the "dark wall" assumption for walls bordering the unknown void.
+            for (let y = startY; y < endY; y++) {
+                for (let x = startX; x < endX; x++) {
+                    // We only need to check pixels on the exact boundary of the sector.
+                    if (x > startX && x < endX - 1 && y > startY && y < endY - 1) {
+                        continue;
+                    }
+
+                    const idx = getIdx(x, y);
+                    if (idx === -1 || !WALL_TYPES.has(grid[idx])) {
+                        continue; // We only care about walls.
+                    }
+
+                    let isBorderingVoid = false;
+                    // Check right edge against the sector to the right
+                    if (x === endX - 1 && sectorX + 1 < sectorWidth) {
+                        const neighborState = sectorGrid.get(`${sectorX + 1},${sectorY}`);
+                        if (neighborState === 'unloaded' || neighborState === 'queued') isBorderingVoid = true;
+                    }
+                    // Check left edge
+                    if (x === startX && sectorX - 1 >= 0) {
+                        const neighborState = sectorGrid.get(`${sectorX - 1},${sectorY}`);
+                        if (neighborState === 'unloaded' || neighborState === 'queued') isBorderingVoid = true;
+                    }
+                    // Check bottom edge
+                    if (y === endY - 1 && sectorY + 1 < sectorHeight) {
+                        const neighborState = sectorGrid.get(`${sectorX},${sectorY + 1}`);
+                        if (neighborState === 'unloaded' || neighborState === 'queued') isBorderingVoid = true;
+                    }
+                    // Check top edge
+                    if (y === startY && sectorY - 1 >= 0) {
+                        const neighborState = sectorGrid.get(`${sectorX},${sectorY - 1}`);
+                        if (neighborState === 'unloaded' || neighborState === 'queued') isBorderingVoid = true;
+                    }
+
+                    // If this wall borders a sector that hasn't been generated yet, force its light to 0.
+                    if (isBorderingVoid) {
+                        lightGrid[idx] = 0;
+                    }
+                }
+            }
+        }
 
         class RigidBody {
             constructor(x, y, width, height, material) {
@@ -1191,7 +1445,7 @@
             const layerHeight = height / 5;
             const transitionSize = 40;
 
-            PerlinNoise.seed(1337);
+            PerlinNoise.seed(WORLD_SEED);
 
             const hash = (x, y, s = 0) => {
                 let h = x * 374761393 + y * 668265263 + s * 1442695041;
@@ -1321,6 +1575,11 @@
                 return; // Stop further input processing
             }
 
+            if (e.code === 'KeyP') {
+                saveMapToImage();
+                return; // Prevent other actions while saving
+            }
+
             keys[e.code] = true;
 
             if (e.code === 'KeyQ') {
@@ -1336,6 +1595,98 @@
             }
         });
         window.addEventListener('keyup', (e) => keys[e.code] = false);
+
+        /**
+         * Renders the entire world grid and all rigid bodies to a new canvas and
+         * triggers a download of the result as a PNG image. This is an async
+         * function to allow the UI to update with a "Saving..." message.
+         */
+        async function saveMapToImage() {
+            const loadingOverlay = document.getElementById('loading-overlay');
+            const statusElement = document.getElementById('loading-status');
+
+            // --- Show a "Saving..." message to the user ---
+            statusElement.innerText = 'Generating full map image... Please wait.';
+            loadingOverlay.style.transition = 'opacity 0.2s';
+            loadingOverlay.style.opacity = '1';
+            loadingOverlay.style.display = 'flex';
+
+            // Use a short timeout to ensure the browser renders the "Saving..." message
+            // before we start the heavy computation which can freeze the main thread.
+            await new Promise(resolve => setTimeout(resolve, 50));
+
+            // --- Create a new, large canvas for the full map ---
+            const saveCanvas = document.createElement('canvas');
+            saveCanvas.width = worldWidth;
+            saveCanvas.height = worldHeight;
+            const saveCtx = saveCanvas.getContext('2d');
+
+            // 1. Draw the pre-generated background
+            if (skyImageData) {
+                saveCtx.putImageData(skyImageData, 0, 0);
+            }
+
+            // 2. Draw the main terrain grid (pixel by pixel)
+            for (let y = 0; y < worldHeight; y++) {
+                for (let x = 0; x < worldWidth; x++) {
+                    const idx = getIdx(x, y);
+                    const type = grid[idx];
+                    if (type !== MAT.EMPTY) {
+                        const color = COLORS[type];
+                        if (color) {
+                            saveCtx.fillStyle = `rgb(${color[0]}, ${color[1]}, ${color[2]})`;
+                            saveCtx.fillRect(x, y, 1, 1);
+                        }
+                    }
+                }
+            }
+
+            // 3. Draw all rigid bodies at their current positions and rotations
+            for (const body of rigidBodies) {
+                if (!body.body || body.isDestroyed) continue;
+
+                const pos = body.body.getPosition();
+                const angle = body.body.getAngle();
+                const worldX = pos.x * B2_SCALE;
+                const worldY = pos.y * B2_SCALE;
+
+                saveCtx.save();
+                saveCtx.translate(worldX, worldY);
+                saveCtx.rotate(angle);
+
+                // Draw the body's internal pixels relative to its center
+                const offsetX = -body.width / 2;
+                const offsetY = -body.height / 2;
+                for (let y = 0; y < body.height; y++) {
+                    for (let x = 0; x < body.width; x++) {
+                        const type = body.pixels[y * body.width + x];
+                        if (type !== MAT.EMPTY) {
+                            const color = COLORS[type];
+                            if (color) {
+                                saveCtx.fillStyle = `rgb(${color[0]}, ${color[1]}, ${color[2]})`;
+                                saveCtx.fillRect(offsetX + x, offsetY + y, 1, 1);
+                            }
+                        }
+                    }
+                }
+                saveCtx.restore();
+            }
+
+            // 4. Create a link and trigger the download
+            const link = document.createElement('a');
+            link.download = `falling-sand-map-${Date.now()}.png`;
+            link.href = saveCanvas.toDataURL('image/png');
+            link.click();
+
+            // --- Hide the loading overlay ---
+            statusElement.innerText = 'Done!';
+            await new Promise(resolve => setTimeout(resolve, 500)); // Show "Done!" for a moment
+            loadingOverlay.style.opacity = '0';
+            await new Promise(resolve => setTimeout(() => {
+                loadingOverlay.style.display = 'none';
+                resolve();
+            }, 200));
+        }
 
         // --- Add this entire new function ---
         function getPlayerSubmersionRatio() {
@@ -2433,11 +2784,11 @@
         }
 
         /**
-         * Performs a fast, localized lighting update on a single chunk.
-         * Crucially, it also detects if light has "spilled" over a border and returns
-         * a Set of neighboring chunks that should now also be activated.
+         * Performs a fast, localized lighting update on a single chunk. This definitive
+         * version uses an 8-way neighbor check during seeding to perfectly eliminate
+         * all diagonal lighting artifacts at chunk boundaries.
          * @param {object} chunk - The chunk object to process.
-         * @returns {Set<object>} A set of neighboring chunk objects to activate next.
+         * @returns {Set<object>} A set of neighboring chunk objects to activate for the next pass.
          */
         function updateLocalLightingAndFindNeighbors(chunk) {
             const neighborsToActivate = new Set();
@@ -2448,124 +2799,101 @@
             const endX = startX + CHUNK_SIZE;
             const endY = startY + CHUNK_SIZE;
 
+            const queue = [];
+
+            // 1. Seeding Pass: Reset the chunk's light and find all initial light sources.
             for (let y = startY; y < endY; y++) {
                 for (let x = startX; x < endX; x++) {
                     const idx = getIdx(x, y);
                     if (idx === -1) continue;
 
-                    let maxNeighborLight = 0;
-                    if (x > 0) maxNeighborLight = Math.max(maxNeighborLight, lightGrid[idx - 1]);
-                    if (x < worldWidth - 1) maxNeighborLight = Math.max(maxNeighborLight, lightGrid[idx + 1]);
-                    if (y > 0) maxNeighborLight = Math.max(maxNeighborLight, lightGrid[idx - worldWidth]);
-                    if (y < worldHeight - 1) maxNeighborLight = Math.max(maxNeighborLight, lightGrid[idx + worldWidth]);
-
-                    const isWall = WALL_TYPES.has(grid[idx]);
-                    const lightLoss = isWall ? 3 : 0;
-                    const potentialLight = maxNeighborLight - lightLoss;
-                    
-                    let lightChanged = false;
-                    if (potentialLight > lightGrid[idx]) {
-                        lightGrid[idx] = potentialLight;
-                        lightChanged = true;
-                    }
-
-                    if (grid[idx] === MAT.EMPTY && lightGrid[idx] < MAX_LIGHT_LEVEL) {
+                    if (grid[idx] === MAT.EMPTY) {
                         lightGrid[idx] = MAX_LIGHT_LEVEL;
-                        lightChanged = true;
+                        queue.push(idx);
+                        continue;
                     }
+                    
+                    lightGrid[idx] = 0;
+                    
+                    // --- THE CRITICAL FIX: Use an 8-way neighbor check ---
+                    // This checks cardinal AND diagonal neighbors.
+                    const DIRS_8 = [
+                        -1, 1, -worldWidth, worldWidth, // Cardinal
+                        -worldWidth - 1, -worldWidth + 1, worldWidth - 1, worldWidth + 1 // Diagonal
+                    ];
 
-                    if (lightChanged) {
-                        // Check neighbors if this pixel is on a chunk border
-                        const dirs = [{dx:-1, dy:0}, {dx:1, dy:0}, {dx:0, dy:-1}, {dx:0, dy:1}];
-                        for (const dir of dirs) {
-                            const nx = x + dir.dx;
-                            const ny = y + dir.dy;
-                            
-                            // Check if the neighbor is in a different chunk
-                            if (Math.floor(nx / CHUNK_SIZE) !== chunkX_base || Math.floor(ny / CHUNK_SIZE) !== chunkY_base) {
-                                const nIdx = getIdx(nx, ny);
-                                // If the neighbor exists and isn't a wall, it can receive light.
-                                if (nIdx !== -1 && !WALL_TYPES.has(grid[nIdx])) {
-                                    const nChunkX = Math.floor(nx / CHUNK_SIZE);
-                                    const nChunkY = Math.floor(ny / CHUNK_SIZE);
-                                    if (nChunkX >= 0 && nChunkX < chunkWidth && nChunkY >= 0 && nChunkY < chunkHeight) {
-                                        neighborsToActivate.add(chunkGrid[nChunkY * chunkWidth + nChunkX]);
-                                    }
+                    for(const dir of DIRS_8) {
+                        const nIdx = idx + dir;
+                        if (nIdx < 0 || nIdx >= lightGrid.length || (dir === 1 && nIdx % worldWidth === 0) || (dir === -1 && idx % worldWidth === 0)) continue;
+                        
+                        const nX = nIdx % worldWidth;
+                        const nY = Math.floor(nIdx / worldWidth);
+
+                        // We only care about neighbors that are OUTSIDE the current chunk.
+                        if (nX < startX || nX >= endX || nY < startY || nY >= endY) {
+                            const nSectorX = Math.floor(nX / SECTOR_SIZE);
+                            const nSectorY = Math.floor(nY / SECTOR_SIZE);
+                            const nSectorState = sectorGrid.get(`${nSectorX},${nSectorY}`);
+
+                            if (nSectorState === 'ready') {
+                                const neighborLight = lightGrid[nIdx];
+                                // Note: Light loss for diagonals is often handled differently, but
+                                // for this seeding step, simply pulling the value is sufficient.
+                                const lightLoss = WALL_TYPES.has(grid[idx]) ? 3 : 0;
+                                const potentialLight = neighborLight - lightLoss;
+
+                                if (potentialLight > lightGrid[idx]) {
+                                    lightGrid[idx] = potentialLight;
+                                    queue.push(idx);
                                 }
+                            }
+                        }
+                    }
+                     // --- END OF FIX ---
+                }
+            }
+
+            // 2. Propagation Pass (BFS) - This can remain 4-way for efficiency.
+            let head = 0;
+            const DIRS_4 = [-1, 1, -worldWidth, worldWidth];
+            while (head < queue.length) {
+                const currentIdx = queue[head++];
+                const currentLight = lightGrid[currentIdx];
+                if (currentLight <= 1) continue;
+
+                for (const dir of DIRS_4) {
+                    const nextIdx = currentIdx + dir;
+                    if (nextIdx < 0 || nextIdx >= grid.length || (dir === 1 && nextIdx % worldWidth === 0) || (dir === -1 && currentIdx % worldWidth === 0)) continue;
+                    
+                    const nextX = nextIdx % worldWidth;
+                    const nextY = Math.floor(nextIdx / worldWidth);
+                    const nextSectorX = Math.floor(nextX / SECTOR_SIZE);
+                    const nextSectorY = Math.floor(nextY / SECTOR_SIZE);
+                    const neighborState = sectorGrid.get(`${nextSectorX},${nextSectorY}`);
+
+                    if (neighborState !== 'ready') continue;
+
+                    const lightLoss = WALL_TYPES.has(grid[nextIdx]) ? 3 : 0;
+                    const nextLight = currentLight - lightLoss;
+
+                    if (nextLight > lightGrid[nextIdx]) {
+                        lightGrid[nextIdx] = nextLight;
+
+                        const nextChunkX = Math.floor(nextX / CHUNK_SIZE);
+                        const nextChunkY = Math.floor(nextY / CHUNK_SIZE);
+
+                        if (nextChunkX === chunkX_base && nextChunkY === chunkY_base) {
+                            queue.push(nextIdx);
+                        } else {
+                            const neighborChunkIndex = nextChunkY * chunkWidth + nextChunkX;
+                            if (chunkGrid[neighborChunkIndex]) {
+                                neighborsToActivate.add(chunkGrid[neighborChunkIndex]);
                             }
                         }
                     }
                 }
             }
             return neighborsToActivate;
-        }
-
-        /**
-         * Calculates light levels using a Breadth-First Search with material-dependent dampening.
-         * Light originates from EMPTY cells, travels freely through non-ROCK_WALL materials,
-         * and loses strength when penetrating WALLs.
-         */
-        function updateLighting() {
-            lightGrid.fill(0);
-            const queue = [];
-
-            // 1. Seed the queue with all empty cells as the light sources.
-            // const searchRadius = 25;
-            // const startX = Math.max(0, Math.floor(camera.x) - searchRadius);
-            // const endX = Math.min(worldWidth, Math.floor(camera.x) + viewWidth + searchRadius);
-            // const startY = Math.max(0, Math.floor(camera.y) - searchRadius);
-            // const endY = Math.min(worldHeight, Math.floor(camera.y) + viewHeight + searchRadius);
-
-            const startX = 0;
-            const endX = worldWidth;
-            const startY = 0;
-            const endY = worldHeight;
-
-            for (let y = startY; y < endY; y++) {
-                for (let x = startX; x < endX; x++) {
-                    const idx = getIdx(x, y);
-                    if (idx !== -1 && grid[idx] === MAT.EMPTY) {
-                        lightGrid[idx] = MAX_LIGHT_LEVEL;
-                        queue.push(idx);
-                    }
-                }
-            }
-
-            // 2. Spread the light outwards layer by layer (BFS)
-            let head = 0;
-            const DIRS = [-1, 1, -worldWidth, worldWidth];
-
-            while (head < queue.length) {
-                const currentIdx = queue[head++];
-                const currentLight = lightGrid[currentIdx];
-
-                if (currentLight <= 1) continue;
-
-                for (const dir of DIRS) {
-                    const nextIdx = currentIdx + dir;
-
-                    if (nextIdx < 0 || nextIdx >= grid.length || (dir === 1 && nextIdx % worldWidth === 0) || (dir === -1 && currentIdx % worldWidth === 0)) {
-                        continue;
-                    }
-                    
-                    // --- NEW LIGHTING LOGIC ---
-                    // Determine the light loss based on the material we are *entering*.
-                    const isNextMaterialWall = WALL_TYPES.has(grid[nextIdx]);
-                    
-                    // Light passing into a WALL is heavily dampened.
-                    // Light passing into ANY OTHER material is not dampened at all.
-                    const lightLoss = isNextMaterialWall ? 3 : 0;
-                    
-                    const nextLight = currentLight - lightLoss;
-
-                    // If our calculated light is brighter than the neighbor's current light, update it.
-                    if (nextLight > lightGrid[nextIdx]) {
-                        lightGrid[nextIdx] = nextLight;
-                        // Always add the neighbor to the queue to continue spreading light.
-                        queue.push(nextIdx); 
-                    }
-                }
-            }
         }
 
         let playerMaskCanvas, playerMaskCtx;
@@ -4339,7 +4667,16 @@
          * wall material of the layer below it.
          */
         function generateCavesWithPerlinNoise(width, height, grid) {
-            const scale = 150;
+            PerlinNoise.seed(WORLD_SEED);
+
+            // Smoothed cave values
+            const scale = 220;
+            const octaves = 3;
+
+            // A separate Perlin noise generator for material pools
+            const PoolNoise = Object.assign({}, PerlinNoise);
+            PoolNoise.seed(WORLD_SEED / 2); // Use a different seed
+
             const depthBiasStrength = 0.1;
             const layerHeight = height / 5;
 
@@ -4356,21 +4693,13 @@
                 { material: MAT.GOLD,     threshold: 0.85 },
                 { material: MAT.PLATINUM, threshold: 0.99 }
             ];
-            const octaves = 4;
             const persistence = 0.5;
-            const lacunarity = 2;
+            const lacunarity = 2.0;
 
-            // --- Band Configuration ---
-            const bandCentersY = [
-                layerHeight,      // Between layer 1 and 2
-                layerHeight * 2,  // Between layer 2 and 3
-                layerHeight * 3,  // Between layer 3 and 4
-                layerHeight * 4   // Between layer 4 and 5
-            ];
+            const bandCentersY = [ layerHeight, layerHeight * 2, layerHeight * 3, layerHeight * 4 ];
             const bandHalfHeight = 50;
             const bandNoiseFrequency = 0.004;
             const bandNoiseAmplitude = 60;
-            // We no longer use a single band material.
 
             PerlinNoise.seed(12345 * Math.random() + 10000);
 
@@ -4382,37 +4711,26 @@
                 const baseWallType = layerWallMaterials[layerIndex];
 
                 for (let x = 0; x < width; x++) {
-                    
-                    // --- Modified Band Generation Logic ---
                     let isInBand = false;
-                    // Use an indexed loop to determine the correct material
                     for (let i = 0; i < bandCentersY.length; i++) {
                         const centerY = bandCentersY[i];
-                        // The band material is the wall type of the layer *below* it.
-                        // The first band (i=0) uses the wall from layer 2 (index 1).
                         const bandMaterial = layerWallMaterials[i + 1];
-
                         const noiseOffset = PerlinNoise.noise(x * bandNoiseFrequency, centerY) * bandNoiseAmplitude;
                         const noisyCenterY = centerY + noiseOffset;
-
                         if (y >= noisyCenterY - bandHalfHeight && y <= noisyCenterY + bandHalfHeight) {
                             setGrid(getIdx(x, y), bandMaterial);
                             isInBand = true;
                             break;
                         }
                     }
+                    if (isInBand) continue;
 
-                    if (isInBand) {
-                        continue;
-                    }
-
-                    // --- Existing Cave & Ore Generation Logic ---
                     let totalNoise = 0;
                     let frequency = 1;
                     let amplitude = 1;
                     let maxAmplitude = 0;
                     for (let i = 0; i < octaves; i++) {
-                        const noiseValue = (PerlinNoise.noise(x*frequency/scale, y*frequency/scale)+1)/2;
+                        const noiseValue = (PerlinNoise.noise(x * frequency / scale, y * frequency / scale) + 1) / 2;
                         totalNoise += noiseValue * amplitude;
                         maxAmplitude += amplitude;
                         amplitude *= persistence;
@@ -4421,7 +4739,7 @@
                     const finalNoise = totalNoise / maxAmplitude;
 
                     let materialToPlace = MAT.EMPTY;
-                    if (finalNoise >= 0.52 - currentDepthBias) {
+                    if (finalNoise >= 0.51 - currentDepthBias) {
                         materialToPlace = baseWallType;
                     }
                     for (const tier of GENERATION_TIERS) {
@@ -4429,11 +4747,131 @@
                             materialToPlace = tier.material;
                         }
                     }
+
+                    // --- RE-TUNED: Logic for much sparser material pools ---
+                    if (materialToPlace === MAT.EMPTY) {
+                        const poolNoiseScale = 80;
+                        const rareNoiseScale = 40;
+
+                        const poolNoise = (PoolNoise.noise(x / poolNoiseScale, y / poolNoiseScale) + 1) / 2;
+                        const rareNoise = (PoolNoise.noise((x + 1000) / rareNoiseScale, y / rareNoiseScale) + 1) / 2;
+
+                        switch (layerIndex) {
+                            case 0: // Sandstone Layer
+                                if (poolNoise > 0.82) materialToPlace = MAT.SAND;
+                                if (poolNoise < 0.25) materialToPlace = MAT.WATER;
+                                if (rareNoise > 0.92) materialToPlace = MAT.GUNPOWDER;
+                                break;
+                            case 1: // Mine Layer
+                                if (poolNoise > 0.80) materialToPlace = MAT.COAL;
+                                if (poolNoise < 0.28) materialToPlace = MAT.OIL;
+                                if (rareNoise > 0.88) materialToPlace = MAT.GUNPOWDER;
+                                break;
+                            case 2: // Volcanic Layer
+                                if (poolNoise < 0.30) materialToPlace = MAT.OIL;
+                                break;
+                            case 3: // Labyrinth Layer
+                                if (poolNoise > 0.90) materialToPlace = MAT.GLASS;
+                                break;
+                            case 4: // Magic Layer
+                                // Intentionally left sparse
+                                break;
+                        }
+                    }
+                    // --- END OF RE-TUNED BLOCK ---
+
                     if (materialToPlace !== MAT.EMPTY) {
                         setGrid(getIdx(x, y), materialToPlace);
                     }
                 }
             }
+        }
+
+        /**
+         * Performs a fast, optimized gravity simulation on dynamic materials to settle
+         * them before the game starts. It works by only processing vertical columns that
+         * are known to contain fallable materials, skipping all empty and static regions.
+         */
+        async function preSettleMaterials() {
+            return;
+            const FALLABLE_MATERIALS = new Set([
+                MAT.SAND, MAT.WATER, MAT.SOIL, MAT.GUNPOWDER, MAT.OIL, MAT.COAL, MAT.ACID, MAT.GLASS,
+                MAT.COPPER, MAT.SILVER, MAT.GOLD, MAT.PLATINUM
+            ]);
+
+            const yieldToBrowser = () => new Promise(resolve => setTimeout(resolve, 20));
+
+            // 1. First, do a single pass to find which columns need processing.
+            const columnsToUpdate = new Set();
+            for (let x = 0; x < worldWidth; x++) {
+                for (let y = 0; y < worldHeight; y++) {
+                    if (FALLABLE_MATERIALS.has(grid[getIdx(x, y)])) {
+                        columnsToUpdate.add(x);
+                        break; // Found a fallable particle, move to the next column.
+                    }
+                }
+            }
+            const activeColumns = Array.from(columnsToUpdate);
+
+            // 2. Run the settling simulation for a limited number of passes.
+            // This is usually enough for most materials to reach a stable state.
+            const maxIterations = 500; // Drastically reduced from worldHeight
+
+            for (let i = 0; i < maxIterations; i++) {
+                let pixelsMovedInPass = 0;
+                const newlyActiveColumns = new Set();
+
+            updateLoadingStatus('Settling sands and liquids...' + i + '/' + maxIterations);
+            await yieldToBrowser();
+
+                // Iterate from the bottom-up.
+                for (let y = worldHeight - 2; y >= 1; y--) {
+                    // Only iterate over the columns we identified earlier.
+                    for (const x of activeColumns) {
+                        const idx = getIdx(x, y);
+                        const type = grid[idx];
+
+                        if (!FALLABLE_MATERIALS.has(type)) continue;
+
+                        const belowIdx = getIdx(x, y + 1);
+                        
+                        if (grid[belowIdx] === MAT.EMPTY) {
+                            grid[idx] = MAT.EMPTY;
+                            grid[belowIdx] = type;
+                            pixelsMovedInPass++;
+                        } else if (isLiquid(type)) {
+                            // Try to spread sideways if blocked from falling.
+                            const dir = (i % 2 === 0) ? -1 : 1; // Alternate spread direction
+                            const sideIdx = getIdx(x + dir, y);
+                            
+                            if (sideIdx !== -1 && grid[sideIdx] === MAT.EMPTY) {
+                                grid[idx] = MAT.EMPTY;
+                                grid[sideIdx] = type;
+                                pixelsMovedInPass++;
+                                // If we spread, the new column might need updates.
+                                newlyActiveColumns.add(x + dir);
+                            }
+                        }
+                    }
+                }
+
+                // Add any columns that became active due to liquid spreading.
+                if (newlyActiveColumns.size > 0) {
+                    for (const col of newlyActiveColumns) {
+                        // Use a Set-like behavior to avoid duplicates
+                        if (!activeColumns.includes(col)) {
+                             activeColumns.push(col);
+                        }
+                    }
+                }
+
+                // If nothing moved, the world is stable.
+                if (pixelsMovedInPass === 0) {
+                    console.log(`World settled in ${i + 1} iterations.`);
+                    return;
+                }
+            }
+            console.warn(`World settling finished after maximum ${maxIterations} iterations.`);
         }
 
         /**
@@ -4496,6 +4934,7 @@
                 lastFpsTime = now;
             }
 
+            updateSectors();
             const t0 = performance.now();
 
             if (frameCount % VISIBLE_LIQUID_SCAN_INTERVAL === 0) {
@@ -4579,10 +5018,6 @@
                     }
                 }
             }
-
-            // if (frameCount % LIGHTING_UPDATE_INTERVAL === 0) {
-            //     updateLighting();
-            // }
 
             if (isPouring) {
                 pourFromContainer();
@@ -4844,12 +5279,23 @@
         async function mainLoader() {
             const loadingOverlay = document.getElementById('loading-overlay');
             const yieldToBrowser = () => new Promise(resolve => setTimeout(resolve, 20));
-
-            updateLoadingStatus('Structuring World...');
+            WORLD_SEED = Math.floor(Math.random() * 1000000);
+            PerlinNoise.seed(WORLD_SEED);
+            
+            updateLoadingStatus('Initializing Sectors...');
             await yieldToBrowser();
+
+            sectorWidth = Math.ceil(worldWidth / SECTOR_SIZE);
+            sectorHeight = Math.ceil(worldHeight / SECTOR_SIZE);
+            for (let y = 0; y < sectorHeight; y++) {
+                for (let x = 0; x < sectorWidth; x++) {
+                    // Initialize all sectors with the 'unloaded' state.
+                    sectorGrid.set(`${x},${y}`, 'unloaded');
+                }
+            }
             createChunkGrid();
 
-            const bloomResolution = 4; // Use a canvas 1/4th the size
+            const bloomResolution = 4;
             bloomCanvas = document.createElement('canvas');
             bloomCanvas.width = renderWidth / bloomResolution;
             bloomCanvas.height = renderHeight / bloomResolution;
@@ -4858,10 +5304,18 @@
             updateLoadingStatus('Carving Background Strata...');
             await yieldToBrowser();
             skyImageData = generateCaveBackground(worldWidth, worldHeight);
-
-            updateLoadingStatus('Generating Perlin Caves...');
+            
+            updateLoadingStatus('Preparing Spawn Area...');
             await yieldToBrowser();
-            generateCavesWithPerlinNoise(worldWidth, worldHeight, grid);
+            const spawnSectorX = Math.floor(player.x / SECTOR_SIZE);
+            const spawnSectorY = Math.floor(player.y / SECTOR_SIZE);
+            
+            // Generate the first sector synchronously to ensure a safe spawn.
+            // We use await here because the game can't start without this part.
+            await generateSector(spawnSectorX, spawnSectorY);
+            await preSettleSector(spawnSectorX, spawnSectorY);
+            bakeLightingForSector(spawnSectorX, spawnSectorY);
+            sectorGrid.set(`${spawnSectorX},${spawnSectorY}`, 'ready'); // Mark spawn sector as ready.
 
             updateLoadingStatus('Constructing Ancient Structures...');
             await yieldToBrowser();
@@ -4882,14 +5336,7 @@
                 setGrid(getIdx(x, worldHeight - 2), MAT.ADAMANTIUM);
             }
 
-            updateLoadingStatus('Activating Dynamic Matter...');
-            await yieldToBrowser();
             activateInitialChunks();
-
-            updateLoadingStatus('Igniting the First Light...');
-            await yieldToBrowser();
-            updateLighting(true);
-
             createPlayerBody(); 
             createWoodenBox(450, 150, 24, 64);
             createWoodenBox(450 + 128, 150, 24, 64);
@@ -4905,8 +5352,10 @@
                 resolve();
             }, 500));
             
-            // The game loop will now be started from the new entry point.
+            // Start the main game loop AND the background generation worker.
+            // The worker will now run forever in the background.
             gameLoop();
+            generationWorker(); 
         }
 
         function drawPhysicsOutlines() {
