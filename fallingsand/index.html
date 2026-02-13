@@ -4631,11 +4631,11 @@
             tOtherMs = performance.now() - t0 - tSimMs - tRenderMs;
 
             ctx.fillStyle = "white";
-            ctx.font = "12px monospace";
+            ctx.font = "8px monospace";
             ctx.textAlign = "right";
-            ctx.fillText(`simulation: ${tSimMs.toFixed(2)}ms`, renderWidth - 6, renderHeight - 30);
-            ctx.fillText(`render: ${tRenderMs.toFixed(2)}ms`, renderWidth - 6, renderHeight - 50);
-            ctx.fillText(`other: ${tOtherMs.toFixed(2)}ms`, renderWidth - 6, renderHeight - 70);
+            ctx.fillText(`simulation: ${tSimMs.toFixed(2)}ms`, renderWidth - 6, renderHeight - 10);
+            ctx.fillText(`render: ${tRenderMs.toFixed(2)}ms`, renderWidth - 6, renderHeight - 20);
+            ctx.fillText(`other: ${tOtherMs.toFixed(2)}ms`, renderWidth - 6, renderHeight - 30);
             ctx.textAlign = "left";
         }
 
@@ -4711,25 +4711,16 @@
             const y = 6;
 
             ctx.imageSmoothingEnabled = false;
-            ctx.font = '12px monospace';
+            ctx.font = '8px monospace';
             ctx.textAlign = 'right';
             ctx.textBaseline = 'top';
-
-            // Background
-            ctx.fillStyle = 'rgba(0,0,0,0.6)';
-            ctx.fillRect(
-                renderWidth - 150,
-                4,
-                146,
-                34
-            );
 
             // Text
             ctx.fillStyle = '#00ff90';
             ctx.fillText(`FPS: ${hudFPS}`, x, y);
 
             ctx.fillStyle = '#ffd966';
-            ctx.fillText(`MAT: ${hudMaterial}`, x, y + 14);
+            ctx.fillText(`MAT: ${hudMaterial}`, x, y + 10);
         }
 
         /**
@@ -5012,10 +5003,10 @@
          * Renders the player's HP and Hover Energy bars in the top-left corner of the canvas.
          */
         function renderPlayerStatsUI() {
-            const barWidth = 150;
-            const barHeight = 10;
-            const x = 15;
-            let y = 15; // Starting Y position
+            const barWidth = 75;
+            const barHeight = 8;
+            const x = 16;
+            let y = 8; // Starting Y position
 
             ctx.imageSmoothingEnabled = false;
 
