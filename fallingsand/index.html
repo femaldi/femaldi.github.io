@@ -3030,17 +3030,15 @@
                 
                 // This handler will receive messages from the temp worker
                 tempLocalGenerator.onmessage = event => {
-                    const { type, chunks } = event.data;
+                    const { type, chunks, lightChunks } = event.data;
 
                     if (type === 'init-ack') {
-                        console.log("Received");
                         // The worker has confirmed it is initialized. NOW we can ask it to generate.
 
                         const borderContext = gatherBorderContext(spawnSX, spawnSY);
                         tempLocalGenerator.postMessage({ type: 'generate-and-bake', sx: spawnSX, sy: spawnSY, borderContext: borderContext });
                     } 
                     else if (type === 'result') {
-                        console.log("Received 2");
                         // The worker has sent back the terrain data.
                         for (const [key, payload] of chunks) {
                             const chunk = getChunk(chunkMap, key);
@@ -3048,6 +3046,16 @@
                             chunk.cx = payload.cx;
                             chunk.cy = payload.cy;
                         }
+
+                        if (lightChunks) {
+                            for (const [key, payload] of lightChunks) {
+                                const chunk = getChunk(lightChunkMap, key);
+                                chunk.data = payload.data;
+                                chunk.cx = payload.cx;
+                                chunk.cy = payload.cy;
+                            }
+                        }
+
                         tempLocalGenerator.terminate(); // Clean up the temporary worker
                         resolve(); // Resolve the promise to continue loading
                     }
