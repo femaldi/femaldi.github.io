@@ -151,6 +151,7 @@
         const canvas = document.getElementById('canvas');
         const ctx = canvas.getContext('2d');
         const pl = planck;
+        let debugMode = false;
 
         const generationWorker = new Worker('generation.worker.js'); // ADD THIS LINE
         let WORLD_SEED = 0; // Will be set in mainLoader
@@ -1461,6 +1462,11 @@
                 return;
             }
 
+            if (e.code === 'KeyL') {
+                debugMode = !debugMode;
+                return;
+            }
+
             if (e.code === 'KeyP') {
                 saveMapToImage(); // This function needs to be re-thought for an infinite world
                 return;
@@ -2545,7 +2551,7 @@
 
             renderPlayerStatsUI();
             renderAlchemyUI();
-            drawActiveChunkOutlines();
+            if (debugMode) drawActiveChunkOutlines();
         }
         
         // This group of functions can remain as-is
@@ -2874,23 +2880,24 @@
             render();
             renderContainers();
             drawHUD();
-            renderDebugUI();
             tRenderMs = performance.now() - t2;
-
+            
             if ((frameCount % 2) === 0) updateHoverMaterial();
-
+            
             requestAnimationFrame(gameLoop);
-
+            
             tOtherMs = performance.now() - t0 - tSimMs - tRenderMs;
-            ctx.fillStyle = "white";
-            ctx.font = "8px monospace";
-            ctx.textAlign = "right";
-            ctx.fillText(`sim: ${tSimMs.toFixed(2)}ms`, renderWidth - 6, renderHeight - 10);
-            ctx.fillText(`render: ${tRenderMs.toFixed(2)}ms`, renderWidth - 6, renderHeight - 20);
-            ctx.fillText(`other: ${tOtherMs.toFixed(2)}ms`, renderWidth - 6, renderHeight - 30);
-            ctx.fillText(`other a: ${tOtherMs2.toFixed(2)}ms`, renderWidth - 6, renderHeight - 40);
-            ctx.fillText(`other b: ${tOtherMs3.toFixed(2)}ms`, renderWidth - 6, renderHeight - 50);
-            ctx.textAlign = "left";
+
+            if (debugMode) {
+                renderDebugUI();
+                ctx.fillStyle = "white";
+                ctx.font = "8px monospace";
+                ctx.textAlign = "right";
+                ctx.fillText(`sim: ${tSimMs.toFixed(2)}ms`, renderWidth - 6, renderHeight - 10);
+                ctx.fillText(`render: ${tRenderMs.toFixed(2)}ms`, renderWidth - 6, renderHeight - 20);
+                ctx.fillText(`other: ${tOtherMs.toFixed(2)}ms`, renderWidth - 6, renderHeight - 30);
+                ctx.textAlign = "left";
+            }
         }
         
         function cleanupDestroyedBodies(){
