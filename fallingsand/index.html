@@ -240,7 +240,9 @@
         // --- SECTOR STREAMING CONFIGURATION ---
         const SECTOR_SIZE = 512;
         const WORLD_LAYER_HEIGHT = 2000;
+        const MAX_READY_SECTORS = 12;
         let sectorGrid = new Map(); // Will store 'unloaded', 'queued', or 'ready' for each sector
+        let readySectorKeys = [];
         let lastPlayerSectorX = -1; // Used to track when the player crosses a sector boundary
         let lastPlayerSectorY = -1;
 
@@ -695,8 +697,6 @@
         // --- ASYNCHRONOUS GENERATION WORKER & QUEUE ---
         let generationQueue = [];
 
-        // In index.html
-
         generationWorker.onmessage = (event) => {
             const { type, sx, sy, chunks, lightChunks } = event.data; // Now receives lightChunks
 
@@ -709,20 +709,17 @@
                     chunk.cy = payload.cy;
                 }
 
-                // --- THIS IS THE CHANGE ---
-                // Integrate light chunks
                 for (const [key, payload] of lightChunks) {
                     const chunk = getChunk(lightChunkMap, key);
                     chunk.data = payload.data;
                     chunk.cx = payload.cx;
                     chunk.cy = payload.cy;
                 }
-                // --- END OF CHANGE ---
+                
+                const key = coordToKey(sx, sy);
+                sectorGrid.set(key, { state: 'ready', sx: sx, sy: sy });
+                readySectorKeys.push(key);
 
-                // The bake is now done in the worker, so we REMOVE the call from here.
-                // bakeLightingForSector(sx, sy); // <-- DELETE THIS LINE
-
-                sectorGrid.set(coordToKey(sx, sy), 'ready');
                 isGenerating = false;
                 isRenderCacheInvalid = true; // Invalidate cache now that all data is ready
             }
@@ -784,7 +781,7 @@
             // --- END OF CHANGE ---
         }
 
-        function updateSectors() {
+        async function updateSectors() { // Make function async
             const playerSectorX = Math.floor(player.x / SECTOR_SIZE);
             const playerSectorY = Math.floor(player.y / SECTOR_SIZE);
 
@@ -795,12 +792,25 @@
 
             for (let sy = playerSectorY - 1; sy <= playerSectorY + 1; sy++) {
                 for (let sx = playerSectorX - 1; sx <= playerSectorX + 1; sx++) {
-                    const key = coordToKey(sx, sy); // USE NUMERIC KEY
+                    const key = coordToKey(sx, sy);
                     const sectorState = sectorGrid.get(key);
+                    const state = sectorState ? (sectorState.state || sectorState) : 'unloaded';
 
-                    if (!sectorState || sectorState === 'unloaded') {
-                        sectorGrid.set(key, 'queued');
-                        generationQueue.push({ sx, sy });
+                    if (state === 'unloaded') {
+                        // --- START OF MODIFICATION ---
+                        // Try to load from storage first.
+                        if (loadSectorFromStorage(sx, sy)) {
+                            sectorGrid.set(key, { state: 'ready', sx, sy });
+                            readySectorKeys = readySectorKeys.filter(k => k !== key);
+                            // Add it to the end as the most recently used.
+                            readySectorKeys.push(key);
+                            isRenderCacheInvalid = true; // Force redraw
+                        } else {
+                            // If it fails, queue for generation as normal.
+                            sectorGrid.set(key, { state: 'queued', sx, sy });
+                            generationQueue.push({ sx, sy });
+                        }
+                        // --- END OF MODIFICATION ---
                     }
                 }
             }
@@ -1145,7 +1155,7 @@
 
             for (let y = startY; y < endY; y++) {
                 for (let x = startX; x < endX; x++) {
-                    // Check for a gas pixel that is directly below an empty pixel.
+                    // Check for a gas pixel that is directly above an empty pixel.
                     // This is the "leading edge" of a gas cloud that needs to be simulated.
                     if (getGrid(x, y) === MAT.GAS && getGrid(x, y + 1) === MAT.EMPTY) {
                         const chunkX = Math.floor(x / CHUNK_SIZE);
@@ -1198,6 +1208,176 @@
                 return this.lerp(w,this.lerp(v,this.lerp(u,this.grad(this.p[AA],x,y,z),this.grad(this.p[BA],x-1,y,z)),this.lerp(u,this.grad(this.p[AB],x,y-1,z),this.grad(this.p[BB],x-1,y-1,z))),this.lerp(v,this.lerp(u,this.grad(this.p[AA+1],x,y,z-1),this.grad(this.p[BA+1],x-1,y,z-1)),this.lerp(u,this.grad(this.p[AB+1],x,y-1,z-1),this.grad(this.p[BB+1],x-1,y-1,z-1))));
             }
         };
+
+        /**
+         * Compresses a Uint8Array using Run-Length Encoding.
+         * Example: [1, 1, 1, 2, 2, 3] becomes [3, 1, 2, 2, 1, 3]
+         * @param {Uint8Array} data The raw chunk data.
+         * @returns {number[]} The compressed data as a simple array.
+         */
+        function compressRLE(data) {
+            if (!data || data.length === 0) return [];
+            const compressed = [];
+            let count = 1;
+            for (let i = 1; i <= data.length; i++) {
+                if (i < data.length && data[i] === data[i - 1]) {
+                    count++;
+                } else {
+                    compressed.push(count, data[i - 1]);
+                    count = 1;
+                }
+            }
+            return compressed;
+        }
+
+        /**
+         * Decompresses an RLE array back into a Uint8Array.
+         * @param {number[]} rleData The compressed data.
+         * @returns {Uint8Array} The decompressed chunk data.
+         */
+        function decompressRLE(rleData) {
+            const decompressed = new Uint8Array(CHUNK_SIZE_SQ);
+            let index = 0;
+            for (let i = 0; i < rleData.length; i += 2) {
+                const count = rleData[i];
+                const value = rleData[i + 1];
+                for (let j = 0; j < count; j++) {
+                    decompressed[index++] = value;
+                }
+            }
+            return decompressed;
+        }
+
+        /**
+         * Saves all chunks within a given sector to Local Storage after compressing them.
+         * @param {number} sx The sector's X coordinate.
+         * @param {number} sy The sector's Y coordinate.
+         */
+        function saveSectorToStorage(sx, sy) {
+            const storageKey = `fsp-sector-${sx},${sy}`;
+            const sectorData = {
+                terrain: [],
+                light: []
+            };
+
+            const startCX = sx * (SECTOR_SIZE / CHUNK_SIZE);
+            const startCY = sy * (SECTOR_SIZE / CHUNK_SIZE);
+            const endCX = startCX + (SECTOR_SIZE / CHUNK_SIZE);
+            const endCY = startCY + (SECTOR_SIZE / CHUNK_SIZE);
+
+            for (let cy = startCY; cy < endCY; cy++) {
+                for (let cx = startCX; cx < endCX; cx++) {
+                    const key = coordToKey(cx, cy);
+                    
+                    const terrainChunk = chunkMap.get(key);
+                    if (terrainChunk) {
+                        sectorData.terrain.push({ cx, cy, data: compressRLE(terrainChunk.data) });
+                        chunkMap.delete(key); // Free up memory
+                    }
+
+                    const lightChunk = lightChunkMap.get(key);
+                    if (lightChunk) {
+                        sectorData.light.push({ cx, cy, data: compressRLE(lightChunk.data) });
+                        lightChunkMap.delete(key); // Free up memory
+                    }
+                }
+            }
+
+            try {
+                localStorage.setItem(storageKey, JSON.stringify(sectorData));
+                console.log(`Sector [${sx}, ${sy}] saved to storage.`);
+            } catch (e) {
+                console.error(`Failed to save sector [${sx}, ${sy}]. Local Storage may be full.`, e);
+            }
+        }
+
+        /**
+         * Attempts to load a sector from Local Storage into memory.
+         * @param {number} sx The sector's X coordinate.
+         * @param {number} sy The sector's Y coordinate.
+         * @returns {boolean} True if the sector was loaded successfully, false otherwise.
+         */
+        function loadSectorFromStorage(sx, sy) {
+            const storageKey = `fsp-sector-${sx},${sy}`;
+            const savedData = localStorage.getItem(storageKey);
+
+            if (!savedData) {
+                return false; // Not in storage, needs generation.
+            }
+
+            try {
+                const sectorData = JSON.parse(savedData);
+
+                // Load terrain
+                for (const chunkData of sectorData.terrain) {
+                    const key = coordToKey(chunkData.cx, chunkData.cy);
+                    const chunk = getChunk(chunkMap, key);
+                    chunk.data = decompressRLE(chunkData.data);
+                    chunk.cx = chunkData.cx;
+                    chunk.cy = chunkData.cy;
+                }
+
+                // Load lighting
+                for (const chunkData of sectorData.light) {
+                    const key = coordToKey(chunkData.cx, chunkData.cy);
+                    const chunk = getChunk(lightChunkMap, key);
+                    chunk.data = decompressRLE(chunkData.data);
+                    chunk.cx = chunkData.cx;
+                    chunk.cy = chunkData.cy;
+                }
+                
+                // Important: Remove it from storage after loading to prevent stale data if it's saved again later
+                localStorage.removeItem(storageKey); 
+                console.log(`Sector [${sx}, ${sy}] loaded from storage.`);
+                return true;
+            } catch (e) {
+                console.error(`Failed to load or parse sector [${sx}, ${sy}] from storage.`, e);
+                return false;
+            }
+        }
+
+        /**
+         * Checks if the number of ready sectors exceeds the limit and unloads the oldest one.
+         */
+        function manageSectorMemory() {
+            if (readySectorKeys.length <= MAX_READY_SECTORS) {
+                return; // Nothing to do
+            }
+
+            // Step 1: Create a set of "protected" keys for the 3x3 grid around the player.
+            const protectedKeys = new Set();
+            for (let sy = lastPlayerSectorY - 1; sy <= lastPlayerSectorY + 1; sy++) {
+                for (let sx = lastPlayerSectorX - 1; sx <= lastPlayerSectorX + 1; sx++) {
+                    protectedKeys.add(coordToKey(sx, sy));
+                }
+            }
+
+            // Step 2: Find the first (oldest) key in the list that is NOT protected.
+            let keyToUnload = null;
+            let unloadIndex = -1;
+
+            for (let i = 0; i < readySectorKeys.length; i++) {
+                const key = readySectorKeys[i];
+                if (!protectedKeys.has(key)) {
+                    keyToUnload = key;
+                    unloadIndex = i;
+                    break; // We found our target
+                }
+            }
+
+            // Step 3: If we found a non-protected sector to unload, process it.
+            if (keyToUnload) {
+                const sector = sectorGrid.get(keyToUnload);
+                
+                if (sector && sector.sx !== undefined && sector.state === 'ready') {
+                    saveSectorToStorage(sector.sx, sector.sy);
+                    sector.state = 'unloaded';
+                    
+                    // Remove the unloaded key from the tracking array.
+                    readySectorKeys.splice(unloadIndex, 1);
+                }
+            }
+        }
 
         /**
          * Generates a single, tileable cave background image.
@@ -2574,7 +2754,7 @@
         }
 
         // --- GAME LOOP ---
-        function gameLoop(now = performance.now()) {
+        async function gameLoop(now = performance.now()) {
             debugStats.getCalls = 0;
             debugStats.getHits = 0;
             debugStats.setCalls = 0;
@@ -2590,7 +2770,8 @@
 
             checkGenerationQueue() 
 
-            updateSectors();
+            await updateSectors(); // Await the async function
+            manageSectorMemory();  // Check if we need to unload a sector
             const t0 = performance.now();
             if (frameCount % VISIBLE_LIQUID_SCAN_INTERVAL === 0) {
                 findAndActivateLiquidSurfaces(); // Call renamed function
@@ -2744,7 +2925,7 @@
             // Display stats
             ctx.fillText(`Active Chunks: ${activeChunks.size}`, startX, startY);
             startY += lineHeight;
-            ctx.fillText(`Ready Sectors: ${activeSectors}`, startX, startY);
+            ctx.fillText(`Ready Sectors: ${activeSectors} / ${MAX_READY_SECTORS}`, startX, startY);
             startY += (lineHeight * 1.5); // Add extra space
 
             ctx.fillText(`setGrid Calls: ${debugStats.setCalls}`, startX, startY);
@@ -2817,6 +2998,7 @@
         function updateLoadingStatus(message) { document.getElementById('loading-status').innerText=message; }
 
         async function mainLoader() {
+            localStorage.clear();
             const loadingOverlay = document.getElementById('loading-overlay');
             const yieldToBrowser = () => new Promise(resolve => setTimeout(resolve, 20));
             
@@ -2842,7 +3024,6 @@
             const spawnSX = Math.floor(player.x / SECTOR_SIZE);
             const spawnSY = Math.floor(player.y / SECTOR_SIZE);
 
-            // --- START OF THE FIX ---
             // We now use a more robust promise-based approach to guarantee initialization order.
             const firstSectorPromise = new Promise(resolve => {
                 const tempLocalGenerator = new Worker('generation.worker.js');
@@ -2877,10 +3058,14 @@
             });
 
             await firstSectorPromise; // Wait until the entire init->generate->result cycle is complete.
-            // --- END OF THE FIX ---
 
-            //bakeLightingForSector(spawnSX, spawnSY);
-            sectorGrid.set(coordToKey(spawnSX, spawnSY), 'ready');
+            const key = coordToKey(spawnSX, spawnSY);
+            
+            // 1. Set the sector data using the correct OBJECT format.
+            sectorGrid.set(key, { state: 'ready', sx: spawnSX, sy: spawnSY });
+            
+            // 2. Add the initial sector to the tracking array so it can be unloaded later.
+            readySectorKeys.push(key);
             
             updateLoadingStatus('Constructing Ancient Structures...');
             await yieldToBrowser();
