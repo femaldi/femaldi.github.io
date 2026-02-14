@@ -1736,193 +1736,299 @@
              for(let y=gridHeight-1;y>=0;y--) for(let x=(scanDir?0:gridWidth-1);(scanDir?x<gridWidth:x>=0);x+=(scanDir?1:-1)) stepLiquid(x,y,moved,currentGrid,gridWidth,gridHeight,localGetIdx,setter);
         }
 
-        function stepNonLiquid(x, y) {
-            if (movedInFrame.has(coordToKey(x, y))) return; // NEW: Use numeric key
+        function stepNonLiquid(x, y, moved, grid, w, h, getIdx, setter) {
+            const isWorldSim = !grid;
+            const type = isWorldSim ? getGrid(x, y) : grid[getIdx(x, y)];
+            const idx = isWorldSim ? -1 : getIdx(x, y);
 
-            const type = getGrid(x, y);
+            if(isWorldSim && movedInFrame.has(coordToKey(x,y))) return;
+            if(!isWorldSim && moved[idx]) return;
+
             if (WALL_TYPES.has(type) || [MAT.EMPTY, MAT.WOOD, MAT.GLASS_WALL, MAT.ADAMANTIUM, MAT.RUNE_WALL, MAT.RIGID_BODY_STUB].includes(type) || LIQUIDS.has(type)) return;
-
-            if (type === MAT.FIRE) updateFire(x, y);
-            else if ([MAT.SAND, MAT.SOIL, MAT.GUNPOWDER, MAT.COAL, MAT.GLASS, MAT.COPPER, MAT.SILVER, MAT.GOLD, MAT.PLATINUM].includes(type)) updateSolid(x, y, type);
-            else if (type === MAT.COAL_BURNING) updateBurningCoal(x, y);
-            else if (type === MAT.GAS) updateGas(x, y);
-            else if (type === MAT.GUNPOWDER_IGNITED) updateIgnitedGunpowder(x, y);
+            
+            if (type === MAT.FIRE) updateFire(x, y, idx, moved, grid, w, h, getIdx, setter);
+            else if ([MAT.SAND, MAT.SOIL, MAT.GUNPOWDER, MAT.COAL, MAT.GLASS, MAT.COPPER, MAT.SILVER, MAT.GOLD, MAT.PLATINUM].includes(type)) updateSolid(x, y, type, idx, moved, grid, w, h, getIdx, setter);
+            else if (type === MAT.COAL_BURNING) updateBurningCoal(x, y, idx, moved, grid, w, h, getIdx, setter);
+            else if (type === MAT.GAS) updateGas(x, y, idx, moved, grid, w, h, getIdx, setter);
+            else if (type === MAT.GUNPOWDER_IGNITED) updateIgnitedGunpowder(x, y, idx, moved, grid, w, h, getIdx, setter);
         }
 
-        function stepLiquid(x, y) {
-            if (movedInFrame.has(coordToKey(x, y))) return; // NEW: Use numeric key
+        function stepLiquid(x, y, moved, grid, w, h, getIdx, setter) {
+            const isWorldSim = !grid;
+            const type = isWorldSim ? getGrid(x, y) : grid[getIdx(x, y)];
+            const idx = isWorldSim ? -1 : getIdx(x, y);
 
-            const type = getGrid(x, y);
+            if(isWorldSim && movedInFrame.has(coordToKey(x,y))) return;
+            if(!isWorldSim && moved[idx]) return;
+
             if (![MAT.WATER, MAT.OIL, MAT.OIL_BURNING, MAT.ACID].includes(type)) return;
-
-            updateLiquid(x, y, type);
+            
+            updateLiquid(x, y, type, idx, moved, grid, w, h, getIdx, setter);
         }
 
-        function updateIgnitedGunpowder(x, y) {
-            let timer = getAuxData(etcChunkMap, x, y);
-            timer--;
-            setAuxData(etcChunkMap, x, y, timer);
-
-            for (let n of [{x:0,y:1},{x:0,y:-1},{x:1,y:0},{x:-1,y:0}]) {
-                const nx = x + n.x, ny = y + n.y;
-                if (Math.random() < 0.35 && getGrid(nx, ny) === MAT.GUNPOWDER) {
-                    setGrid(nx, ny, MAT.GUNPOWDER_IGNITED);
-                    setAuxData(etcChunkMap, nx, ny, 8 + Math.floor(Math.random() * 6));
+        function updateIgnitedGunpowder(x, y, idx, moved, grid, w, h, getIdx, setter) {
+            const isWorldSim = !grid;
+            if (isWorldSim) {
+                let timer = getAuxData(etcChunkMap, x, y);
+                timer--;
+                setAuxData(etcChunkMap, x, y, timer);
+                for (let n of [{x:0,y:1},{x:0,y:-1},{x:1,y:0},{x:-1,y:0}]) {
+                    const nx = x + n.x, ny = y + n.y;
+                    if (Math.random() < 0.35 && getGrid(nx, ny) === MAT.GUNPOWDER) {
+                        setGrid(nx, ny, MAT.GUNPOWDER_IGNITED);
+                        setAuxData(etcChunkMap, nx, ny, 8 + Math.floor(Math.random() * 6));
+                    }
                 }
-            }
-
-            if (timer <= 0) {
-                setGrid(x, y, MAT.EMPTY);
-                triggerExplosion(x, y, 6);
+                if (timer <= 0) {
+                    setGrid(x, y, MAT.EMPTY);
+                    triggerExplosion(x, y, 6);
+                }
+            } else {
+                // No timer or explosion in small grids, just burns out
+                if (Math.random() < 0.2) {
+                    setter(idx, MAT.FIRE);
+                    moved[idx] = 1;
+                }
             }
         }
         
-        function updateFire(x, y) {
+        function updateFire(x, y, idx, moved, grid, w, h, getIdx, setter) {
+            const isWorldSim = !grid;
+            const _get = (gx, gy) => isWorldSim ? getGrid(gx, gy) : (getIdx(gx, gy) !== -1 ? grid[getIdx(gx, gy)] : MAT.ROCK_WALL);
+            const _set = (gx, gy, gtype) => {
+                if (isWorldSim) {
+                    setGrid(gx, gy, gtype);
+                    movedInFrame.add(coordToKey(gx, gy));
+                } else {
+                    const gidx = getIdx(gx, gy);
+                    if (gidx !== -1) { setter(gidx, gtype); moved[gidx] = 1; }
+                }
+            };
+
             let nearbyFuel = false;
-            for (let n of [{x:0,y:1},{x:0,y:1},{x:-1,y:0},{x:1,y:0},{x:-1,y:-1},{x:1,y:-1},{x:-1,y:1},{x:1,y:1}]) {
+            for (let n of [{x:0,y:1},{x:0,y:-1},{x:1,y:0},{x:-1,y:0},{x:-1,y:-1},{x:1,y:-1},{x:-1,y:1},{x:1,y:1}]) {
                 const nx = x + n.x, ny = y + n.y;
-                const nType = getGrid(nx, ny);
-                if (nType === MAT.SAND && Math.random() < 0.05) setGrid(nx, ny, MAT.GLASS);
-                if (nType === MAT.GUNPOWDER && Math.random() < 0.5) { setGrid(nx, ny, MAT.GUNPOWDER_IGNITED); setAuxData(etcChunkMap, nx, ny, 8 + Math.floor(Math.random() * 6)); return; }
-                if (nType === MAT.OIL) { setGrid(nx, ny, MAT.OIL_BURNING); return; }
-                if (nType === MAT.COAL) { setGrid(nx, ny, MAT.COAL_BURNING); return; }
-                if (nType === MAT.WOOD) { nearbyFuel = true; if (Math.random() < 0.02) { setGrid(nx, ny, MAT.FIRE); movedInFrame.add(coordToKey(nx, ny)); } } // NEW
-                if (nType === MAT.WATER) { setGrid(nx, ny, MAT.GAS); setGrid(x, y, MAT.GAS); return; }
+                const nType = _get(nx, ny);
+                if (nType === MAT.SAND && Math.random() < 0.05) _set(nx, ny, MAT.GLASS);
+                if (nType === MAT.GUNPOWDER && Math.random() < 0.5) {
+                    if (isWorldSim) { setGrid(nx, ny, MAT.GUNPOWDER_IGNITED); setAuxData(etcChunkMap, nx, ny, 8 + Math.floor(Math.random() * 6)); } 
+                    else { _set(nx, ny, MAT.FIRE); }
+                    return;
+                }
+                if (nType === MAT.OIL) { _set(nx, ny, MAT.OIL_BURNING); return; }
+                if (nType === MAT.COAL) { _set(nx, ny, MAT.COAL_BURNING); return; }
+                if (nType === MAT.WOOD) { nearbyFuel = true; if (Math.random() < 0.02) _set(nx, ny, MAT.FIRE); }
+                if (nType === MAT.WATER) { _set(nx, ny, MAT.GAS); _set(x, y, MAT.GAS); return; }
             }
             let targetX = x, targetY = y;
             if (!nearbyFuel && y > 0) {
                 let nextX = x, nextY = y - 1;
                 if (Math.random() < 0.5) nextX += Math.random() < 0.5 ? -1 : 1;
-                const nextType = getGrid(nextX, nextY);
+                const nextType = _get(nextX, nextY);
                 if (nextType === MAT.EMPTY || nextType === MAT.GAS) {
-                    setGrid(x, y, nextType);
-                    setGrid(nextX, nextY, MAT.FIRE);
-                    movedInFrame.add(coordToKey(nextX, nextY)); // NEW
+                    _set(x, y, nextType);
+                    _set(nextX, nextY, MAT.FIRE);
                     targetX = nextX; targetY = nextY;
                 }
             }
-            if (Math.random() < (nearbyFuel ? 0.0 : 0.15)) {
-                if (Math.random() < 0.15) setGrid(targetX, targetY, MAT.GAS);
-                else setGrid(targetX, targetY, MAT.EMPTY);
+            if (Math.random() < (nearbyFuel ? 0.01 : 0.15)) {
+                _set(targetX, targetY, Math.random() < 0.15 ? MAT.GAS : MAT.EMPTY);
             }
         }
 
-        function updateBurningCoal(x, y) {
+        function updateBurningCoal(x, y, idx, moved, grid, w, h, getIdx, setter) {
+            const isWorldSim = !grid;
+            const _get = (gx, gy) => isWorldSim ? getGrid(gx, gy) : (getIdx(gx, gy) !== -1 ? grid[getIdx(gx, gy)] : MAT.ROCK_WALL);
+            const _set = (gx, gy, gtype) => {
+                if (isWorldSim) {
+                    setGrid(gx, gy, gtype);
+                } else {
+                    const gidx = getIdx(gx, gy);
+                    if (gidx !== -1) { setter(gidx, gtype); moved[gidx] = 1; }
+                }
+            };
+             const _tryIgniteAt = (gx, gy, prob) => {
+                if (isWorldSim) tryIgniteAt(gx, gy, prob);
+                // No complex ignition in small grids for now
+            };
+
             for (const n of [{x:0,y:1},{x:0,y:-1},{x:1,y:0},{x:-1,y:0}]) {
                 const nx = x + n.x, ny = y + n.y;
-                if (getGrid(nx, ny) === MAT.SAND && Math.random() < 0.08) setGrid(nx, ny, MAT.GLASS);
-                tryIgniteAt(nx, ny, 0.02);
+                if (_get(nx, ny) === MAT.SAND && Math.random() < 0.08) _set(nx, ny, MAT.GLASS);
+                _tryIgniteAt(nx, ny, 0.02);
             }
-            if (Math.random() < 0.02 && getGrid(x, y - 1) === MAT.EMPTY) setGrid(x, y - 1, MAT.FIRE);
-            if (Math.random() < 0.003) setGrid(x, y, Math.random() < 0.15 ? MAT.GAS : MAT.EMPTY);
-            if (getGrid(x, y) === MAT.COAL_BURNING) activateChunkAt(x, y);
+            if (Math.random() < 0.02 && _get(x, y - 1) === MAT.EMPTY) _set(x, y - 1, MAT.FIRE);
+            if (Math.random() < 0.003) _set(x, y, Math.random() < 0.15 ? MAT.GAS : MAT.EMPTY);
+            if (isWorldSim && getGrid(x, y) === MAT.COAL_BURNING) activateChunkAt(x, y);
         }
 
-        function updateBurningOil(x, y) {
+        function updateBurningOil(x, y, idx, moved, grid, w, h, getIdx, setter) {
+            const isWorldSim = !grid;
+            const _get = (gx, gy) => isWorldSim ? getGrid(gx, gy) : (getIdx(gx, gy) !== -1 ? grid[getIdx(gx, gy)] : MAT.ROCK_WALL);
+            const _set = (gx, gy, gtype) => {
+                if (isWorldSim) {
+                    setGrid(gx, gy, gtype);
+                } else {
+                    const gidx = getIdx(gx, gy);
+                    if (gidx !== -1) { setter(gidx, gtype); moved[gidx] = 1; }
+                }
+            };
+            const _tryIgniteAt = (gx, gy, prob) => {
+                 if (isWorldSim) tryIgniteAt(gx, gy, prob);
+            };
+
             for (const n of [{x:0,y:1},{x:0,y:-1},{x:1,y:0},{x:-1,y:0},{x:1,y:1},{x:-1,y:1},{x:1,y:-1},{x:-1,y:-1}]) {
                 const nx = x + n.x, ny = y + n.y;
-                if (getGrid(nx, ny) === MAT.SAND && Math.random() < 0.1) setGrid(nx, ny, MAT.GLASS);
-                tryIgniteAt(nx, ny, 0.05);
+                if (_get(nx, ny) === MAT.SAND && Math.random() < 0.1) _set(nx, ny, MAT.GLASS);
+                _tryIgniteAt(nx, ny, 0.05);
             }
-            if (Math.random() < 0.05 && getGrid(x, y - 1) === MAT.EMPTY) setGrid(x, y - 1, MAT.FIRE);
-            if (Math.random() < 0.008) setGrid(x, y, Math.random() < 0.15 ? MAT.GAS : MAT.EMPTY);
-            if (getGrid(x, y) === MAT.OIL_BURNING) activateChunkAt(x, y);
+            if (Math.random() < 0.05 && _get(x, y - 1) === MAT.EMPTY) _set(x, y - 1, MAT.FIRE);
+            if (Math.random() < 0.008) _set(x, y, Math.random() < 0.15 ? MAT.GAS : MAT.EMPTY);
+            if (isWorldSim && getGrid(x, y) === MAT.OIL_BURNING) activateChunkAt(x, y);
         }
 
-        function updateSolid(x, y, type) {
-            if (getGrid(x, y + 1) === MAT.FIRE && type === MAT.COAL) { setGrid(x, y, MAT.COAL_BURNING); return; }
+        function updateSolid(x, y, type, idx, moved, grid, w, h, getIdx, setter) {
+            const isWorldSim = !grid;
+            const _get = (gx, gy) => isWorldSim ? getGrid(gx, gy) : (getIdx(gx, gy) !== -1 ? grid[getIdx(gx, gy)] : MAT.ROCK_WALL);
+            const _set = (gx, gy, gtype) => {
+                if (isWorldSim) {
+                    setGrid(gx, gy, gtype);
+                    movedInFrame.add(coordToKey(gx, gy));
+                } else {
+                    const gidx = getIdx(gx, gy);
+                    if (gidx !== -1) { setter(gidx, gtype); moved[gidx] = 1; }
+                }
+            };
+             const _getAux = (gx, gy) => isWorldSim ? getAuxData(etcChunkMap, gx, gy) : 0;
 
-            if (getAuxData(etcChunkMap, x, y + 1) !== 1) { // Check for rigid body
-                const belowType = getGrid(x, y + 1);
+            if (_get(x, y + 1) === MAT.FIRE && type === MAT.COAL) { _set(x, y, MAT.COAL_BURNING); if(!isWorldSim && idx!==-1) moved[idx] = 1; return; }
+            if (_getAux(x, y + 1) !== 1) {
+                const belowType = _get(x, y + 1);
                 if ([MAT.EMPTY, MAT.GAS].includes(belowType) || isLiquid(belowType)) {
-                    setGrid(x, y, belowType);
-                    setGrid(x, y + 1, type);
-                    movedInFrame.add(coordToKey(x, y + 1)); // NEW
+                    _set(x, y, belowType);
+                    _set(x, y + 1, type);
+                    if(!isWorldSim && idx!==-1) moved[idx] = 1;
                     return;
                 }
             }
             const dir = Math.random() < 0.5 ? -1 : 1;
             for (let dx of [dir, -dir]) {
-                if (getAuxData(etcChunkMap, x + dx, y + 1) !== 1) {
-                    const diagType = getGrid(x + dx, y + 1);
+                if (_getAux(x + dx, y + 1) !== 1) {
+                    const diagType = _get(x + dx, y + 1);
                     if ([MAT.EMPTY, MAT.GAS].includes(diagType) || isLiquid(diagType)) {
-                        setGrid(x, y, diagType);
-                        setGrid(x + dx, y + 1, type);
-                        movedInFrame.add(coordToKey(x + dx, y + 1)); // NEW
+                        _set(x, y, diagType);
+                        _set(x + dx, y + 1, type);
+                        if(!isWorldSim && idx!==-1) moved[idx] = 1;
                         return;
                     }
                 }
             }
         }
         
-        function updateLiquid(x, y, type) {
+        function updateLiquid(x, y, type, idx, moved, grid, w, h, getIdx, setter) {
+            const isWorldSim = !grid;
+            const _get = (gx, gy) => isWorldSim ? getGrid(gx, gy) : (getIdx(gx, gy) !== -1 ? grid[getIdx(gx, gy)] : MAT.ROCK_WALL);
+            const _set = (gx, gy, gtype) => {
+                if (isWorldSim) {
+                    setGrid(gx, gy, gtype);
+                    movedInFrame.add(coordToKey(gx, gy));
+                } else {
+                    const gidx = getIdx(gx, gy);
+                    if (gidx !== -1) { setter(gidx, gtype); moved[gidx] = 1; }
+                }
+            };
+             const _getAux = (gx, gy) => isWorldSim ? getAuxData(etcChunkMap, gx, gy) : 0;
+
             if (type === MAT.ACID) {
                 let consumed = false;
                 for (const n of [{x:0,y:1},{x:0,y:-1},{x:1,y:0},{x:-1,y:0}]) {
                     const nx = x + n.x, ny = y + n.y;
-                    const nType = getGrid(nx, ny);
+                    const nType = _get(nx, ny);
                     const isImmune = [MAT.EMPTY,MAT.GLASS,MAT.GAS,MAT.GLASS_WALL,MAT.ADAMANTIUM,MAT.RUNE_WALL].includes(nType);
                     if (!isImmune && !isLiquid(nType) && Math.random() < 0.25) {
-                        setGrid(nx, ny, MAT.EMPTY);
-                        if (Math.random() < 0.2) { setGrid(x, y, MAT.EMPTY); consumed = true; break; }
+                        _set(nx, ny, MAT.EMPTY);
+                        if (Math.random() < 0.2) { _set(x, y, MAT.EMPTY); consumed = true; break; }
                     }
                 }
-                if (consumed) { movedInFrame.add(coordToKey(x, y)); return; } // NEW
+                if (consumed) { if(!isWorldSim && idx!==-1) moved[idx] = 1; return; }
             }
-
-            if (getAuxData(etcChunkMap, x, y + 1) === 1) {
-                tryMoveLiquidSide(x, y, type, Math.random() < 0.5 ? -1 : 1, 20, 1);
-                if (getGrid(x, y) === MAT.OIL_BURNING) updateBurningOil(x, y);
+            if (_getAux(x, y + 1) === 1) {
+                tryMoveLiquidSide(x, y, type, Math.random() < 0.5 ? -1 : 1, 20, 1, idx, moved, grid, w, h, getIdx, setter);
+                if (_get(x, y) === MAT.OIL_BURNING) updateBurningOil(x, y, idx, moved, grid, w, h, getIdx, setter);
                 return;
             }
-
-            const belowType = getGrid(x, y + 1);
+            const belowType = _get(x, y + 1);
             if (belowType === MAT.FIRE) {
-                if (type === MAT.OIL) setGrid(x, y, MAT.OIL_BURNING);
-                else { setGrid(x, y, MAT.GAS); setGrid(x, y + 1, MAT.GAS); }
+                if (type === MAT.OIL) _set(x, y, MAT.OIL_BURNING);
+                else { _set(x, y, MAT.GAS); _set(x, y + 1, MAT.GAS); }
+                if(!isWorldSim && idx!==-1) moved[idx] = 1;
                 return;
             }
-
-            if ([MAT.EMPTY, MAT.GAS].includes(belowType)) { setGrid(x, y, belowType); setGrid(x, y + 1, type); movedInFrame.add(coordToKey(x, y + 1)); return; } // NEW
-            if (LIQUID_DENSITY[type] > LIQUID_DENSITY[belowType]) { setGrid(x, y, belowType); setGrid(x, y + 1, type); movedInFrame.add(coordToKey(x, y + 1)); return; } // NEW
-            tryMoveLiquidSide(x, y, type, Math.random() < 0.5 ? -1 : 1, 20, 1);
-            if (getGrid(x, y) === MAT.OIL_BURNING) updateBurningOil(x, y);
+            if ([MAT.EMPTY, MAT.GAS].includes(belowType)) { _set(x, y, belowType); _set(x, y + 1, type); if(!isWorldSim && idx!==-1) moved[idx] = 1; return; }
+            if (LIQUID_DENSITY[type] > LIQUID_DENSITY[belowType]) { _set(x, y, belowType); _set(x, y + 1, type); if(!isWorldSim && idx!==-1) moved[idx] = 1; return; }
+            tryMoveLiquidSide(x, y, type, Math.random() < 0.5 ? -1 : 1, 20, 1, idx, moved, grid, w, h, getIdx, setter);
+            if (_get(x, y) === MAT.OIL_BURNING) updateBurningOil(x, y, idx, moved, grid, w, h, getIdx, setter);
         }
 
-        function updateGas(x, y) {
-            const aboveType = getGrid(x, y - 1);
+        function updateGas(x, y, idx, moved, grid, w, h, getIdx, setter) {
+             const isWorldSim = !grid;
+             const _get = (gx, gy) => isWorldSim ? getGrid(gx, gy) : (getIdx(gx, gy) !== -1 ? grid[getIdx(gx, gy)] : MAT.ROCK_WALL);
+             const _set = (gx, gy, gtype) => {
+                if (isWorldSim) {
+                    setGrid(gx, gy, gtype);
+                    movedInFrame.add(coordToKey(gx, gy));
+                } else {
+                    const gidx = getIdx(gx, gy);
+                    if (gidx !== -1) { setter(gidx, gtype); moved[gidx] = 1; }
+                }
+            };
+            const aboveType = _get(x, y - 1);
             if ([MAT.EMPTY, MAT.WATER, MAT.SAND, MAT.SOIL, MAT.GUNPOWDER].includes(aboveType)) {
-                setGrid(x, y, aboveType);
-                setGrid(x, y - 1, MAT.GAS);
-                movedInFrame.add(coordToKey(x, y - 1)); // NEW
+                _set(x, y, aboveType);
+                _set(x, y - 1, MAT.GAS);
+                 if(!isWorldSim && idx!==-1) moved[idx] = 1;
                 return;
             }
-            tryMoveLiquidSide(x, y, MAT.GAS, Math.random() < 0.5 ? -1 : 1, 4, -1);
+            tryMoveLiquidSide(x, y, MAT.GAS, Math.random() < 0.5 ? -1 : 1, 4, -1, idx, moved, grid, w, h, getIdx, setter);
         }
 
-        function tryMoveLiquidSide(x, y, type, dir, limit, vDir) {
+        function tryMoveLiquidSide(x, y, type, dir, limit, vDir, idx, moved, grid, w, h, getIdx, setter) {
+            const isWorldSim = !grid;
+            const _get = (gx, gy) => isWorldSim ? getGrid(gx, gy) : (getIdx(gx, gy) !== -1 ? grid[getIdx(gx, gy)] : MAT.ROCK_WALL);
+            const _set = (gx, gy, gtype) => {
+                if (isWorldSim) {
+                    setGrid(gx, gy, gtype);
+                    movedInFrame.add(coordToKey(gx, gy));
+                } else {
+                    const gidx = getIdx(gx, gy);
+                    if (gidx !== -1) { setter(gidx, gtype); moved[gidx] = 1; }
+                }
+            };
+            const _getAux = (gx, gy) => isWorldSim ? getAuxData(etcChunkMap, gx, gy) : 0;
+            
             let targetX = x;
             const movable = [MAT.EMPTY, MAT.GAS, MAT.FIRE];
             const allMovable = [...LIQUIDS, ...movable];
             for (let i = 1; i <= limit; i++) {
                 const nextX = x + (dir * i);
-                if (getAuxData(etcChunkMap, nextX, y) === 1) break;
-                const content = getGrid(nextX, y);
+                if (_getAux(nextX, y) === 1) break;
+                const content = _get(nextX, y);
                 if (allMovable.includes(content) && type != content) {
                     targetX = nextX;
-                    const vType = getGrid(nextX, y + vDir);
+                    const vType = _get(nextX, y + vDir);
                     if (movable.includes(vType)) break;
                 } else break;
             }
             if (targetX !== x) {
-                const tType = getGrid(targetX, y);
-                setGrid(x, y, tType);
-                setGrid(targetX, y, type);
-                movedInFrame.add(coordToKey(targetX, y)); // NEW
+                const tType = _get(targetX, y);
+                _set(x, y, tType);
+                _set(targetX, y, type);
+                if(!isWorldSim && idx!==-1) moved[idx] = 1;
                 return true;
             }
             return false;
         }
+
 
         function findGroundBelow(x, startY) {
             for (let y = startY; y < startY + 500; y++) {
