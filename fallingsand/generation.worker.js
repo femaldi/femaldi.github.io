@@ -392,28 +392,69 @@ self.onmessage = (event) => {
 
 // --- In generation.worker.js ---
 
+/**
+ * Generates a single terrain pixel for the Caves biome using a multi-layered
+ * fractal noise algorithm with domain warping for a more natural, complex look.
+ * @param {number} x - The global world X coordinate.
+ * @param {number} y - The global world Y coordinate.
+ * @param {object} params - Biome-specific parameters, like the current depth layer.
+ * @returns {number} The material ID (e.g., MAT.EMPTY or a wall type).
+ */
 function generateCavesPixel(x, y, params) {
     const layer = params.layer;
-    
-    // --- START OF TUNING CHANGES ---
 
-    // 1. Lower the frequency (e.g., from 0.02 to 0.015) to "zoom out" the noise, creating larger features.
-    const noiseFrequency = 0.010;
-    
-    // 2. Normalize the noise value to a reliable 0.0 to 1.0 range, making thresholds easier to manage.
-    let caveNoise = (PerlinNoise.noise(x * noiseFrequency, y * noiseFrequency, 0.5) + 1) / 2;
+    // --- START: Generation "Knobs" ---
+    // This config object holds all the parameters you can tweak to change the cave shapes.
+    const config = {
+        // The "zoom level" of the base noise. Smaller numbers = larger caves.
+        baseFrequency: 0.006,
+        // How many layers of noise to stack for detail. More octaves = more complex terrain.
+        octaves: 2,
+        // How much to increase the frequency for each octave. (Typically ~2.0)
+        lacunarity: 2.0,
+        // How much to decrease the amplitude of each octave. (Values < 1.0)
+        persistence: 0.5,
 
-    // 3. Use a higher threshold (e.g., 0.55) so that more of the noise range results in empty space.
-    //    This creates significantly more open areas.
-    const caveThreshold = 0.5;
+        // --- Domain Warping Knobs ---
+        // How "zoomed in" the distortion noise is.
+        warpFrequency: 0.005,
+        // How much the coordinates are distorted. Higher values = more twisted, swirly caves.
+        warpStrength: 40.0,
 
-    // --- END OF TUNING CHANGES ---
+        // The final cutoff point. Values above this become empty space. (Range: 0.0 to 1.0)
+        threshold: 0.49
+    };
+    // --- END: Generation "Knobs" ---
 
-    if (caveNoise > caveThreshold) {
+    // 1. Domain Warping: Use a noise field to distort the input coordinates.
+    // This breaks up the grid-like feel of standard Perlin noise.
+    const qx = PerlinNoise.noise(x * config.warpFrequency, y * config.warpFrequency, 100.5);
+    const qy = PerlinNoise.noise(x * config.warpFrequency, y * config.warpFrequency, 100.5);
+    const warpedX = x + (qx * config.warpStrength);
+    const warpedY = y + (qy * config.warpStrength);
+
+    // 2. Fractal Noise: Sum multiple layers (octaves) of noise.
+    let totalNoise = 0;
+    let frequency = config.baseFrequency;
+    let amplitude = 1.0;
+    let maxAmplitude = 0; // Used to normalize the result later
+
+    for (let i = 0; i < config.octaves; i++) {
+        totalNoise += PerlinNoise.noise(warpedX * frequency, warpedY * frequency, 0) * amplitude;
+        maxAmplitude += amplitude;
+        amplitude *= config.persistence;
+        frequency *= config.lacunarity;
+    }
+
+    // 3. Normalization: Map the final noise value from [-maxAmplitude, maxAmplitude] to a [0, 1] range.
+    const normalizedNoise = (totalNoise / maxAmplitude + 1) / 2;
+
+    // 4. Thresholding and Material Selection
+    if (normalizedNoise > config.threshold) {
         return MAT.EMPTY;
     } else {
-        // This logic for wall type based on depth remains the same.
-        switch(layer) {
+        // This logic remains the same, selecting a wall type based on the biome layer.
+        switch (layer) {
             case 0: return MAT.SANDSTONE_WALL;
             case 1: return MAT.ROCK_WALL;
             case 2: return MAT.VOLCANIC_WALL;
