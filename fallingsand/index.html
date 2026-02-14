@@ -243,7 +243,6 @@
         const WORLD_LAYER_HEIGHT = 2000;
         const MAX_READY_SECTORS = 12;
         let sectorGrid = new Map(); // Will store 'unloaded', 'queued', or 'ready' for each sector
-        let readySectorKeys = [];
         let lastPlayerSectorX = -1; // Used to track when the player crosses a sector boundary
         let lastPlayerSectorY = -1;
         let activeStubChunks = new Set();
@@ -445,7 +444,7 @@
         const PLAYER_SUBMERGED_DAMPING = 5.0;
         const BUOYANCY_FORCE = 6.0;
 
-        const MAX_CHUNKS_PER_FRAME = 180;
+        const MAX_CHUNKS_PER_FRAME = 150;
         const REGEN_COOLDOWN = 250;
         const REBUILD_COOLDOWN = 250;
         const MIN_ISLAND_PIXELS = 5;
@@ -720,7 +719,6 @@
                 
                 const key = coordToKey(sx, sy);
                 sectorGrid.set(key, { state: 'ready', sx: sx, sy: sy });
-                readySectorKeys.push(key);
 
                 isGenerating = false;
                 isRenderCacheInvalid = true; // Invalidate cache now that all data is ready
@@ -783,7 +781,7 @@
             // --- END OF CHANGE ---
         }
 
-        async function updateSectors() { // Make function async
+        async function updateSectors() {
             const playerSectorX = Math.floor(player.x / SECTOR_SIZE);
             const playerSectorY = Math.floor(player.y / SECTOR_SIZE);
 
@@ -795,24 +793,20 @@
             for (let sy = playerSectorY - 1; sy <= playerSectorY + 1; sy++) {
                 for (let sx = playerSectorX - 1; sx <= playerSectorX + 1; sx++) {
                     const key = coordToKey(sx, sy);
-                    const sectorState = sectorGrid.get(key);
-                    const state = sectorState ? (sectorState.state || sectorState) : 'unloaded';
+                    const sector = sectorGrid.get(key);
+                    const state = sector ? sector.state : 'unloaded';
 
                     if (state === 'unloaded') {
-                        // --- START OF MODIFICATION ---
-                        // Try to load from storage first.
                         if (loadSectorFromStorage(sx, sy)) {
                             sectorGrid.set(key, { state: 'ready', sx, sy });
-                            readySectorKeys = readySectorKeys.filter(k => k !== key);
-                            // Add it to the end as the most recently used.
-                            readySectorKeys.push(key);
-                            isRenderCacheInvalid = true; // Force redraw
+                            isRenderCacheInvalid = true; 
                         } else {
-                            // If it fails, queue for generation as normal.
                             sectorGrid.set(key, { state: 'queued', sx, sy });
                             generationQueue.push({ sx, sy });
                         }
-                        // --- END OF MODIFICATION ---
+                    } else if (state === 'ready') {
+                        sectorGrid.delete(key);
+                        sectorGrid.set(key, sector);
                     }
                 }
             }
@@ -1340,13 +1334,14 @@
 
         /**
          * Checks if the number of ready sectors exceeds the limit and unloads the oldest one.
+         * This now uses the sectorGrid Map as the single source of truth.
          */
         function manageSectorMemory() {
-            if (readySectorKeys.length <= MAX_READY_SECTORS) {
-                return; // Nothing to do
+            // Use sectorGrid.size, which counts only 'ready' and 'queued' sectors.
+            if (sectorGrid.size <= MAX_READY_SECTORS) {
+                return;
             }
 
-            // Step 1: Create a set of "protected" keys for the 3x3 grid around the player.
             const protectedKeys = new Set();
             for (let sy = lastPlayerSectorY - 1; sy <= lastPlayerSectorY + 1; sy++) {
                 for (let sx = lastPlayerSectorX - 1; sx <= lastPlayerSectorX + 1; sx++) {
@@ -1354,29 +1349,15 @@
                 }
             }
 
-            // Step 2: Find the first (oldest) key in the list that is NOT protected.
-            let keyToUnload = null;
-            let unloadIndex = -1;
-
-            for (let i = 0; i < readySectorKeys.length; i++) {
-                const key = readySectorKeys[i];
-                if (!protectedKeys.has(key)) {
-                    keyToUnload = key;
-                    unloadIndex = i;
-                    break; // We found our target
-                }
-            }
-
-            // Step 3: If we found a non-protected sector to unload, process it.
-            if (keyToUnload) {
-                const sector = sectorGrid.get(keyToUnload);
-                
-                if (sector && sector.sx !== undefined && sector.state === 'ready') {
+            // Iterate directly over the map. The first entries are the oldest.
+            for (const [key, sector] of sectorGrid.entries()) {
+                // Find the first sector that is 'ready' and NOT protected.
+                if (sector.state === 'ready' && !protectedKeys.has(key)) {
                     saveSectorToStorage(sector.sx, sector.sy);
-                    sector.state = 'unloaded';
+                    sectorGrid.delete(key); // Unload it by removing it from the map.
                     
-                    // Remove the unloaded key from the tracking array.
-                    readySectorKeys.splice(unloadIndex, 1);
+                    // We only unload one sector per frame to avoid hitches.
+                    break; 
                 }
             }
         }
@@ -2071,6 +2052,95 @@
                 if (Math.random() < 0.2) {
                     setter(idx, MAT.FIRE);
                     moved[idx] = 1;
+                }
+            }
+        }
+
+        /**
+         * Creates an explosion that affects both the static grid and dynamic rigid bodies.
+         * @param {number} centerX - The world X coordinate for the center of the blast.
+         * @param {number} centerY - The world Y coordinate for the center of the blast.
+         * @param {number} radius - The radius of the explosion in pixels.
+         */
+        function triggerExplosion(centerX, centerY, radius) {
+            const rSquared = radius * radius;
+
+            // --- Part 1: Affect the static grid ---
+            for (let dy = -radius; dy <= radius; dy++) {
+                for (let dx = -radius; dx <= radius; dx++) {
+                    const distSq = dx * dx + dy * dy;
+                    if (distSq > rSquared) continue;
+
+                    const ex = Math.floor(centerX + dx);
+                    const ey = Math.floor(centerY + dy);
+                    
+                    // Skip this grid cell if a rigid body is there; we handle them in Part 2.
+                    if (getAuxData(etcChunkMap, ex, ey) === 1) continue;
+
+                    const type = getGrid(ex, ey);
+
+                    // Check if the material is blast-resistant (e.g., Adamantium, special walls)
+                    if (!WALL_TYPES.has(type) && type !== MAT.ADAMANTIUM && type !== MAT.RUNE_WALL) {
+                        const rand = Math.random();
+                        let newType = (rand < 0.3) ? MAT.FIRE : (rand < 0.7) ? MAT.GAS : MAT.EMPTY;
+                        setGrid(ex, ey, newType);
+                    } else if (radius > 15 && Math.random() < 0.05) { // Large explosions can chip away at walls
+                        setGrid(ex, ey, MAT.GAS);
+                    }
+                    
+                    // Any modification requires the chunk to be activated for the next simulation step.
+                    ensureChunkIsActive(ex, ey);
+                }
+            }
+
+            // --- Part 2: Affect rigid bodies ---
+            const explosionCenterB2 = pl.Vec2(centerX / B2_SCALE, centerY / B2_SCALE);
+            const blastPower = 100.0 * radius; // Base value for the physical force
+
+            for (const body of rigidBodies) {
+                if (!body.body || body.isDestroyed) continue;
+
+                const bodyCenterB2 = body.body.getWorldCenter();
+                const direction = pl.Vec2.sub(bodyCenterB2, explosionCenterB2);
+                const distance = direction.normalize(); // This gets the distance and makes 'direction' a unit vector
+
+                // Skip bodies outside the blast radius
+                if (distance > radius / B2_SCALE) continue;
+
+                // Apply a physics impulse (force) that weakens with distance
+                const falloff = 1 - (distance * B2_SCALE / radius);
+                const impulse = pl.Vec2.mul(direction, blastPower * falloff * body.body.getMass());
+                body.body.applyLinearImpulse(impulse, bodyCenterB2, true);
+
+                // Damage the pixels of the rigid body
+                let pixelsChanged = 0;
+                for (let y = 0; y < body.height; y++) {
+                    for (let x = 0; x < body.width; x++) {
+                        const lIdx = y * body.width + x;
+                        if (body.pixels[lIdx] === MAT.EMPTY) continue;
+
+                        // Convert local pixel coordinate to world coordinate
+                        const lPos = pl.Vec2((x - body.width / 2 + 0.5) / B2_SCALE, (y - body.height / 2 + 0.5) / B2_SCALE);
+                        const wPos = body.body.getWorldPoint(lPos);
+
+                        const dx = (wPos.x * B2_SCALE) - centerX;
+                        const dy = (wPos.y * B2_SCALE) - centerY;
+
+                        if (dx * dx + dy * dy < rSquared) {
+                            if (Math.random() < 0.8) { // 80% chance to destroy a pixel in the blast
+                                body.pixels[lIdx] = MAT.EMPTY;
+                                pixelsChanged++;
+                            }
+                        }
+                    }
+                }
+                
+                // If pixels were destroyed, flag the body to update its physical shape.
+                if (pixelsChanged > 0) {
+                    body.pendingStructuralDelta += pixelsChanged;
+                    if(body.pendingStructuralDelta > 25) { // Trigger a shape rebuild if enough damage is done
+                        body.needsShapeUpdate = true;
+                    }
                 }
             }
         }
@@ -2917,7 +2987,7 @@
 
         function renderDebugUI() {
             // Calculate derived stats
-            const activeSectors = Array.from(sectorGrid.values()).filter(s => s === 'ready').length;
+            const activeSectors = Array.from(sectorGrid.values()).filter(s => s.state === 'ready').length;
             const getHitRatio = debugStats.getCalls > 0 ? (debugStats.getHits / debugStats.getCalls * 100).toFixed(1) : "N/A";
             const setHitRatio = debugStats.setCalls > 0 ? (debugStats.setHits / debugStats.setCalls * 100).toFixed(1) : "N/A";
             const getMisses = debugStats.getCalls - debugStats.getHits;
@@ -3038,60 +3108,64 @@
 
             updateLoadingStatus('Preparing Spawn Area...');
             await yieldToBrowser();
-            
+
             const spawnSX = Math.floor(player.x / SECTOR_SIZE);
             const spawnSY = Math.floor(player.y / SECTOR_SIZE);
 
-            // We now use a more robust promise-based approach to guarantee initialization order.
-            const firstSectorPromise = new Promise(resolve => {
-                const tempLocalGenerator = new Worker('generation.worker.js');
-                
-                // This handler will receive messages from the temp worker
-                tempLocalGenerator.onmessage = event => {
-                    const { type, chunks, lightChunks } = event.data;
+            let sectorsLoaded = 0;
+            const totalSectors = 9;
 
-                    if (type === 'init-ack') {
-                        // The worker has confirmed it is initialized. NOW we can ask it to generate.
+            // Loop through the 3x3 grid of sectors around the player's start position
+            for (let sy = spawnSY - 1; sy <= spawnSY + 1; sy++) {
+                for (let sx = spawnSX - 1; sx <= spawnSX + 1; sx++) {
+                    sectorsLoaded++;
+                    updateLoadingStatus(`Generating Starting Area (${sectorsLoaded}/${totalSectors})...`);
+                    
+                    // This promise generates one sector at a time
+                    const sectorGenerationPromise = new Promise(resolve => {
+                        const tempLocalGenerator = new Worker('generation.worker.js');
+                        
+                        tempLocalGenerator.onmessage = event => {
+                            const { type, chunks, lightChunks } = event.data;
 
-                        const borderContext = gatherBorderContext(spawnSX, spawnSY);
-                        tempLocalGenerator.postMessage({ type: 'generate-and-bake', sx: spawnSX, sy: spawnSY, borderContext: borderContext });
-                    } 
-                    else if (type === 'result') {
-                        // The worker has sent back the terrain data.
-                        for (const [key, payload] of chunks) {
-                            const chunk = getChunk(chunkMap, key);
-                            chunk.data = payload.data;
-                            chunk.cx = payload.cx;
-                            chunk.cy = payload.cy;
-                        }
-
-                        if (lightChunks) {
-                            for (const [key, payload] of lightChunks) {
-                                const chunk = getChunk(lightChunkMap, key);
-                                chunk.data = payload.data;
-                                chunk.cx = payload.cx;
-                                chunk.cy = payload.cy;
+                            if (type === 'init-ack') {
+                                const borderContext = gatherBorderContext(sx, sy);
+                                tempLocalGenerator.postMessage({ type: 'generate-and-bake', sx: sx, sy: sy, borderContext: borderContext });
+                            } 
+                            else if (type === 'result') {
+                                // Integrate the returned chunk data into the main world maps
+                                for (const [key, payload] of chunks) {
+                                    const chunk = getChunk(chunkMap, key);
+                                    chunk.data = payload.data;
+                                    chunk.cx = payload.cx;
+                                    chunk.cy = payload.cy;
+                                }
+                                if (lightChunks) {
+                                    for (const [key, payload] of lightChunks) {
+                                        const chunk = getChunk(lightChunkMap, key);
+                                        chunk.data = payload.data;
+                                        chunk.cx = payload.cx;
+                                        chunk.cy = payload.cy;
+                                    }
+                                }
+                                
+                                // Clean up the worker and resolve the promise
+                                tempLocalGenerator.terminate();
+                                resolve();
                             }
-                        }
+                        };
 
-                        tempLocalGenerator.terminate(); // Clean up the temporary worker
-                        resolve(); // Resolve the promise to continue loading
-                    }
-                };
+                        tempLocalGenerator.postMessage({ type: 'init', seed: WORLD_SEED });
+                    });
 
-                // Start the process by sending the init message.
-                tempLocalGenerator.postMessage({ type: 'init', seed: WORLD_SEED });
-            });
+                    // Wait for the current sector to finish generating before starting the next one
+                    await sectorGenerationPromise;
 
-            await firstSectorPromise; // Wait until the entire init->generate->result cycle is complete.
-
-            const key = coordToKey(spawnSX, spawnSY);
-            
-            // 1. Set the sector data using the correct OBJECT format.
-            sectorGrid.set(key, { state: 'ready', sx: spawnSX, sy: spawnSY });
-            
-            // 2. Add the initial sector to the tracking array so it can be unloaded later.
-            readySectorKeys.push(key);
+                    // Mark this sector as 'ready' so the game knows it's loaded
+                    const key = coordToKey(sx, sy);
+                    sectorGrid.set(key, { state: 'ready', sx: sx, sy: sy });
+                }
+            }
             
             updateLoadingStatus('Constructing Ancient Structures...');
             await yieldToBrowser();
