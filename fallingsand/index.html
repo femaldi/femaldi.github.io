@@ -248,6 +248,8 @@
         let lastPlayerSectorX = -1; // Used to track when the player crosses a sector boundary
         let lastPlayerSectorY = -1;
         let activeStubChunks = new Set();
+        let npcs = [];
+        let nextNpcId = 0;
 
         canvas.width = viewWidth;
         canvas.height = viewHeight;
@@ -257,7 +259,99 @@
 
         canvas.style.imageRendering = "pixelated";
         
-        // REMOVED worldWidth and worldHeight constants
+        // --- In index.html ---
+
+        const DIALOGUE_TREES = {
+            'ylialkemisti_main': {
+                // The 'start' node is where the conversation begins.
+                'start': {
+                    text: "Greetings, traveler. What brings you to my secluded workshop?",
+                    options: [
+                        { text: "Who are you?", nextNode: 'who_are_you' },
+                        { text: "What is this place?", nextNode: 'about_place' },
+                        { text: "Nevermind, goodbye.", execute: () => DialogueManager.closeDialogue() }
+                    ]
+                },
+                'who_are_you': {
+                    text: "I am Ylialkemisti, a student of the elemental arts. I seek to understand the fundamental grammar of the world.",
+                    options: [
+                        { text: "Fascinating. Tell me about this place.", nextNode: 'about_place' },
+                        { text: "I see. I'll leave you to it.", execute: () => DialogueManager.closeDialogue() }
+                    ]
+                },
+                'about_place': {
+                    text: "This is a place of transmutation. The very air hums with potential. With the right materials and insight, creation is possible.",
+                    options: [
+                        { text: "Go back.", nextNode: 'start' }
+                    ]
+                }
+            }
+        };
+
+        // --- In index.html ---
+
+        const DialogueManager = {
+            isVisible: false,
+            npcName: '',
+            currentNode: null,
+            dialogueTree: null,
+
+            startDialogue: function(npc, tree) {
+                if (!tree) return;
+                this.isVisible = true;
+                this.npcName = npc.name;
+                this.dialogueTree = tree;
+                this.currentNode = tree['start'];
+            },
+
+            selectOption: function(index) {
+                if (!this.currentNode || !this.currentNode.options[index]) return;
+
+                const option = this.currentNode.options[index];
+
+                if (option.execute) {
+                    option.execute();
+                } else if (option.nextNode && this.dialogueTree[option.nextNode]) {
+                    this.currentNode = this.dialogueTree[option.nextNode];
+                }
+            },
+
+            closeDialogue: function() {
+                this.isVisible = false;
+                this.npcName = '';
+                this.currentNode = null;
+                this.dialogueTree = null;
+            }
+        };
+
+        // --- In index.html ---
+
+        function createNpc(options) {
+            const npc = {
+                id: nextNpcId++,
+                name: options.name,
+                x: options.x,
+                y: options.y,
+                width: 8, // Using player dimensions for now
+                height: 16,
+                dialogueTreeId: options.dialogueTreeId
+            };
+            npcs.push(npc);
+
+            // Create a trigger for interaction
+            createTrigger({
+                x: npc.x - 16, // Create a small area around the NPC
+                y: npc.y - 8,
+                width: npc.width + 32,
+                height: npc.height + 16,
+                onInteract: () => {
+                    const tree = DIALOGUE_TREES[npc.dialogueTreeId];
+                    DialogueManager.startDialogue(npc, tree);
+                }
+            });
+
+            return npc.id;
+        }
 
         const renderWidth = viewWidth;
         const renderHeight = viewHeight;
@@ -1573,6 +1667,17 @@
         // --- INPUT HANDLING ---
         const keys = {};
         window.addEventListener('keydown', (e) => {
+            if (DialogueManager.isVisible) {
+                if (e.code.startsWith('Digit')) {
+                    const index = parseInt(e.code.replace('Digit', ''), 10) - 1;
+                    DialogueManager.selectOption(index);
+                }
+                if (e.code === 'Escape') {
+                    DialogueManager.closeDialogue();
+                }
+                return; // Prevent any other input when dialogue is open
+            }
+
             if (isAlchemyUIVisible) {
                 if (e.code === 'Escape') isAlchemyUIVisible = false;
                 if (e.code.startsWith('Digit')) {
@@ -1920,6 +2025,11 @@
         }
         
         function updatePlayer() {
+            if (DialogueManager.isVisible) {
+                player.body.setLinearVelocity(pl.Vec2(0, 0));
+                return;
+            }
+
             if (isAlchemyUIVisible) {
                 player.body.setLinearVelocity(pl.Vec2(0, 0));
                 return;
@@ -2653,6 +2763,82 @@
             return propagateLightFromQueue(queue);
         }
 
+        function renderNpcs(anim) {
+            for (const npc of npcs) {
+                // For now, we reuse the player rendering logic
+                const npcScreenX = Math.round(npc.x - camera.x);
+                const npcScreenY = Math.round(npc.y - camera.y);
+                drawPlayerBodyScreen(npcScreenX, npcScreenY, false, anim.bob, anim.frameIdx);
+            }
+        }
+
+        // --- In index.html ---
+
+        function renderDialogueUI() {
+            if (!DialogueManager.isVisible) return;
+
+            const boxW = renderWidth - 40;
+            const boxH = 100;
+            const boxX = (renderWidth - boxW) / 2;
+            const boxY = renderHeight - boxH - 20;
+
+            // Draw background box
+            ctx.fillStyle = 'rgba(20, 20, 30, 0.85)';
+            ctx.fillRect(boxX, boxY, boxW, boxH);
+            ctx.strokeStyle = '#a0a0c0';
+            ctx.strokeRect(boxX, boxY, boxW, boxH);
+
+            // Draw NPC Name
+            ctx.fillStyle = '#ffd966';
+            ctx.font = 'bold 10px monospace';
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'top';
+            ctx.fillText(DialogueManager.npcName, boxX + 10, boxY + 10);
+
+            // --- START: Word Wrapping Implementation ---
+
+            ctx.fillStyle = 'white';
+            ctx.font = '8px monospace';
+            
+            const text = DialogueManager.currentNode.text;
+            const textX = boxX + 10;
+            let textY = boxY + 30; // The starting Y position for the first line
+            const maxWidth = boxW - 20; // Box width minus horizontal padding
+            const lineHeight = 10; // The distance between lines of text
+
+            const words = text.split(' ');
+            let currentLine = '';
+
+            for (let i = 0; i < words.length; i++) {
+                const word = words[i];
+                const testLine = currentLine + word + ' ';
+                const metrics = ctx.measureText(testLine);
+
+                // If the next word makes the line too long, draw the current line and start a new one.
+                if (metrics.width > maxWidth && i > 0) {
+                    ctx.fillText(currentLine, textX, textY);
+                    currentLine = word + ' ';
+                    textY += lineHeight;
+                } else {
+                    // Otherwise, add the word to the current line.
+                    currentLine = testLine;
+                }
+            }
+            // Draw the final remaining line.
+            ctx.fillText(currentLine, textX, textY);
+            
+            // --- END: Word Wrapping Implementation ---
+
+            // Draw Player Options, positioning them dynamically below the wrapped text.
+            let yOff = textY + lineHeight + 10; // Start options below the last line of dialogue.
+            DialogueManager.currentNode.options.forEach((opt, index) => {
+                // Only draw options if they still fit inside the dialogue box.
+                if (yOff < boxY + boxH - 10) {
+                    ctx.fillText(`[${index + 1}] ${opt.text}`, boxX + 20, yOff);
+                    yOff += 12;
+                }
+            });
+        }
 
         // --- RENDERING ---
         function setPixel(x,y,r,g,b,a=255){ const i=(y*renderWidth+x)*4; pixels[i]=r; pixels[i+1]=g; pixels[i+2]=b; pixels[i+3]=a; }
@@ -2744,12 +2930,15 @@
                 ctx.restore();
             }
 
+            
             // Player and Particles
             const aim = computePlayerAim();
             const anim = getPlayerAnimFrame();
             const playerDraw = renderPlayer(aim, anim);
             wandScreenX = playerDraw.wandOriginX;
             wandScreenY = playerDraw.wandOriginY;
+            
+            renderNpcs(anim);
 
             for (const p of pouredParticles) { const [r, g, b] = COLORS[p.type]; ctx.fillStyle = `rgb(${r},${g},${b})`; ctx.fillRect(Math.round(p.x - camera.x), Math.round(p.y - camera.y), 1, 1); }
             for (let i = 0; i < MAX_MAGIC_PARTICLES; i++) { const p = magicParticlePool[i]; if (p.active) { ctx.fillStyle = `rgb(${p.color[0]},${p.color[1]},${p.color[2]})`; ctx.fillRect(Math.round(p.x - camera.x), Math.round(p.y - camera.y), 1, 1); } }
@@ -2763,6 +2952,7 @@
             }
             ctx.strokeStyle = 'rgba(255,255,255,0.2)'; ctx.lineWidth = 0.5; ctx.beginPath(); ctx.moveTo(wandScreenX, wandScreenY); ctx.lineTo(mouse.x / scale, mouse.y / scale); ctx.stroke();
 
+            renderDialogueUI();
             renderPlayerStatsUI();
             renderAlchemyUI();
             if (debugMode) drawActiveChunkOutlines();
@@ -3110,6 +3300,7 @@
                 ctx.fillText(`sim: ${tSimMs.toFixed(2)}ms`, renderWidth - 6, renderHeight - 10);
                 ctx.fillText(`render: ${tRenderMs.toFixed(2)}ms`, renderWidth - 6, renderHeight - 20);
                 ctx.fillText(`other: ${tOtherMs.toFixed(2)}ms`, renderWidth - 6, renderHeight - 30);
+                ctx.fillText(`coords: ${player.x} ${player.y}`, renderWidth - 6, renderHeight - 40);
                 ctx.textAlign = "left";
             }
         }
@@ -3346,6 +3537,17 @@
                     }
                 }
             }
+
+            updateLoadingStatus('Populating World...');
+            await yieldToBrowser();
+            
+            // Spawn 'Ylialkemisti' in the alchemy station
+            createNpc({
+                name: 'Ylialkemisti',
+                x: 450, // Positioned to the right of the cauldrons
+                y: -108,
+                dialogueTreeId: 'ylialkemisti_main'
+            });
 
             updateLoadingStatus('Finalizing...');
             await yieldToBrowser();
