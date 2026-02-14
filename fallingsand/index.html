@@ -258,9 +258,72 @@
         canvas.style.height = viewHeight * scale + "px";
 
         canvas.style.imageRendering = "pixelated";
-        
+
+
+
         // --- In index.html ---
 
+        function createObjectInWorld(definitionId, x, y) {
+            const def = OBJECT_DEFINITIONS[definitionId];
+            if (!def) {
+                console.error("Unknown object definition:", definitionId);
+                return;
+            }
+
+            const body = new RigidBody(x, y, def.width, def.height, MAT.WOOD); // Material is placeholder
+            body.pixels = new Uint8Array(def.pixels);
+            body.rebuildFixtures();
+
+            // Add custom properties to the body's user data for identification
+            const userData = body.body.getUserData();
+            userData.isPickup = true;
+            userData.definitionId = definitionId;
+
+            rigidBodies.push(body);
+
+            // Create a trigger for picking up the item
+            createTrigger({
+                x: x - def.width,
+                y: y - def.height,
+                width: def.width * 2,
+                height: def.height * 2,
+                onInteract: () => pickupObject(body),
+                // A one-time trigger that self-destructs after pickup
+                isVolatile: true
+            });
+        }
+
+        function pickupObject(body) {
+            if (body.isDestroyed) return;
+
+            const def = OBJECT_DEFINITIONS[body.body.getUserData().definitionId];
+            if (!def) return;
+
+            let pickedUp = false;
+            switch (def.type) {
+                case 'tool':
+                    if (player.toolPocket.length < player.maxToolSlots) {
+                        player.toolPocket.push(def.name);
+                        pickedUp = true;
+                    }
+                    break;
+                case 'structure':
+                    if (player.structurePocket.length < player.maxStructureSlots) {
+                        player.structurePocket.push(def.name);
+                        pickedUp = true;
+                    }
+                    break;
+                case 'upgrade':
+                    if (def.onPickup) def.onPickup(player);
+                    pickedUp = true; // Upgrades are always consumed
+                    break;
+            }
+
+            if (pickedUp) {
+                body.isDestroyed = true; // Mark for cleanup
+            }
+        }
+        
         const DIALOGUE_TREES = {
             'ylialkemisti_main': {
                 // The 'start' node is where the conversation begins.
@@ -426,6 +489,79 @@
         let lastColliderUpdateTime = 0;
         const COLLIDER_UPDATE_INTERVAL = 100;
 
+                const OBJECT_DEFINITIONS = {
+            'stone_pick': {
+                name: 'Stone Pick',
+                type: 'tool', // 'tool', 'structure', or 'upgrade'
+                width: 16,
+                height: 16,
+                pixels: [ /* Pixel art for the pickaxe - simplified for now */
+                    0,0,0,0,10,10,10,10,10,10,0,0,0,0,0,0,
+                    0,0,0,10,10,10,10,10,10,10,10,0,0,0,0,0,
+                    0,0,10,10,10,10,0,0,10,10,10,10,0,0,0,0,
+                    0,0,10,10,0,0,0,0,0,0,10,10,0,0,0,0,
+                    0,0,0,0,0,0, MAT.WOOD, MAT.WOOD,0,0,0,0,0,0,0,0,
+                    0,0,0,0,0, MAT.WOOD, MAT.WOOD, MAT.WOOD,0,0,0,0,0,0,0,0,
+                    0,0,0,0, MAT.WOOD, MAT.WOOD, MAT.WOOD,0,0,0,0,0,0,0,0,0,
+                    0,0,0, MAT.WOOD, MAT.WOOD, MAT.WOOD,0,0,0,0,0,0,0,0,0,0,
+                    0,0, MAT.WOOD, MAT.WOOD, MAT.WOOD,0,0,0,0,0,0,0,0,0,0,0,
+                    0, MAT.WOOD, MAT.WOOD, MAT.WOOD,0,0,0,0,0,0,0,0,0,0,0,0,
+                    MAT.WOOD, MAT.WOOD, MAT.WOOD,0,0,0,0,0,0,0,0,0,0,0,0,0,
+                    MAT.WOOD, MAT.WOOD,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+                    MAT.WOOD,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+                    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+                    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+                    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+                ].map(p => p === 10 ? MAT.ROCK_WALL : p), // Helper to use a temp value
+                onUse: (player, mouse) => {
+                    const useRadius = 6;
+                    const softMaterials = new Set([MAT.SAND, MAT.SOIL, MAT.SANDSTONE_WALL, MAT.COAL]);
+                    for (let dy = -useRadius; dy <= useRadius; dy++) {
+                        for (let dx = -useRadius; dx <= useRadius; dx++) {
+                             if (dx*dx + dy*dy > useRadius*useRadius) continue;
+                             const wx = mouse.worldX + dx;
+                             const wy = mouse.worldY + dy;
+                             if (softMaterials.has(getGrid(wx, wy))) {
+                                 setGrid(wx, wy, MAT.EMPTY);
+                                 activateChunkAt(wx, wy);
+                             }
+                        }
+                    }
+                }
+            },
+            'wooden_barrel': {
+                name: 'Wooden Barrel',
+                type: 'structure',
+                width: 16,
+                height: 16,
+                pixels: [ /* Pixel art for a barrel with an opening */
+                    0,0,1,1,0,0,0,0,1,1,1,1,1,1,0,0,
+                    0,1,1,1,0,0,0,0,1,1,1,1,1,1,1,0,
+                    1,1,0,0,0,0,0,0,0,0,0,0,0,0,1,1,
+                    1,1,0,0,0,0,0,0,0,0,0,0,0,0,1,1,
+                    1,1,0,0,0,0,0,0,0,0,0,0,0,0,1,1,
+                    1,1,0,0,0,0,0,0,0,0,0,0,0,0,1,1,
+                    1,1,0,0,0,0,0,0,0,0,0,0,0,0,1,1,
+                    1,1,0,0,0,0,0,0,0,0,0,0,0,0,1,1,
+                    1,1,0,0,0,0,0,0,0,0,0,0,0,0,1,1,
+                    1,1,0,0,0,0,0,0,0,0,0,0,0,0,1,1,
+                    1,1,0,0,0,0,0,0,0,0,0,0,0,0,1,1,
+                    1,1,0,0,0,0,0,0,0,0,0,0,0,0,1,1,
+                    1,1,1,1,0,0,0,0,0,0,0,0,1,1,1,1,
+                    1,1,1,1,0,0,0,0,0,0,0,0,1,1,1,1,
+                    1,1,0,1,1,1,1,1,1,1,1,1,1,0,1,1,
+                    1,1,0,0,1,1,1,1,1,1,1,1,0,0,1,1,
+                ].map(p => p === 1 ? MAT.WOOD : MAT.EMPTY),
+                onPlace: (player, mouse) => {
+                    const def = OBJECT_DEFINITIONS['wooden_barrel'];
+                    const newBody = new RigidBody(mouse.worldX, mouse.worldY, def.width, def.height, MAT.WOOD);
+                    newBody.pixels = new Uint8Array(def.pixels);
+                    newBody.rebuildFixtures();
+                    rigidBodies.push(newBody);
+                }
+            }
+        };
+
         // --- RUNE DEFINITIONS ---
         // A library of rune patterns. 1 represents the rune material, 0 is empty.
         const DWARVEN_RUNES = {
@@ -556,6 +692,9 @@
             [MAT.SILVER]: { color: [200, 200, 220], intensity: 0.01, radius: 3 },
             [MAT.GOLD]: { color: [220, 220, 180], intensity: 0.01, radius: 3 },
         };
+
+        const PLAYER_INTERACTION_RADIUS = 30; // Max distance for right-click actions
+        let toolUseCooldown = 0; // To prevent spamming tools
 
         // Off-screen canvas for the bloom effect
         let bloomCanvas;
@@ -1659,7 +1798,11 @@
             hoverDrainRate: 0.5,
             hoverRechargeRate: 1,
             maxHp: 100,
-            hp: 100
+            hp: 100,
+            toolPocket: [],
+            structurePocket: [],
+            maxToolSlots: 1,
+            maxStructureSlots: 1
         };
         const camera = { x: player.x - viewWidth / 2, y: player.y - viewHeight / 2 };
 		const mouse = { x: 0, y: 0, worldX: 0, worldY: 0 };
@@ -1703,11 +1846,19 @@
             }
 
             keys[e.code] = true;
-            if (e.code === 'KeyQ') activeContainer = activeContainer === 'pouch' ? 'flask' : 'pouch';
+            
+            if (e.code === 'KeyQ') {
+                const cycle = ['pouch', 'flask', 'tool', 'structure'];
+                const currentIndex = cycle.indexOf(activeContainer);
+                const nextIndex = (currentIndex + 1) % cycle.length;
+                activeContainer = cycle[nextIndex];
+            }
+
             if (e.code === 'KeyE' && player.canInteract && player.currentTrigger) {
                 player.currentTrigger.onInteract(player.currentTrigger);
             }
         });
+
         window.addEventListener('keyup', (e) => keys[e.code] = false);
 
         /**
@@ -1955,7 +2106,41 @@
         canvas.addEventListener('mousedown', (e) => {
             if (e.button === 0) isPouring = true;
             else if (e.button === 1) { isDrawing = true; draw(mouse.worldX, mouse.worldY); e.preventDefault(); }
-            else if (e.button === 2) { isStoring = true; storeMaterial(mouse.worldX, mouse.worldY); } 
+            else if (e.button === 2) {
+                // --- START: New Right-Click Logic ---
+                const distSq = (player.x - mouse.worldX)**2 + (player.y - mouse.worldY)**2;
+                if (distSq > PLAYER_INTERACTION_RADIUS * PLAYER_INTERACTION_RADIUS) {
+                    return; // Too far away, do nothing
+                }
+
+                switch(activeContainer) {
+                    case 'pouch':
+                    case 'flask':
+                        isStoring = true;
+                        storeMaterial(mouse.worldX, mouse.worldY);
+                        break;
+                    case 'tool':
+                        if (player.toolPocket.length > 0 && toolUseCooldown <= 0) {
+                             const toolName = player.toolPocket[0]; // Assuming one tool for now
+                             const toolDef = Object.values(OBJECT_DEFINITIONS).find(d => d.name === toolName);
+                             if (toolDef && toolDef.onUse) {
+                                 toolDef.onUse(player, mouse);
+                                 toolUseCooldown = 30; // 0.5 second cooldown
+                             }
+                        }
+                        break;
+                    case 'structure':
+                         if (player.structurePocket.length > 0) {
+                             const structName = player.structurePocket.shift(); // Use and remove
+                             const structDef = Object.values(OBJECT_DEFINITIONS).find(d => d.name === structName);
+                             if (structDef && structDef.onPlace) {
+                                 structDef.onPlace(player, mouse);
+                             }
+                         }
+                        break;
+                }
+                // --- END: New Right-Click Logic ---
+            }
         });
 
         canvas.addEventListener('mouseup', (e) => {
@@ -3004,13 +3189,45 @@
             }
         }
 
+        // --- In index.html, replace renderContainers() ---
+
         function renderContainers() {
+            const commonY = 40;
             const pouchX = renderWidth - pouchWidth - 12;
             const flaskX = pouchX - flaskWidth - 8;
-            const commonY = 40;
+            
+            // Pouch and Flask (Unchanged)
             renderContainer(pouchGrid,pouchWidth,pouchHeight,pouchX,commonY,activeContainer==='pouch');
             renderContainer(flaskGrid,flaskWidth,flaskHeight,flaskX,commonY,activeContainer==='flask');
+
+            // --- NEW: Tool and Structure Pockets ---
+            const pocketW = 48, pocketH = 24;
+            const toolX = flaskX - pocketW - 8;
+            const structX = toolX - pocketW - 8;
+            
+            // Tool Pocket
+            ctx.fillStyle='rgba(0,0,0,0.5)'; ctx.fillRect(toolX-2,commonY-2,pocketW+4,pocketH+4);
+            ctx.strokeStyle=activeContainer==='tool'?'white':'#888'; ctx.lineWidth=2; ctx.strokeRect(toolX-2,commonY-2,pocketW+4,pocketH+4);
+            if (player.toolPocket.length > 0) {
+                ctx.fillStyle = 'white';
+                ctx.font = '8px monospace';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(player.toolPocket[0], toolX + pocketW/2, commonY + pocketH/2);
+            }
+
+            // Structure Pocket
+            ctx.fillStyle='rgba(0,0,0,0.5)'; ctx.fillRect(structX-2,commonY-2,pocketW+4,pocketH+4);
+            ctx.strokeStyle=activeContainer==='structure'?'white':'#888'; ctx.lineWidth=2; ctx.strokeRect(structX-2,commonY-2,pocketW+4,pocketH+4);
+             if (player.structurePocket.length > 0) {
+                ctx.fillStyle = 'white';
+                ctx.font = '8px monospace';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(player.structurePocket[0], structX + pocketW/2, commonY + pocketH/2);
+            }
         }
+
         function renderContainer(cGrid,cW,cH,screenX,screenY,isActive) {
             ctx.fillStyle='rgba(0,0,0,0.5)'; ctx.fillRect(screenX-2,screenY-2,cW+4,cH+4);
             ctx.strokeStyle=isActive?'white':'#888'; ctx.lineWidth=2; ctx.strokeRect(screenX-2,screenY-2,cW+4,cH+4);
@@ -3201,6 +3418,7 @@
             prioritizeAndLimitActiveChunks();
             
             // --- UPDATE LOGIC ---
+            if (toolUseCooldown > 0) toolUseCooldown--;
             updatePlayer();
             updateRigidBodyInteractions();
             // --- THIS IS THE FIX ---
@@ -3393,18 +3611,28 @@
         // --- END OF NEW FUNCTION ---
 
         function createTrigger(options){
-            const trigger={id:nextTriggerId++,x:options.x,y:options.y,width:options.width,height:options.height,onEnter:options.onEnter||function(){},onLeave:options.onLeave||function(){},onInteract:options.onInteract||function(){},isActive:false,associatedData:options.associatedData};
+            const trigger={id:nextTriggerId++,x:options.x,y:options.y,width:options.width,height:options.height,onEnter:options.onEnter||function(){},onLeave:options.onLeave||function(){},onInteract:options.onInteract||function(){},isActive:false,associatedData:options.associatedData, isVolatile: options.isVolatile || false, isDestroyed: false};
             triggers.push(trigger);return trigger.id;
         }
         function updateTriggers(){
             const playerCheckX=player.x+player.width/2, playerCheckY=player.y+player.height, leeway=2;
             let canInteract=false, activeTrig=null;
             for(const trigger of triggers){
+                if (trigger.isDestroyed) continue;
                 const isInside=(playerCheckX>=trigger.x&&playerCheckX<=trigger.x+trigger.width&&playerCheckY>=trigger.y-leeway&&playerCheckY<=trigger.y+trigger.height);
                 if(isInside){canInteract=true;activeTrig=trigger;if(!trigger.isActive){trigger.isActive=true;trigger.onEnter(trigger);}}
                 else{if(trigger.isActive){trigger.isActive=false;trigger.onLeave(trigger);}}
             }
             player.canInteract=canInteract; player.currentTrigger=activeTrig;
+
+            // After processing, check if the active trigger was volatile and used
+            if (activeTrig && activeTrig.isVolatile && keys['KeyE']) {
+                activeTrig.isDestroyed = true;
+            }
+            // Optional: Cleanup destroyed triggers from the main array periodically
+            if (frameCount % 60 === 0) {
+                 triggers = triggers.filter(t => !t.isDestroyed);
+            }
         }
 
         function renderAlchemyUI() {
@@ -3554,6 +3782,9 @@
                 y: -108,
                 dialogueTreeId: 'ylialkemisti_main'
             });
+
+            createObjectInWorld('stone_pick', 480, -108);
+            createObjectInWorld('wooden_barrel', 520, -108);
 
             updateLoadingStatus('Finalizing...');
             await yieldToBrowser();
