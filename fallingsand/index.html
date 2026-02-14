@@ -441,7 +441,7 @@
         const PLAYER_SUBMERGED_DAMPING = 5.0;
         const BUOYANCY_FORCE = 6.0;
 
-        const MAX_CHUNKS_PER_FRAME = 250;
+        const MAX_CHUNKS_PER_FRAME = 180;
         const REGEN_COOLDOWN = 250;
         const REBUILD_COOLDOWN = 250;
         const MIN_ISLAND_PIXELS = 5;
@@ -592,17 +592,19 @@
             return _lastChunk.data[ly * CHUNK_SIZE + lx];
         }
 
+        // --- START OF REPLACEMENT ---
         function setGrid(x, y, type) {
             debugStats.setCalls++;
-            // THE FIX: Use Math.floor() here as well.
             const cx = Math.floor(x / CHUNK_SIZE);
             const cy = Math.floor(y / CHUNK_SIZE);
             let chunk;
 
-            if (cx === _lastChunkCX && cy === _lastChunkCY) {
+            // THE FIX: Add a check to ensure _lastChunk is not undefined before using it.
+            if (cx === _lastChunkCX && cy === _lastChunkCY && _lastChunk) {
                 debugStats.setHits++;
                 chunk = _lastChunk;
             } else {
+                // This block is now correctly entered when the cached chunk was undefined.
                 const key = coordToKey(cx, cy);
                 chunk = getChunk(chunkMap, key, MAT.EMPTY);
                 _lastChunk = chunk;
@@ -630,7 +632,7 @@
             }
             
             chunk.data[lIdx] = type;
-            activateChunkAt(x, y);
+            ensureChunkIsActive(x, y);
         }
 
         function getAuxData(map, x, y, defaultValue = 0) {
@@ -1102,7 +1104,9 @@
             }
         }
 
-        function findAndActivateVisibleLiquidSurfaces() {
+        // --- START OF MODIFICATION (Renamed function) ---
+        function findAndActivateLiquidSurfaces() {
+        // --- END OF MODIFICATION ---
             const surfaceChunks = new Set();
             const startX = Math.floor(camera.x);
             const startY = Math.floor(camera.y);
@@ -1117,7 +1121,7 @@
                         if (aboveType === MAT.EMPTY) {
                             const chunkX = Math.floor(x / CHUNK_SIZE);
                             const chunkY = Math.floor(y / CHUNK_SIZE);
-                            surfaceChunks.add(coordToKey(chunkX, chunkY)); // USE NUMERIC KEY
+                            surfaceChunks.add(coordToKey(chunkX, chunkY));
                         }
                     }
                 }
@@ -1125,6 +1129,41 @@
             for (const key of surfaceChunks) {
                 nextActiveChunks.add(key);
             }
+        }
+
+        // --- START OF NEW FUNCTION ---
+        /**
+         * Scans the visible screen area for gas clouds and activates their chunks.
+         * A gas cloud is considered "active" if it has empty space above it to rise into.
+         */
+        function findAndActivateGasClouds() {
+            const gasChunks = new Set();
+            const startX = Math.floor(camera.x);
+            const startY = Math.floor(camera.y);
+            const endX = startX + viewWidth;
+            const endY = startY + viewHeight;
+
+            for (let y = startY; y < endY; y++) {
+                for (let x = startX; x < endX; x++) {
+                    // Check for a gas pixel that is directly below an empty pixel.
+                    // This is the "leading edge" of a gas cloud that needs to be simulated.
+                    if (getGrid(x, y) === MAT.GAS && getGrid(x, y + 1) === MAT.EMPTY) {
+                        const chunkX = Math.floor(x / CHUNK_SIZE);
+                        const chunkY = Math.floor(y / CHUNK_SIZE);
+                        gasChunks.add(coordToKey(chunkX, chunkY));
+                    }
+                }
+            }
+            for (const key of gasChunks) {
+                nextActiveChunks.add(key);
+            }
+        }
+        // --- END OF NEW FUNCTION ---
+
+        function ensureChunkIsActive(worldX, worldY) {
+            const chunkX = Math.floor(worldX / CHUNK_SIZE);
+            const chunkY = Math.floor(worldY / CHUNK_SIZE);
+            nextActiveChunks.add(coordToKey(chunkX, chunkY));
         }
 
         function activateChunkAt(worldX, worldY) {
@@ -1699,7 +1738,6 @@
                     while (true) {
                         if (getGrid(placeX, placeY) === MAT.EMPTY || getGrid(placeX, placeY) === MAT.GAS) {
                             setGrid(placeX, placeY, p.type);
-                            activateChunkAt(placeX, placeY);
                             break;
                         }
                         placeY--;
@@ -2555,7 +2593,8 @@
             updateSectors();
             const t0 = performance.now();
             if (frameCount % VISIBLE_LIQUID_SCAN_INTERVAL === 0) {
-                findAndActivateVisibleLiquidSurfaces();
+                findAndActivateLiquidSurfaces(); // Call renamed function
+                findAndActivateGasClouds();      // Call new function
             }
             prioritizeAndLimitActiveChunks();
             
