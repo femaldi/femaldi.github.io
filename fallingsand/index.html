@@ -657,42 +657,93 @@
         // --- ASYNCHRONOUS GENERATION WORKER & QUEUE ---
         let generationQueue = [];
 
-        // This is the NEW message receiver that handles completed sectors from the worker.
+        // In index.html
+
         generationWorker.onmessage = (event) => {
-            const { type, sx, sy, chunks } = event.data;
+            const { type, sx, sy, chunks, lightChunks } = event.data; // Now receives lightChunks
 
             if (type === 'result') {
-                // Integrate the received chunk data into the main game state
-                for (const [key, data] of chunks) {
+                // Integrate terrain chunks
+                for (const [key, payload] of chunks) {
                     const chunk = getChunk(chunkMap, key);
-                    chunk.data = data; // The data is already a Uint8Array
+                    chunk.data = payload.data;
+                    chunk.cx = payload.cx;
+                    chunk.cy = payload.cy;
                 }
 
-                // Now that the data is integrated, bake the lighting for the new sector
-                bakeLightingForSector(sx, sy);
-                
-                // Mark the sector as ready and unlock the generation queue
+                // --- THIS IS THE CHANGE ---
+                // Integrate light chunks
+                for (const [key, payload] of lightChunks) {
+                    const chunk = getChunk(lightChunkMap, key);
+                    chunk.data = payload.data;
+                    chunk.cx = payload.cx;
+                    chunk.cy = payload.cy;
+                }
+                // --- END OF CHANGE ---
+
+                // The bake is now done in the worker, so we REMOVE the call from here.
+                // bakeLightingForSector(sx, sy); // <-- DELETE THIS LINE
+
                 sectorGrid.set(coordToKey(sx, sy), 'ready');
                 isGenerating = false;
+                isRenderCacheInvalid = true; // Invalidate cache now that all data is ready
             }
         };
 
+        // In index.html
+
+        function gatherBorderContext(sectorX, sectorY) {
+            const context = {}; // Use a plain object, not a Map
+            const startX = sectorX * SECTOR_SIZE;
+            const startY = sectorY * SECTOR_SIZE;
+            const endX = startX + SECTOR_SIZE;
+            const endY = startY + SECTOR_SIZE;
+
+            for (let y = startY - 1; y <= endY; y++) {
+                for (let x = startX - 1; x <= endX; x++) {
+                    if (x >= startX && x < endX && y >= startY && y < endY) continue;
+
+                    const neighborSectorX = Math.floor(x / SECTOR_SIZE);
+                    const neighborSectorY = Math.floor(y / SECTOR_SIZE);
+                    if (sectorGrid.get(coordToKey(neighborSectorX, neighborSectorY)) === 'ready') {
+                        const key = coordToKey(x, y);
+                        // Assign to object property
+                        context[key] = {
+                            terrain: getGrid(x, y),
+                            light: getAuxData(lightChunkMap, x, y)
+                        };
+                    }
+                }
+            }
+            return context;
+        }
+
         // This function will be called from our game loop to feed tasks to the worker.
         let isGenerating = false; // This now acts as a simple lock
+        
         function checkGenerationQueue() {
-            // If the worker is busy or there's nothing to do, wait.
             if (isGenerating || generationQueue.length === 0) {
                 return;
             }
 
-            // Lock and send the next task to the worker
             isGenerating = true;
             const statusElement = document.getElementById('generation-status');
             statusElement.innerText = `Generating... (${generationQueue.length} sectors left)`;
             statusElement.style.display = 'block';
 
             const sector = generationQueue.shift();
-            generationWorker.postMessage({ type: 'generate', sx: sector.sx, sy: sector.sy });
+            
+            // --- THIS IS THE CHANGE ---
+            // Gather border context before sending the request
+            const borderContext = gatherBorderContext(sector.sx, sector.sy);
+            
+            generationWorker.postMessage({ 
+                type: 'generate-and-bake', 
+                sx: sector.sx, 
+                sy: sector.sy,
+                borderContext: borderContext
+            });
+            // --- END OF CHANGE ---
         }
 
         function updateSectors() {
@@ -716,132 +767,6 @@
                 }
             }
         }
-        
-        function bakeLightingForSector(sectorX, sectorY) {
-            const startX = sectorX * SECTOR_SIZE;
-            const startY = sectorY * SECTOR_SIZE;
-            const endX = startX + SECTOR_SIZE;
-            const endY = startY + SECTOR_SIZE;
-
-            // Step 1: Initial Seeding.
-            // Seed empty spaces with full light, solid spaces with 0,
-            // but also pull initial light from any adjacent, already-completed sectors.
-            for (let y = startY; y < endY; y++) {
-                for (let x = startX; x < endX; x++) {
-                    let initialLight = (getGrid(x, y) === MAT.EMPTY) ? MAX_LIGHT_LEVEL : 0;
-                    
-                    const DIRS_8 = [[-1,0],[1,0],[0,-1],[0,1],[-1,-1],[-1,1],[1,-1],[1,1]];
-                    for (const dir of DIRS_8) {
-                        const nX = x + dir[0], nY = y + dir[1];
-                        const nSectorX = Math.floor(nX/SECTOR_SIZE), nSectorY = Math.floor(nY/SECTOR_SIZE);
-                        if(nSectorX !== sectorX || nSectorY !== sectorY){
-                            if(sectorGrid.get(coordToKey(nSectorX, nSectorY)) === 'ready'){
-                                const lightLoss = WALL_TYPES.has(getGrid(x,y)) ? 3 : 1;
-                                initialLight = Math.max(initialLight, getAuxData(lightChunkMap, nX, nY) - lightLoss);
-                            }
-                        }
-                    }
-                    setAuxData(lightChunkMap, x, y, initialLight);
-                }
-            }
-            
-            // --- START OF FIX: TWO-PASS PROPAGATION ---
-
-            // Step 2: Pass 1 (Top-down, Left-right propagation)
-            // This spreads light downwards and to the right.
-            for (let y = startY; y < endY; y++) {
-                for (let x = startX; x < endX; x++) {
-                    const currentLight = getAuxData(lightChunkMap, x, y);
-                    const lightLoss = WALL_TYPES.has(getGrid(x, y)) ? 3 : 1;
-
-                    const lightFromAbove = getAuxData(lightChunkMap, x, y - 1) - lightLoss;
-                    const lightFromLeft = getAuxData(lightChunkMap, x - 1, y) - lightLoss;
-                    
-                    const newLight = Math.max(currentLight, lightFromAbove, lightFromLeft);
-                    if (newLight > currentLight) {
-                        setAuxData(lightChunkMap, x, y, newLight);
-                    }
-                }
-            }
-
-            // Step 3: Pass 2 (Bottom-up, Right-left propagation)
-            // This spreads light upwards and to the left.
-            for (let y = endY - 1; y >= startY; y--) {
-                for (let x = endX - 1; x >= startX; x--) {
-                    const currentLight = getAuxData(lightChunkMap, x, y);
-                    const lightLoss = WALL_TYPES.has(getGrid(x, y)) ? 3 : 1;
-
-                    const lightFromBelow = getAuxData(lightChunkMap, x, y + 1) - lightLoss;
-                    const lightFromRight = getAuxData(lightChunkMap, x + 1, y) - lightLoss;
-                    
-                    const newLight = Math.max(currentLight, lightFromBelow, lightFromRight);
-                    if (newLight > currentLight) {
-                        setAuxData(lightChunkMap, x, y, newLight);
-                    }
-                }
-            }
-            
-            // --- END OF FIX ---
-
-            // Step 4: Finalization - Correctly handle walls bordering the void.
-            for (let y = startY; y < endY; y++) {
-                for (let x = startX; x < endX; x++) {
-                    // This loop still only processes pixels on the exact boundary of the sector.
-                    if (x > startX && x < endX - 1 && y > startY && y < endY - 1) {
-                        continue;
-                    }
-
-                    if (!WALL_TYPES.has(getGrid(x, y))) {
-                        continue; // We only care about walls.
-                    }
-
-                    // --- THIS IS THE NEW LOGIC ---
-                    // Instead of a single flag, we check each direction and apply a specific fix.
-
-                    // Check right edge
-                    if (x === endX - 1) {
-                        const neighborState = sectorGrid.get(coordToKey(sectorX + 1, sectorY));
-                        if (!neighborState || neighborState === 'unloaded' || neighborState === 'queued') {
-                            // This wall borders a void to its right.
-                            // Copy the light from its inner neighbor to the left.
-                            const lightFromInner = getAuxData(lightChunkMap, x - 1, y);
-                            setAuxData(lightChunkMap, x, y, lightFromInner);
-                        }
-                    }
-                    // Check left edge
-                    else if (x === startX) {
-                        const neighborState = sectorGrid.get(coordToKey(sectorX - 1, sectorY));
-                        if (!neighborState || neighborState === 'unloaded' || neighborState === 'queued') {
-                            // This wall borders a void to its left.
-                            // Copy the light from its inner neighbor to the right.
-                            const lightFromInner = getAuxData(lightChunkMap, x + 1, y);
-                            setAuxData(lightChunkMap, x, y, lightFromInner);
-                        }
-                    }
-                    // Check bottom edge
-                    else if (y === endY - 1) {
-                        const neighborState = sectorGrid.get(coordToKey(sectorX, sectorY + 1));
-                        if (!neighborState || neighborState === 'unloaded' || neighborState === 'queued') {
-                            // This wall borders a void below it.
-                            // Copy the light from its inner neighbor above it.
-                            const lightFromInner = getAuxData(lightChunkMap, x, y - 1);
-                            setAuxData(lightChunkMap, x, y, lightFromInner);
-                        }
-                    }
-                    // Check top edge
-                    else if (y === startY) {
-                        const neighborState = sectorGrid.get(coordToKey(sectorX, sectorY - 1));
-                        if (!neighborState || neighborState === 'unloaded' || neighborState === 'queued') {
-                            // This wall borders a void above it.
-                            // Copy the light from its inner neighbor below it.
-                            const lightFromInner = getAuxData(lightChunkMap, x, y + 1);
-                            setAuxData(lightChunkMap, x, y, lightFromInner);
-                        }
-                    }
-                }
-            }
-        }
-
 
         class RigidBody {
             constructor(x, y, width, height, material) {
@@ -2622,59 +2547,63 @@
             generationWorker.postMessage({ type: 'init', seed: WORLD_SEED });
 
             PerlinNoise.seed(WORLD_SEED);
-            updateLoadingStatus('Initializing...');
-            await yieldToBrowser();
-
-            const bloomResolution = 4;
-            bloomCanvas = document.createElement('canvas');
-            bloomCanvas.width = renderWidth / bloomResolution;
-            bloomCanvas.height = renderHeight / bloomResolution;
-            bloomCtx = bloomCanvas.getContext('2d');
+            
+            staticPixelBuffer = new Uint8ClampedArray(renderWidth * renderHeight * 4);
+            isRenderCacheInvalid = true;
+            lastCameraX = -1;
+            lastCameraY = -1;
 
             updateLoadingStatus('Carving Background Strata...');
             await yieldToBrowser();
-            
-            // --- MODIFICATION START ---
-            // Generate the background tile as a canvas
-            const bgTileCanvas = generateCaveBackgroundTile(BACKGROUND_TILE_SIZE, BACKGROUND_TILE_SIZE * 5); 
-            // Get the raw pixel data from that canvas ONCE and store it
+            const bgTileCanvas = generateCaveBackgroundTile(BACKGROUND_TILE_SIZE, BACKGROUND_TILE_SIZE * 5);
             const bgTileCtx = bgTileCanvas.getContext('2d');
             backgroundTileData = bgTileCtx.getImageData(0, 0, bgTileCanvas.width, bgTileCanvas.height);
-            // We no longer need the pattern object
-            // --- MODIFICATION END ---
-
 
             updateLoadingStatus('Preparing Spawn Area...');
             await yieldToBrowser();
             
-            // --- CHANGE: Synchronously generate ONLY the first sector ---
             const spawnSX = Math.floor(player.x / SECTOR_SIZE);
             const spawnSY = Math.floor(player.y / SECTOR_SIZE);
 
-            // We need a temporary local generator for the very first spawn area
-            // to ensure the player has ground to stand on before the game starts.
-            const tempLocalGenerator = new Worker('generation.worker.js');
-            tempLocalGenerator.postMessage({ type: 'init', seed: WORLD_SEED });
-
-            // Create a promise that resolves when the first sector is ready
+            // --- START OF THE FIX ---
+            // We now use a more robust promise-based approach to guarantee initialization order.
             const firstSectorPromise = new Promise(resolve => {
+                const tempLocalGenerator = new Worker('generation.worker.js');
+                
+                // This handler will receive messages from the temp worker
                 tempLocalGenerator.onmessage = event => {
-                    const { chunks } = event.data;
-                     for (const [key, data] of chunks) {
-                        const chunk = getChunk(chunkMap, key);
-                        chunk.data = data;
-                    }
-                    resolve();
-                    tempLocalGenerator.terminate(); // Clean up the temporary worker
-                };
-            });
-            
-            tempLocalGenerator.postMessage({ type: 'generate', sx: spawnSX, sy: spawnSY });
-            await firstSectorPromise; // Wait for the first sector to be fully generated
+                    const { type, chunks } = event.data;
 
-            bakeLightingForSector(spawnSX, spawnSY);
+                    if (type === 'init-ack') {
+                        console.log("Received");
+                        // The worker has confirmed it is initialized. NOW we can ask it to generate.
+
+                        const borderContext = gatherBorderContext(spawnSX, spawnSY);
+                        tempLocalGenerator.postMessage({ type: 'generate-and-bake', sx: spawnSX, sy: spawnSY, borderContext: borderContext });
+                    } 
+                    else if (type === 'result') {
+                        console.log("Received 2");
+                        // The worker has sent back the terrain data.
+                        for (const [key, payload] of chunks) {
+                            const chunk = getChunk(chunkMap, key);
+                            chunk.data = payload.data;
+                            chunk.cx = payload.cx;
+                            chunk.cy = payload.cy;
+                        }
+                        tempLocalGenerator.terminate(); // Clean up the temporary worker
+                        resolve(); // Resolve the promise to continue loading
+                    }
+                };
+
+                // Start the process by sending the init message.
+                tempLocalGenerator.postMessage({ type: 'init', seed: WORLD_SEED });
+            });
+
+            await firstSectorPromise; // Wait until the entire init->generate->result cycle is complete.
+            // --- END OF THE FIX ---
+
+            //bakeLightingForSector(spawnSX, spawnSY);
             sectorGrid.set(coordToKey(spawnSX, spawnSY), 'ready');
-            // --- END CHANGE ---
             
             updateLoadingStatus('Constructing Ancient Structures...');
             await yieldToBrowser();
@@ -2684,9 +2613,9 @@
             await yieldToBrowser();
             activateInitialChunks();
             createPlayerBody();
-            // createWoodenBox(150, -150, 24, 64);
-            // createWoodenBox(150 + 128, -150, 24, 64);
-            // createWoodenBox(150 + 64, -250, 128, 16);
+            createWoodenBox(150, -150, 24, 64);
+            //createWoodenBox(150 + 128, -150, 24, 64);
+            //createWoodenBox(150 + 64, -250, 128, 16);
 
             updateLoadingStatus('Done!');
             await new Promise(resolve => setTimeout(resolve, 100));
