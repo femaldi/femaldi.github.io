@@ -245,6 +245,7 @@
         let readySectorKeys = [];
         let lastPlayerSectorX = -1; // Used to track when the player crosses a sector boundary
         let lastPlayerSectorY = -1;
+        let activeStubChunks = new Set();
 
         canvas.width = viewWidth;
         canvas.height = viewHeight;
@@ -1745,31 +1746,41 @@
         ].includes(type);
         
         function updateRigidBodyGrid() {
-            // Clear previous frame data in relevant chunks
-            const chunksToClear = new Set();
-            for (const body of rigidBodies) {
-                if(body.isDestroyed) continue;
-                const pos = body.body.getPosition();
-                const cx = Math.floor(pos.x * B2_SCALE / CHUNK_SIZE);
-                const cy = Math.floor(pos.y * B2_SCALE / CHUNK_SIZE);
-                for(let dy = -2; dy <= 2; dy++) for(let dx = -2; dx <= 2; dx++) chunksToClear.add(`${cx+dx},${cy+dy}`);
+            // 1. Clear all chunks that had stubs in the PREVIOUS frame.
+            for (const key of activeStubChunks) {
+                const chunk = etcChunkMap.get(key);
+                if (chunk) {
+                    chunk.data.fill(0); // Clear the old stub data
+                }
             }
-            for(const key of chunksToClear){
-                if(etcChunkMap.has(key)) etcChunkMap.get(key).data.fill(0);
-            }
+            activeStubChunks.clear(); // Reset the set for the CURRENT frame.
 
+            // 2. Populate the grid with new stub locations and track the chunks used.
             const buffer = 1;
             for (const body of rigidBodies) {
-                if (body.isDestroyed) continue;
+                if (body.isDestroyed || !body.body) continue;
+
                 for (let y = 0; y < body.height; y++) {
                     for (let x = 0; x < body.width; x++) {
-                        if (body.pixels[y*body.width+x] === MAT.EMPTY) continue;
-                        const localPos = pl.Vec2((x-body.width/2+0.5)/B2_SCALE, (y-body.height/2+0.5)/B2_SCALE);
+                        if (body.pixels[y * body.width + x] === MAT.EMPTY) continue;
+
+                        // Get the world position of the rigid body's pixel
+                        const localPos = pl.Vec2((x - body.width / 2 + 0.5) / B2_SCALE, (y - body.height / 2 + 0.5) / B2_SCALE);
                         const worldPos = body.body.getWorldPoint(localPos);
-                        const worldX = Math.floor(worldPos.x*B2_SCALE), worldY = Math.floor(worldPos.y*B2_SCALE);
+                        const worldX = Math.floor(worldPos.x * B2_SCALE);
+                        const worldY = Math.floor(worldPos.y * B2_SCALE);
+
+                        // Mark a small buffered area in the etcChunkMap
                         for (let dy = -buffer; dy <= buffer; dy++) {
                             for (let dx = -buffer; dx <= buffer; dx++) {
-                                setAuxData(etcChunkMap, worldX+dx, worldY+dy, 1); // 1 for rigid body stub
+                                const wx = worldX + dx;
+                                const wy = worldY + dy;
+                                setAuxData(etcChunkMap, wx, wy, 1); // Mark as a rigid body stub
+
+                                // 3. Add the key of the affected chunk to our tracker for the NEXT frame's clear operation.
+                                const cx = Math.floor(wx / CHUNK_SIZE);
+                                const cy = Math.floor(wy / CHUNK_SIZE);
+                                activeStubChunks.add(coordToKey(cx, cy));
                             }
                         }
                     }
