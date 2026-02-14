@@ -2908,7 +2908,7 @@
 
             // --- The rest of the function remains the same ---
             ctx.putImageData(imageData, 0, 0);
-            //renderBloom();
+            renderBloom();
 
             // Render Rigid Bodies
             for (const body of rigidBodies) {
@@ -3435,6 +3435,12 @@
             isRenderCacheInvalid = true;
             lastCameraX = -1;
             lastCameraY = -1;
+
+            const bloomResolution = 4; // Use a canvas 1/4th the size
+            bloomCanvas = document.createElement('canvas');
+            bloomCanvas.width = renderWidth / bloomResolution;
+            bloomCanvas.height = renderHeight / bloomResolution;
+            bloomCtx = bloomCanvas.getContext('2d');
 
             updateLoadingStatus('Carving Background Strata...');
             await yieldToBrowser();
