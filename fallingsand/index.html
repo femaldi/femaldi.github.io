@@ -217,6 +217,18 @@
         const activeChunks = new Set();     // A set of active chunk KEYs for the current frame
         const nextActiveChunks = new Set(); // A set of chunk KEYs to activate for the *next* frame
 
+        let _lastChunk = null;
+        let _lastChunkCX = -99999;
+        let _lastChunkCY = -99999;
+
+        // --- START OF NEW CODE ---
+        const debugStats = {
+            getCalls: 0,
+            getHits: 0,
+            setCalls: 0,
+            setHits: 0,
+        };
+        // --- END OF NEW CODE ---
 
         // NEW: Increased view area and reduced scale
         const viewWidth = 480;
@@ -556,35 +568,56 @@
         }
 
         function getGrid(x, y) {
+            debugStats.getCalls++;
+            // THE FIX: Use Math.floor() to correctly handle negative coordinates.
             const cx = Math.floor(x / CHUNK_SIZE);
             const cy = Math.floor(y / CHUNK_SIZE);
-            const key = coordToKey(cx, cy); // USE NUMERIC KEY
 
-            const chunk = chunkMap.get(key);
-            if (!chunk) {
+            // The caching logic itself is correct and can remain.
+            if (cx !== _lastChunkCX || cy !== _lastChunkCY) {
+                _lastChunkCX = cx;
+                _lastChunkCY = cy;
+                _lastChunk = chunkMap.get(coordToKey(cx, cy));
+            } else {
+                debugStats.getHits++;
+            }
+
+            if (!_lastChunk) {
                 return MAT.EMPTY;
             }
 
-            const lx = x - cx * CHUNK_SIZE;
-            const ly = y - cy * CHUNK_SIZE;
-            return chunk.data[getLocalIndex(lx, ly)];
+            // The bitwise & for local coordinates is correct for negative numbers.
+            const lx = x & (CHUNK_SIZE - 1);
+            const ly = y & (CHUNK_SIZE - 1);
+            return _lastChunk.data[ly * CHUNK_SIZE + lx];
         }
 
         function setGrid(x, y, type) {
+            debugStats.setCalls++;
+            // THE FIX: Use Math.floor() here as well.
             const cx = Math.floor(x / CHUNK_SIZE);
             const cy = Math.floor(y / CHUNK_SIZE);
-            const key = coordToKey(cx, cy); // USE NUMERIC KEY
-            const chunk = getChunk(chunkMap, key, MAT.EMPTY);
+            let chunk;
+
+            if (cx === _lastChunkCX && cy === _lastChunkCY) {
+                debugStats.setHits++;
+                chunk = _lastChunk;
+            } else {
+                const key = coordToKey(cx, cy);
+                chunk = getChunk(chunkMap, key, MAT.EMPTY);
+                _lastChunk = chunk;
+                _lastChunkCX = cx;
+                _lastChunkCY = cy;
+            }
             
-            // Store coordinates in chunk if they don't exist
             if (chunk.cx === undefined) {
                 chunk.cx = cx;
                 chunk.cy = cy;
             }
 
-            const lx = x - cx * CHUNK_SIZE;
-            const ly = y - cy * CHUNK_SIZE;
-            const lIdx = getLocalIndex(lx, ly);
+            const lx = x & (CHUNK_SIZE - 1);
+            const ly = y & (CHUNK_SIZE - 1);
+            const lIdx = ly * CHUNK_SIZE + lx;
 
             const oldType = chunk.data[lIdx];
             if (type === oldType) return;
@@ -601,22 +634,24 @@
         }
 
         function getAuxData(map, x, y, defaultValue = 0) {
+            // THE FIX: Use Math.floor() here too.
             const cx = Math.floor(x / CHUNK_SIZE);
             const cy = Math.floor(y / CHUNK_SIZE);
-            const key = coordToKey(cx, cy); // USE NUMERIC KEY
+            const key = coordToKey(cx, cy);
 
             const chunk = map.get(key);
             if (!chunk) return defaultValue;
             
-            const lx = x - cx * CHUNK_SIZE;
-            const ly = y - cy * CHUNK_SIZE;
-            return chunk.data[getLocalIndex(lx, ly)];
+            const lx = x & (CHUNK_SIZE - 1);
+            const ly = y & (CHUNK_SIZE - 1);
+            return chunk.data[ly * CHUNK_SIZE + lx];
         }
         
         function setAuxData(map, x, y, value) {
+            // THE FIX: And finally, use Math.floor() here.
             const cx = Math.floor(x / CHUNK_SIZE);
             const cy = Math.floor(y / CHUNK_SIZE);
-            const key = coordToKey(cx, cy); // USE NUMERIC KEY
+            const key = coordToKey(cx, cy);
             const chunk = getChunk(map, key, 0);
 
             if (chunk.cx === undefined) {
@@ -624,10 +659,11 @@
                 chunk.cy = cy;
             }
             
-            const lx = x - cx * CHUNK_SIZE;
-            const ly = y - cy * CHUNK_SIZE;
+            const lx = x & (CHUNK_SIZE - 1);
+            const ly = y & (CHUNK_SIZE - 1);
             chunk.data[getLocalIndex(lx, ly)] = value;
         }
+
 
         /**
          * Combines two 32-bit integers (x, y coordinates) into a single unique 64-bit-safe number.
@@ -1698,29 +1734,41 @@
             return LIQUIDS.has(type);
         }
         
+        // --- START OF REPLACEMENT ---
         function runWorldSimulationWithChunks() {
             movedInFrame.clear(); // Clear the set once per frame
             const scanDir = (frameCount % 2 === 0);
 
+            // Iterate over the active CHUNKS, not individual pixels
             for (const key of activeChunks) {
                 const chunk = chunkMap.get(key);
                 if (!chunk) continue;
 
                 const startX = chunk.cx * CHUNK_SIZE;
                 const startY = chunk.cy * CHUNK_SIZE;
+                
+                // By processing the entire chunk at once, we maximize cache hits
+                // and reduce the overhead of chunk lookups dramatically.
+                _lastChunk = chunk;
+                _lastChunkCX = chunk.cx;
+                _lastChunkCY = chunk.cy;
 
-                // PASS 1: solids, gas, fire
+                // PASS 1: solids, gas, fire (bottom-up)
                 for (let ly = CHUNK_SIZE - 1; ly >= 0; ly--) {
                     for (let lx = (scanDir ? 0 : CHUNK_SIZE - 1);
-                        (scanDir ? lx < CHUNK_SIZE : lx >= 0); lx += (scanDir ? 1 : -1)) {
+                        (scanDir ? lx < CHUNK_SIZE : lx >= 0);
+                        lx += (scanDir ? 1 : -1)) {
+                        
                         stepNonLiquid(startX + lx, startY + ly);
                     }
                 }
 
-                // PASS 2: liquids
+                // PASS 2: liquids (bottom-up)
                 for (let ly = CHUNK_SIZE - 1; ly >= 0; ly--) {
                     for (let lx = (scanDir ? 0 : CHUNK_SIZE - 1);
-                        (scanDir ? lx < CHUNK_SIZE : lx >= 0); lx += (scanDir ? 1 : -1)) {
+                        (scanDir ? lx < CHUNK_SIZE : lx >= 0);
+                        lx += (scanDir ? 1 : -1)) {
+                            
                         stepLiquid(startX + lx, startY + ly);
                     }
                 }
@@ -2268,6 +2316,7 @@
 
             renderPlayerStatsUI();
             renderAlchemyUI();
+            drawActiveChunkOutlines();
         }
         
         // This group of functions can remain as-is
@@ -2475,14 +2524,24 @@
                 return distA - distB;
             });
             const processingOrder = [...priorityChunks, ...otherChunks];
-            const chunksToProcess = processingOrder.slice(0, priorityChunks.size + MAX_CHUNKS_PER_FRAME);
-            pendingActiveChunks = processingOrder.slice(priorityChunks.size + MAX_CHUNKS_PER_FRAME);
+
+            // --- START OF FIX ---
+            // The bug was here. It should slice to MAX_CHUNKS_PER_FRAME, not add to it.
+            const chunksToProcess = processingOrder.slice(0, MAX_CHUNKS_PER_FRAME);
+            pendingActiveChunks = processingOrder.slice(MAX_CHUNKS_PER_FRAME);
+            // --- END OF FIX ---
+            
             activeChunks.clear();
             for (const key of chunksToProcess) activeChunks.add(key);
         }
 
         // --- GAME LOOP ---
         function gameLoop(now = performance.now()) {
+            debugStats.getCalls = 0;
+            debugStats.getHits = 0;
+            debugStats.setCalls = 0;
+            debugStats.setHits = 0;
+
             frameCount++;
             framesThisSecond++;
             if (now - lastFpsTime >= 1000) {
@@ -2584,6 +2643,7 @@
             render();
             renderContainers();
             drawHUD();
+            renderDebugUI();
             tRenderMs = performance.now() - t2;
 
             if ((frameCount % 2) === 0) updateHoverMaterial();
@@ -2616,6 +2676,78 @@
             ctx.fillStyle='#00ff90';ctx.fillText(`FPS: ${hudFPS}`,renderWidth-6,6);
             ctx.fillStyle='#ffd966';ctx.fillText(`MAT: ${hudMaterial}`,renderWidth-6,6+10);
         }
+
+        function renderDebugUI() {
+            // Calculate derived stats
+            const activeSectors = Array.from(sectorGrid.values()).filter(s => s === 'ready').length;
+            const getHitRatio = debugStats.getCalls > 0 ? (debugStats.getHits / debugStats.getCalls * 100).toFixed(1) : "N/A";
+            const setHitRatio = debugStats.setCalls > 0 ? (debugStats.setHits / debugStats.setCalls * 100).toFixed(1) : "N/A";
+            const getMisses = debugStats.getCalls - debugStats.getHits;
+            const setMisses = debugStats.setCalls - debugStats.setHits;
+
+            // UI positioning and styling
+            const startX = 10;
+            let startY = 50; // Position below the player stats
+            const lineHeight = 10;
+            const indent = 10;
+            
+            ctx.font = "8px monospace";
+            ctx.textAlign = "left";
+            ctx.textBaseline = "top";
+            
+            // Draw a semi-transparent background for readability
+            ctx.fillStyle = "rgba(0,0,0,0.6)";
+            ctx.fillRect(startX - 4, startY - 4, 180, 88);
+
+            // Set text color for the stats
+            ctx.fillStyle = "white";
+
+            // Display stats
+            ctx.fillText(`Active Chunks: ${activeChunks.size}`, startX, startY);
+            startY += lineHeight;
+            ctx.fillText(`Ready Sectors: ${activeSectors}`, startX, startY);
+            startY += (lineHeight * 1.5); // Add extra space
+
+            ctx.fillText(`setGrid Calls: ${debugStats.setCalls}`, startX, startY);
+            startY += lineHeight;
+            ctx.fillText(`- Hits: ${debugStats.setHits} / Miss: ${setMisses} (${setHitRatio}%)`, startX + indent, startY);
+            startY += (lineHeight * 1.5);
+
+            ctx.fillText(`getGrid Calls: ${debugStats.getCalls}`, startX, startY);
+            startY += lineHeight;
+            ctx.fillText(`- Hits: ${debugStats.getHits} / Miss: ${getMisses} (${getHitRatio}%)`, startX + indent, startY);
+        }
+
+        // --- START OF NEW FUNCTION ---
+        /**
+         * Draws a red border on the screen around all currently active simulation chunks.
+         */
+        function drawActiveChunkOutlines() {
+            ctx.lineWidth = 1;
+
+            // Draw processed chunks in GREEN
+            ctx.strokeStyle = 'rgba(0, 255, 0, 0.7)';
+            for (const key of activeChunks) {
+                const chunk = chunkMap.get(key);
+                if (!chunk) continue;
+
+                const screenX = chunk.cx * CHUNK_SIZE - camera.x;
+                const screenY = chunk.cy * CHUNK_SIZE - camera.y;
+                ctx.strokeRect(screenX, screenY, CHUNK_SIZE, CHUNK_SIZE);
+            }
+
+            // Draw deferred (pending) chunks in RED
+            ctx.strokeStyle = 'rgba(255, 0, 0, 0.7)';
+            for (const key of pendingActiveChunks) {
+                const chunk = chunkMap.get(key);
+                if (!chunk) continue;
+
+                const screenX = chunk.cx * CHUNK_SIZE - camera.x;
+                const screenY = chunk.cy * CHUNK_SIZE - camera.y;
+                ctx.strokeRect(screenX, screenY, CHUNK_SIZE, CHUNK_SIZE);
+            }
+        }
+        // --- END OF NEW FUNCTION ---
 
         function createTrigger(options){
             const trigger={id:nextTriggerId++,x:options.x,y:options.y,width:options.width,height:options.height,onEnter:options.onEnter||function(){},onLeave:options.onLeave||function(){},onInteract:options.onInteract||function(){},isActive:false,associatedData:options.associatedData};
