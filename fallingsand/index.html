@@ -152,7 +152,8 @@
         const ctx = canvas.getContext('2d');
         const pl = planck;
 
-        let WORLD_SEED = 10000;
+        const generationWorker = new Worker('generation.worker.js'); // ADD THIS LINE
+        let WORLD_SEED = 0; // Will be set in mainLoader
 
         const world = new pl.World({
             gravity: pl.Vec2(0, 10)
@@ -647,53 +648,6 @@
         }
 
         /**
-         * A "bare-bones" ASYNCHRONOUS generator for testing. It only carves the
-         * basic cave shape and does NOT generate bands, ores, or material pools.
-         * @param {number} sectorX - The horizontal index of the sector.
-         * @param {number} sectorY - The vertical index of the sector.
-         */
-        async function generateSector(sectorX, sectorY) {
-            const startX = sectorX * SECTOR_SIZE;
-            const startY = sectorY * SECTOR_SIZE;
-            const endX = startX + SECTOR_SIZE;
-            const endY = startY + SECTOR_SIZE;
-            const yieldToBrowser = () => new Promise(resolve => setTimeout(resolve, 10));
-
-            const scale = 220, octaves = 3, persistence = 0.5, lacunarity = 2.0;
-            const depthBiasStrength = 0.0;
-            const layerHeight = WORLD_LAYER_HEIGHT; // Increased layer height for a larger world feel
-            const layerWallMaterials = [ MAT.SANDSTONE_WALL, MAT.ROCK_WALL, MAT.VOLCANIC_WALL, MAT.LABYRINTH_WALL, MAT.MAGIC_WALL ];
-            
-            for (let y = startY; y < endY; y++) {
-                // Yield every 64 rows to prevent blocking the main thread
-                if (y % 64 === 0) {
-                    await yieldToBrowser();
-                }
-                
-                const depthFactor = Math.max(0, y) / (layerHeight * layerWallMaterials.length);
-                const currentDepthBias = depthFactor * depthBiasStrength;
-                const layerIndex = Math.min(layerWallMaterials.length - 1, Math.floor(Math.max(0, y) / layerHeight));
-                const baseWallType = layerWallMaterials[layerIndex];
-
-                for (let x = startX; x < endX; x++) {
-                    // --- CORE CAVE SHAPE CALCULATION (Simplified) ---
-                    let totalNoise = 0, frequency = 1, amplitude = 1, maxAmplitude = 0;
-                    for (let i = 0; i < octaves; i++) {
-                        totalNoise += ((PerlinNoise.noise(x*frequency/scale, y*frequency/scale)+1)/2) * amplitude;
-                        maxAmplitude += amplitude;
-                        amplitude *= persistence;
-                        frequency *= lacunarity;
-                    }
-                    const finalNoise = totalNoise / maxAmplitude;
-
-                    if (finalNoise >= 0.51 - currentDepthBias) {
-                         setGrid(x, y, baseWallType);
-                    }
-                }
-            }
-        }
-
-        /**
          * An empty, "bare-bones" version of the settling function for testing.
          */
         async function preSettleSector(sectorX, sectorY) {
@@ -702,37 +656,43 @@
 
         // --- ASYNCHRONOUS GENERATION WORKER & QUEUE ---
         let generationQueue = [];
-        let isGenerating = false; 
 
-        /**
-         * The main background worker for world generation.
-         */
-        async function generationWorker() {
-            const statusElement = document.getElementById('generation-status');
+        // This is the NEW message receiver that handles completed sectors from the worker.
+        generationWorker.onmessage = (event) => {
+            const { type, sx, sy, chunks } = event.data;
 
-            while (true) {
-                if (generationQueue.length === 0) {
-                    isGenerating = false;
-                    statusElement.style.display = 'none';
-                    await new Promise(resolve => setTimeout(resolve, 200));
-                    continue;
+            if (type === 'result') {
+                // Integrate the received chunk data into the main game state
+                for (const [key, data] of chunks) {
+                    const chunk = getChunk(chunkMap, key);
+                    chunk.data = data; // The data is already a Uint8Array
                 }
 
-                isGenerating = true;
-                statusElement.innerText = `Generating... (${generationQueue.length} sectors left)`;
-                statusElement.style.display = 'block';
-
-                const sector = generationQueue.shift();
-                const { sx, sy } = sector;
-                const key = `${sx},${sy}`;
-
-                await generateSector(sx, sy);
-                await preSettleSector(sx, sy);
-                
+                // Now that the data is integrated, bake the lighting for the new sector
                 bakeLightingForSector(sx, sy);
-
-                sectorGrid.set(key, 'ready');
+                
+                // Mark the sector as ready and unlock the generation queue
+                sectorGrid.set(coordToKey(sx, sy), 'ready');
+                isGenerating = false;
             }
+        };
+
+        // This function will be called from our game loop to feed tasks to the worker.
+        let isGenerating = false; // This now acts as a simple lock
+        function checkGenerationQueue() {
+            // If the worker is busy or there's nothing to do, wait.
+            if (isGenerating || generationQueue.length === 0) {
+                return;
+            }
+
+            // Lock and send the next task to the worker
+            isGenerating = true;
+            const statusElement = document.getElementById('generation-status');
+            statusElement.innerText = `Generating... (${generationQueue.length} sectors left)`;
+            statusElement.style.display = 'block';
+
+            const sector = generationQueue.shift();
+            generationWorker.postMessage({ type: 'generate', sx: sector.sx, sy: sector.sy });
         }
 
         function updateSectors() {
@@ -2500,6 +2460,8 @@
                 lastFpsTime = now;
             }
 
+            checkGenerationQueue() 
+
             updateSectors();
             const t0 = performance.now();
             if (frameCount % VISIBLE_LIQUID_SCAN_INTERVAL === 0) {
@@ -2655,7 +2617,10 @@
         async function mainLoader() {
             const loadingOverlay = document.getElementById('loading-overlay');
             const yieldToBrowser = () => new Promise(resolve => setTimeout(resolve, 20));
+            
             WORLD_SEED = Math.floor(Math.random() * 1000000);
+            generationWorker.postMessage({ type: 'init', seed: WORLD_SEED });
+
             PerlinNoise.seed(WORLD_SEED);
             updateLoadingStatus('Initializing...');
             await yieldToBrowser();
@@ -2681,13 +2646,36 @@
 
             updateLoadingStatus('Preparing Spawn Area...');
             await yieldToBrowser();
-            const spawnSX = Math.floor(player.x / SECTOR_SIZE),
-                spawnSY = Math.floor(player.y / SECTOR_SIZE);
-            await generateSector(spawnSX, spawnSY);
-            await preSettleSector(spawnSX, spawnSY);
-            bakeLightingForSector(spawnSX, spawnSY);
-            sectorGrid.set(coordToKey(spawnSX, spawnSY), 'ready'); // Use numeric key
+            
+            // --- CHANGE: Synchronously generate ONLY the first sector ---
+            const spawnSX = Math.floor(player.x / SECTOR_SIZE);
+            const spawnSY = Math.floor(player.y / SECTOR_SIZE);
 
+            // We need a temporary local generator for the very first spawn area
+            // to ensure the player has ground to stand on before the game starts.
+            const tempLocalGenerator = new Worker('generation.worker.js');
+            tempLocalGenerator.postMessage({ type: 'init', seed: WORLD_SEED });
+
+            // Create a promise that resolves when the first sector is ready
+            const firstSectorPromise = new Promise(resolve => {
+                tempLocalGenerator.onmessage = event => {
+                    const { chunks } = event.data;
+                     for (const [key, data] of chunks) {
+                        const chunk = getChunk(chunkMap, key);
+                        chunk.data = data;
+                    }
+                    resolve();
+                    tempLocalGenerator.terminate(); // Clean up the temporary worker
+                };
+            });
+            
+            tempLocalGenerator.postMessage({ type: 'generate', sx: spawnSX, sy: spawnSY });
+            await firstSectorPromise; // Wait for the first sector to be fully generated
+
+            bakeLightingForSector(spawnSX, spawnSY);
+            sectorGrid.set(coordToKey(spawnSX, spawnSY), 'ready');
+            // --- END CHANGE ---
+            
             updateLoadingStatus('Constructing Ancient Structures...');
             await yieldToBrowser();
             generateAlchemyStation();
@@ -2709,7 +2697,6 @@
                 resolve();
             }, 500));
             gameLoop();
-            generationWorker();
         }
 
         function updateWorldColliders(now) {
