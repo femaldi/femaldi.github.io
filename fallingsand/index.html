@@ -3288,12 +3288,134 @@
         }
         
         // This group of functions can remain as-is
-		function createMagicEmitter(options){const emitter={id:nextEmitterId++,mainColor:options.mainColor||[255,255,255],spawnRate:options.spawnRate||0.2,spawnType:options.spawnType||'area',x:options.x||0,y:options.y||0,spawnArea:options.spawnArea||{width:10,height:5},x1:options.x1||0,y1:options.y1||0,x2:options.x2||0,y2:options.y2||0,particleLifespan:options.particleLifespan||{min:60,max:150},particleVelocity:options.particleVelocity||{vx:{min:-0.2,max:0.2},vy:{min:-0.2,max:-0.6}},colorVariance:options.colorVariance||60};magicEmitters.push(emitter);return emitter.id;}
-		function removeMagicEmitter(id){magicEmitters=magicEmitters.filter(e=>e.id!==id);}
-		function updateMagicEmitters(){for(const emitter of magicEmitters){if(Math.random()<emitter.spawnRate){for(let i=0;i<MAX_MAGIC_PARTICLES;i++){const p=magicParticlePool[i];if(!p.active){let spawnX,spawnY;if(emitter.spawnType==='line'){const t=Math.random();spawnX=emitter.x1+t*(emitter.x2-emitter.x1);spawnY=emitter.y1+t*(emitter.y2-emitter.y1);}else{spawnX=emitter.x+(Math.random()-0.5)*emitter.spawnArea.width;spawnY=emitter.y+(Math.random()-0.5)*emitter.spawnArea.height;}const r=Math.max(0,Math.min(255,emitter.mainColor[0]+(Math.random()-0.5)*emitter.colorVariance)),g=Math.max(0,Math.min(255,emitter.mainColor[1]+(Math.random()-0.5)*emitter.colorVariance)),b=Math.max(0,Math.min(255,emitter.mainColor[2]+(Math.random()-0.5)*emitter.colorVariance));p.active=true;p.gravity=0;p.x=spawnX;p.y=spawnY;p.vx=emitter.particleVelocity.vx.min+Math.random()*(emitter.particleVelocity.vx.max-emitter.particleVelocity.vx.min);p.vy=emitter.particleVelocity.vy.min+Math.random()*(emitter.particleVelocity.vy.max-emitter.particleVelocity.vy.min);p.lifespan=emitter.particleLifespan.min+Math.random()*(emitter.particleLifespan.max-emitter.particleLifespan.min);p.color=[r,g,b];break;}}}}}
-		function spawnLevitationParticles(count){let spawnedCount=0;const baseX=player.x+player.width/2,baseY=player.y+player.height-2;for(let i=0;i<MAX_MAGIC_PARTICLES;i++){const p=magicParticlePool[i];if(!p.active){p.active=true;p.x=baseX+(Math.random()-0.5)*4;p.y=baseY+(Math.random()-0.5)*2;p.vx=(Math.random()-0.5)*0.5;p.vy=(Math.random()*0.8)+0.4-(player.vy*0.1);const baseColor=[180,200,255],colorVariance=40;p.color=[Math.max(0,Math.min(255,baseColor[0]+(Math.random()-0.5)*colorVariance)),Math.max(0,Math.min(255,baseColor[1]+(Math.random()-0.5)*colorVariance)),Math.max(0,Math.min(255,baseColor[2]+(Math.random()-0.5)*colorVariance))];p.lifespan=15+Math.random()*20;spawnedCount++;if(spawnedCount>=count)return;}}}
-		function spawnMagicParticles(count,x,y,mainColor){let spawnedCount=0;for(let i=0;i<MAX_MAGIC_PARTICLES;i++){const p=magicParticlePool[i];if(!p.active){p.active=true;p.x=x+(Math.random()-0.5)*20;p.y=y+(Math.random()-0.5)*10;const colorVariance=60,r=Math.max(0,Math.min(255,mainColor[0]+(Math.random()-0.5)*colorVariance)),g=Math.max(0,Math.min(255,mainColor[1]+(Math.random()-0.5)*colorVariance)),b=Math.max(0,Math.min(255,mainColor[2]+(Math.random()-0.5)*colorVariance));p.color=[r,g,b];p.vx=(Math.random()-0.5)*0.3;p.vy=-0.2+(Math.random()*-0.4);p.lifespan=60+Math.random()*90;spawnedCount++;if(spawnedCount>=count)return;}}}
-		function updateMagicParticles(){for(let i=0;i<MAX_MAGIC_PARTICLES;i++){const p=magicParticlePool[i];if(!p.active)continue;p.x+=p.vx;p.y+=p.vy;if(p.gravity)p.vy+=p.gravity;p.lifespan--;if(p.lifespan<=0)p.active=false;}}
+		function createMagicEmitter(options) {
+            const emitter = {
+                id: nextEmitterId++,
+                mainColor: options.mainColor || [255, 255, 255],
+                spawnRate: options.spawnRate || 0.2,
+                spawnType: options.spawnType || 'area',
+                x: options.x || 0,
+                y: options.y || 0,
+                spawnArea: options.spawnArea || {
+                    width: 10,
+                    height: 5
+                },
+                x1: options.x1 || 0,
+                y1: options.y1 || 0,
+                x2: options.x2 || 0,
+                y2: options.y2 || 0,
+                particleLifespan: options.particleLifespan || {
+                    min: 60,
+                    max: 150
+                },
+                particleVelocity: options.particleVelocity || {
+                    vx: {
+                        min: -0.2,
+                        max: 0.2
+                    },
+                    vy: {
+                        min: -0.2,
+                        max: -0.6
+                    }
+                },
+                colorVariance: options.colorVariance || 60
+            };
+            magicEmitters.push(emitter);
+            return emitter.id;
+        }
+
+        function removeMagicEmitter(id) {
+            magicEmitters = magicEmitters.filter(e => e.id !== id);
+        }
+
+        function updateMagicEmitters() {
+            for (const emitter of magicEmitters) {
+                if (Math.random() < emitter.spawnRate) {
+                    for (let i = 0; i < MAX_MAGIC_PARTICLES; i++) {
+                        const p = magicParticlePool[i];
+                        if (!p.active) {
+                            let spawnX, spawnY;
+                            if (emitter.spawnType === 'line') {
+                                const t = Math.random();
+                                spawnX = emitter.x1 + t * (emitter.x2 - emitter.x1);
+                                spawnY = emitter.y1 + t * (emitter.y2 - emitter.y1);
+                            } else {
+                                spawnX = emitter.x + (Math.random() - 0.5) * emitter.spawnArea.width;
+                                spawnY = emitter.y + (Math.random() - 0.5) * emitter.spawnArea.height;
+                            }
+                            const r = Math.max(0, Math.min(255, emitter.mainColor[0] + (Math.random() - 0.5) * emitter.colorVariance)),
+                                g = Math.max(0, Math.min(255, emitter.mainColor[1] + (Math.random() - 0.5) * emitter.colorVariance)),
+                                b = Math.max(0, Math.min(255, emitter.mainColor[2] + (Math.random() - 0.5) * emitter.colorVariance));
+                            p.active = true;
+                            p.gravity = 0;
+                            p.x = spawnX;
+                            p.y = spawnY;
+                            p.vx = emitter.particleVelocity.vx.min + Math.random() * (emitter.particleVelocity.vx.max - emitter.particleVelocity.vx.min);
+                            p.vy = emitter.particleVelocity.vy.min + Math.random() * (emitter.particleVelocity.vy.max - emitter.particleVelocity.vy.min);
+                            p.lifespan = emitter.particleLifespan.min + Math.random() * (emitter.particleLifespan.max - emitter.particleLifespan.min);
+                            p.color = [r, g, b];
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        function spawnLevitationParticles(count) {
+            let spawnedCount = 0;
+            const baseX = player.x + player.width / 2,
+                baseY = player.y + player.height - 2;
+            for (let i = 0; i < MAX_MAGIC_PARTICLES; i++) {
+                const p = magicParticlePool[i];
+                if (!p.active) {
+                    p.active = true;
+                    p.x = baseX + (Math.random() - 0.5) * 4;
+                    p.y = baseY + (Math.random() - 0.5) * 2;
+                    p.vx = (Math.random() - 0.5) * 0.5;
+                    p.vy = (Math.random() * 0.8) + 0.4 - (player.vy * 0.1);
+                    const baseColor = [180, 200, 255],
+                        colorVariance = 40;
+                    p.color = [Math.max(0, Math.min(255, baseColor[0] + (Math.random() - 0.5) * colorVariance)), Math.max(0, Math.min(255, baseColor[1] + (Math.random() - 0.5) * colorVariance)), Math.max(0, Math.min(255, baseColor[2] + (Math.random() - 0.5) * colorVariance))];
+                    p.lifespan = 15 + Math.random() * 20;
+                    spawnedCount++;
+                    if (spawnedCount >= count) return;
+                }
+            }
+        }
+
+        function spawnMagicParticles(count, x, y, mainColor) {
+            let spawnedCount = 0;
+            for (let i = 0; i < MAX_MAGIC_PARTICLES; i++) {
+                const p = magicParticlePool[i];
+                if (!p.active) {
+                    p.active = true;
+                    p.x = x + (Math.random() - 0.5) * 20;
+                    p.y = y + (Math.random() - 0.5) * 10;
+                    const colorVariance = 60,
+                        r = Math.max(0, Math.min(255, mainColor[0] + (Math.random() - 0.5) * colorVariance)),
+                        g = Math.max(0, Math.min(255, mainColor[1] + (Math.random() - 0.5) * colorVariance)),
+                        b = Math.max(0, Math.min(255, mainColor[2] + (Math.random() - 0.5) * colorVariance));
+                    p.color = [r, g, b];
+                    p.vx = (Math.random() - 0.5) * 0.3;
+                    p.vy = -0.2 + (Math.random() * -0.4);
+                    p.lifespan = 60 + Math.random() * 90;
+                    spawnedCount++;
+                    if (spawnedCount >= count) return;
+                }
+            }
+        }
+
+        function updateMagicParticles() {
+            for (let i = 0; i < MAX_MAGIC_PARTICLES; i++) {
+                const p = magicParticlePool[i];
+                if (!p.active) continue;
+                p.x += p.vx;
+                p.y += p.vy;
+                if (p.gravity) p.vy += p.gravity;
+                p.lifespan--;
+                if (p.lifespan <= 0) p.active = false;
+            }
+        }
         
         function checkForLiquidSplashes(now) {
             const MIN_SPLASH_SPEED = 2.0;
@@ -3327,11 +3449,164 @@
         }
         
         // This group of functions can remain as-is
-		function getDominantMaterialInArea(x,y,width,height){const counts={};let maxCount=0,domMat=null;for(let iy=y;iy<y+height;iy++){for(let ix=x;ix<x+width;ix++){const type=getGrid(ix,iy);if(STORABLE_SOLIDS.has(type)||STORABLE_LIQUIDS.has(type)){counts[type]=(counts[type]||0)+1;if(counts[type]>maxCount){maxCount=counts[type];domMat=type;}}}}return domMat;}
-		function processAlchemyJobs(){if(alchemyJobs.length===0)return;const particlesToTeleport=5;for(let i=alchemyJobs.length-1;i>=0;i--){const job=alchemyJobs[i],target=job.target;for(let j=0;j<particlesToTeleport;j++){if(job.manifest.length===0){alchemyJobs.splice(i,1);break;}const matInfo=job.manifest.shift();const rimX=target.cx,rimY=target.cy,span=target.r*0.6,spawnX=Math.floor(rimX+(Math.random()*2-1)*span),spawnY=Math.floor(rimY-(30+Math.random()*10));const spawnType=getGrid(spawnX,spawnY);if(spawnType===MAT.EMPTY){setGrid(spawnX,spawnY,matInfo.type);activateChunkAt(spawnX,spawnY);}else{job.manifest.unshift(matInfo);}}}}
-		const ALCHEMY_REACTIONS={'filter_material':{name:"Filter Material",execute:function(station){const filterMat=getDominantMaterialInSemicircle(station.sampler);if(filterMat===null)return;const source=station.cauldrons.left,target=station.cauldrons.right,manifest=[];forEachInDownwardSemicircle(source,(x,y)=>{if(getGrid(x,y)===filterMat){manifest.push({type:filterMat});setGrid(x,y,MAT.EMPTY);activateChunkAt(x,y);}});if(manifest.length===0)return;alchemyJobs.push({manifest:manifest,target:target});}},'heat_material':{name:"Heat Material",execute:function(station){const source=station.cauldrons.left;spawnMagicParticles(50,source.cx,source.cy+source.r*0.5,[255,100,0]);forEachInDownwardSemicircle(source,(x,y)=>{let changed=true;switch(getGrid(x,y)){case MAT.SAND:setGrid(x,y,MAT.GLASS);break;case MAT.WOOD:setGrid(x,y,MAT.FIRE);break;case MAT.OIL:setGrid(x,y,MAT.OIL_BURNING);break;case MAT.COAL:setGrid(x,y,MAT.COAL_BURNING);break;case MAT.GUNPOWDER:setGrid(x,y,MAT.GUNPOWDER_IGNITED);setAuxData(etcChunkMap,x,y,8+Math.floor(Math.random()*6));break;case MAT.WATER:setGrid(x,y,MAT.GAS);break;default:changed=false;break;}if(changed)activateChunkAt(x,y);});}},'clear_cauldrons':{name:"Clear Cauldrons",execute:function(station){const areas=[station.cauldrons.left,station.cauldrons.right,station.sampler];for(const area of areas){spawnMagicParticles(30,area.cx,area.cy,[200,200,255]);forEachInDownwardSemicircle(area,(x,y)=>{const type=getGrid(x,y);if(type!==MAT.ADAMANTIUM&&type!==MAT.RUNE_WALL){setGrid(x,y,MAT.EMPTY);activateChunkAt(x,y);}});}}}};
-		function forEachInDownwardSemicircle(area,fn){const cx=area.cx,cy=area.cy,r=area.r,r2=r*r,minX=Math.floor(cx-r),maxX=Math.ceil(cx+r),minY=Math.floor(cy),maxY=Math.ceil(cy+r);for(let y=minY;y<=maxY;y++){const dy=y-cy,dy2=dy*dy;for(let x=minX;x<=maxX;x++){const dx=x-cx;if(dx*dx+dy2<=r2)fn(x,y);}}}
-		function getDominantMaterialInSemicircle(area){const counts=new Map();forEachInDownwardSemicircle(area,(x,y)=>{const t=getGrid(x,y);if(t===MAT.EMPTY||t===MAT.ADAMANTIUM||t===MAT.RUNE_WALL)return;counts.set(t,(counts.get(t)||0)+1);});let bestType=null,bestCount=0;for(const[t,c]of counts)if(c>bestCount){bestType=t;bestCount=c;}return bestType;}
+		function getDominantMaterialInArea(x, y, width, height) {
+            const counts = {};
+            let maxCount = 0,
+                domMat = null;
+            for (let iy = y; iy < y + height; iy++) {
+                for (let ix = x; ix < x + width; ix++) {
+                    const type = getGrid(ix, iy);
+                    if (STORABLE_SOLIDS.has(type) || STORABLE_LIQUIDS.has(type)) {
+                        counts[type] = (counts[type] || 0) + 1;
+                        if (counts[type] > maxCount) {
+                            maxCount = counts[type];
+                            domMat = type;
+                        }
+                    }
+                }
+            }
+            return domMat;
+        }
+
+        function processAlchemyJobs() {
+            if (alchemyJobs.length === 0) return;
+            const particlesToTeleport = 5;
+            for (let i = alchemyJobs.length - 1; i >= 0; i--) {
+                const job = alchemyJobs[i],
+                    target = job.target;
+                for (let j = 0; j < particlesToTeleport; j++) {
+                    if (job.manifest.length === 0) {
+                        alchemyJobs.splice(i, 1);
+                        break;
+                    }
+                    const matInfo = job.manifest.shift();
+                    const rimX = target.cx,
+                        rimY = target.cy,
+                        span = target.r * 0.6,
+                        spawnX = Math.floor(rimX + (Math.random() * 2 - 1) * span),
+                        spawnY = Math.floor(rimY - (30 + Math.random() * 10));
+                    const spawnType = getGrid(spawnX, spawnY);
+                    if (spawnType === MAT.EMPTY) {
+                        setGrid(spawnX, spawnY, matInfo.type);
+                        activateChunkAt(spawnX, spawnY);
+                    } else {
+                        job.manifest.unshift(matInfo);
+                    }
+                }
+            }
+        }
+        const ALCHEMY_REACTIONS = {
+            'filter_material': {
+                name: "Filter Material",
+                execute: function(station) {
+                    const filterMat = getDominantMaterialInSemicircle(station.sampler);
+                    if (filterMat === null) return;
+                    const source = station.cauldrons.left,
+                        target = station.cauldrons.right,
+                        manifest = [];
+                    forEachInDownwardSemicircle(source, (x, y) => {
+                        if (getGrid(x, y) === filterMat) {
+                            manifest.push({
+                                type: filterMat
+                            });
+                            setGrid(x, y, MAT.EMPTY);
+                            activateChunkAt(x, y);
+                        }
+                    });
+                    if (manifest.length === 0) return;
+                    alchemyJobs.push({
+                        manifest: manifest,
+                        target: target
+                    });
+                }
+            },
+            'heat_material': {
+                name: "Heat Material",
+                execute: function(station) {
+                    const source = station.cauldrons.left;
+                    spawnMagicParticles(50, source.cx, source.cy + source.r * 0.5, [255, 100, 0]);
+                    forEachInDownwardSemicircle(source, (x, y) => {
+                        let changed = true;
+                        switch (getGrid(x, y)) {
+                            case MAT.SAND:
+                                setGrid(x, y, MAT.GLASS);
+                                break;
+                            case MAT.WOOD:
+                                setGrid(x, y, MAT.FIRE);
+                                break;
+                            case MAT.OIL:
+                                setGrid(x, y, MAT.OIL_BURNING);
+                                break;
+                            case MAT.COAL:
+                                setGrid(x, y, MAT.COAL_BURNING);
+                                break;
+                            case MAT.GUNPOWDER:
+                                setGrid(x, y, MAT.GUNPOWDER_IGNITED);
+                                setAuxData(etcChunkMap, x, y, 8 + Math.floor(Math.random() * 6));
+                                break;
+                            case MAT.WATER:
+                                setGrid(x, y, MAT.GAS);
+                                break;
+                            default:
+                                changed = false;
+                                break;
+                        }
+                        if (changed) activateChunkAt(x, y);
+                    });
+                }
+            },
+            'clear_cauldrons': {
+                name: "Clear Cauldrons",
+                execute: function(station) {
+                    const areas = [station.cauldrons.left, station.cauldrons.right, station.sampler];
+                    for (const area of areas) {
+                        spawnMagicParticles(30, area.cx, area.cy, [200, 200, 255]);
+                        forEachInDownwardSemicircle(area, (x, y) => {
+                            const type = getGrid(x, y);
+                            if (type !== MAT.ADAMANTIUM && type !== MAT.RUNE_WALL) {
+                                setGrid(x, y, MAT.EMPTY);
+                                activateChunkAt(x, y);
+                            }
+                        });
+                    }
+                }
+            }
+        };
+
+        function forEachInDownwardSemicircle(area, fn) {
+            const cx = area.cx,
+                cy = area.cy,
+                r = area.r,
+                r2 = r * r,
+                minX = Math.floor(cx - r),
+                maxX = Math.ceil(cx + r),
+                minY = Math.floor(cy),
+                maxY = Math.ceil(cy + r);
+            for (let y = minY; y <= maxY; y++) {
+                const dy = y - cy,
+                    dy2 = dy * dy;
+                for (let x = minX; x <= maxX; x++) {
+                    const dx = x - cx;
+                    if (dx * dx + dy2 <= r2) fn(x, y);
+                }
+            }
+        }
+
+        function getDominantMaterialInSemicircle(area) {
+            const counts = new Map();
+            forEachInDownwardSemicircle(area, (x, y) => {
+                const t = getGrid(x, y);
+                if (t === MAT.EMPTY || t === MAT.ADAMANTIUM || t === MAT.RUNE_WALL) return;
+                counts.set(t, (counts.get(t) || 0) + 1);
+            });
+            let bestType = null,
+                bestCount = 0;
+            for (const [t, c] of counts)
+                if (c > bestCount) {
+                    bestType = t;
+                    bestCount = c;
+                } return bestType;
+        }
         
         function generateAlchemyStation() {
             const width=600,height=200,startX=0,startY=-200,floorY=startY+height-20;
@@ -3614,6 +3889,7 @@
             const trigger={id:nextTriggerId++,x:options.x,y:options.y,width:options.width,height:options.height,onEnter:options.onEnter||function(){},onLeave:options.onLeave||function(){},onInteract:options.onInteract||function(){},isActive:false,associatedData:options.associatedData, isVolatile: options.isVolatile || false, isDestroyed: false};
             triggers.push(trigger);return trigger.id;
         }
+
         function updateTriggers(){
             const playerCheckX=player.x+player.width/2, playerCheckY=player.y+player.height, leeway=2;
             let canInteract=false, activeTrig=null;
@@ -3881,12 +4157,33 @@
             return body;
         }
         
-        function renderPlayerStatsUI(){
-            const barW=75,barH=8,x=16;let y=8;ctx.imageSmoothingEnabled=false;
-            ctx.fillStyle='rgba(0,0,0,0.7)';ctx.fillRect(x,y,barW,barH);const hpP=player.hp/player.maxHp;ctx.fillStyle='#d14242';ctx.fillRect(x,y,barW*hpP,barH);
-            ctx.fillStyle='white';ctx.font='8px monospace';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(`${player.hp}/${player.maxHp}`,x+barW/2,y+barH/2);
-            y+=barH+5;ctx.fillStyle='rgba(0,0,0,0.7)';ctx.fillRect(x,y,barW,barH);const enP=player.hoverEnergy/player.maxHoverEnergy;ctx.fillStyle='#DDED64';ctx.fillRect(x,y,barW*enP,barH);
-            ctx.fillStyle='white';ctx.font='8px monospace';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(`${Math.round(player.hoverEnergy)}/${player.maxHoverEnergy}`,x+barW/2,y+barH/2);
+        function renderPlayerStatsUI() {
+            const barW = 75,
+                barH = 8,
+                x = 16;
+            let y = 8;
+            ctx.imageSmoothingEnabled = false;
+            ctx.fillStyle = 'rgba(0,0,0,0.7)';
+            ctx.fillRect(x, y, barW, barH);
+            const hpP = player.hp / player.maxHp;
+            ctx.fillStyle = '#d14242';
+            ctx.fillRect(x, y, barW * hpP, barH);
+            ctx.fillStyle = 'white';
+            ctx.font = '8px monospace';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(`${player.hp}/${player.maxHp}`, x + barW / 2, y + barH / 2);
+            y += barH + 5;
+            ctx.fillStyle = 'rgba(0,0,0,0.7)';
+            ctx.fillRect(x, y, barW, barH);
+            const enP = player.hoverEnergy / player.maxHoverEnergy;
+            ctx.fillStyle = '#DDED64';
+            ctx.fillRect(x, y, barW * enP, barH);
+            ctx.fillStyle = 'white';
+            ctx.font = '8px monospace';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(`${Math.round(player.hoverEnergy)}/${player.maxHoverEnergy}`, x + barW / 2, y + barH / 2);
         }
 
         window.onload = function() {
