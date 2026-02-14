@@ -3300,7 +3300,7 @@
                 ctx.fillText(`sim: ${tSimMs.toFixed(2)}ms`, renderWidth - 6, renderHeight - 10);
                 ctx.fillText(`render: ${tRenderMs.toFixed(2)}ms`, renderWidth - 6, renderHeight - 20);
                 ctx.fillText(`other: ${tOtherMs.toFixed(2)}ms`, renderWidth - 6, renderHeight - 30);
-                ctx.fillText(`coords: ${player.x} ${player.y}`, renderWidth - 6, renderHeight - 40);
+                ctx.fillText(`coords: ${player.x.toFixed(0)} ${player.y.toFixed(0)}`, renderWidth - 6, renderHeight - 40);
                 ctx.textAlign = "left";
             }
         }
