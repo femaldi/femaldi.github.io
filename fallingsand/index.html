@@ -280,17 +280,6 @@
             userData.definitionId = definitionId;
 
             rigidBodies.push(body);
-
-            // Create a trigger for picking up the item
-            createTrigger({
-                x: x - def.width,
-                y: y - def.height,
-                width: def.width * 2,
-                height: def.height * 2,
-                onInteract: () => pickupObject(body),
-                // A one-time trigger that self-destructs after pickup
-                isVolatile: true
-            });
         }
 
         function pickupObject(body) {
@@ -553,11 +542,7 @@
                     1,1,0,0,1,1,1,1,1,1,1,1,0,0,1,1,
                 ].map(p => p === 1 ? MAT.WOOD : MAT.EMPTY),
                 onPlace: (player, mouse) => {
-                    const def = OBJECT_DEFINITIONS['wooden_barrel'];
-                    const newBody = new RigidBody(mouse.worldX, mouse.worldY, def.width, def.height, MAT.WOOD);
-                    newBody.pixels = new Uint8Array(def.pixels);
-                    newBody.rebuildFixtures();
-                    rigidBodies.push(newBody);
+                    createObjectInWorld('wooden_barrel', mouse.worldX, mouse.worldY)
                 }
             }
         };
@@ -1535,8 +1520,11 @@
                                     t.associatedData.emitterId = null;
                                 }
                             },
-                            onInteract: function() {
+                            
+                            onInteract: function(trigger) { // The trigger object is passed as an argument
                                 isAlchemyUIVisible = true;
+                                // Store the station's geometry on the player object for later use.
+                                player.activeStationGeometry = trigger.associatedData.stationGeometry;
                             },
                             
                             // --- START OF THE FIX ---
@@ -1791,7 +1779,8 @@
             width: 8, height: 16, speed: 1, onGround: false,
             body: null,
             canInteract: false,
-            currentTrigger: null,
+            currentInteractable: null,
+            activeStationGeometry: null,
             maxHoverEnergy: 100,
             hoverEnergy: 100,
             hoverForce: 0.25,
@@ -1822,14 +1811,24 @@
             }
 
             if (isAlchemyUIVisible) {
-                if (e.code === 'Escape') isAlchemyUIVisible = false;
+                
+                if (e.code === 'Escape') {
+                    isAlchemyUIVisible = false;
+                    player.activeStationGeometry = null;  
+                } 
+
                 if (e.code.startsWith('Digit')) {
                     const index = parseInt(e.code.replace('Digit', ''), 10) - 1;
                     const reactionKeys = Object.keys(ALCHEMY_REACTIONS);
                     if (index >= 0 && index < reactionKeys.length) {
                         const reactionKey = reactionKeys[index];
-                        ALCHEMY_REACTIONS[reactionKey].execute(player.currentTrigger.associatedData.stationGeometry);
+                        
+                        if (player.activeStationGeometry) {
+                            ALCHEMY_REACTIONS[reactionKey].execute(player.activeStationGeometry);
+                        }
+
                         isAlchemyUIVisible = false;
+                        player.activeStationGeometry = null; 
                     }
                 }
                 return;
@@ -1854,8 +1853,15 @@
                 activeContainer = cycle[nextIndex];
             }
 
-            if (e.code === 'KeyE' && player.canInteract && player.currentTrigger) {
-                player.currentTrigger.onInteract(player.currentTrigger);
+            if (e.code === 'KeyE' && player.canInteract && player.currentInteractable) {
+                const interactable = player.currentInteractable;
+                
+                if (interactable.type === 'trigger') {
+                    const trigger = interactable.target;
+                    trigger.onInteract(trigger); // Call the trigger's function
+                } else if (interactable.type === 'object') {
+                    pickupObject(interactable.target); // Call the pickup function
+                }
             }
         });
 
@@ -3128,13 +3134,24 @@
             for (const p of pouredParticles) { const [r, g, b] = COLORS[p.type]; ctx.fillStyle = `rgb(${r},${g},${b})`; ctx.fillRect(Math.round(p.x - camera.x), Math.round(p.y - camera.y), 1, 1); }
             for (let i = 0; i < MAX_MAGIC_PARTICLES; i++) { const p = magicParticlePool[i]; if (p.active) { ctx.fillStyle = `rgb(${p.color[0]},${p.color[1]},${p.color[2]})`; ctx.fillRect(Math.round(p.x - camera.x), Math.round(p.y - camera.y), 1, 1); } }
 
-            // UI elements
-            if (player.canInteract && player.currentTrigger) {
-                const trigger = player.currentTrigger, hintX = Math.round(trigger.x - camera.x + trigger.width / 2), hintY = Math.round(trigger.y - camera.y - 15);
+            if (player.canInteract && player.currentInteractable) {
+                const interactable = player.currentInteractable.target;
+                let hintX, hintY;
+
+                if (player.currentInteractable.type === 'trigger') {
+                    hintX = Math.round(interactable.x - camera.x + interactable.width / 2);
+                    hintY = Math.round(interactable.y - camera.y - 15);
+                } else { // It's an 'object' (RigidBody)
+                    const pos = interactable.body.getPosition();
+                    hintX = Math.round(pos.x * B2_SCALE - camera.x);
+                    hintY = Math.round(pos.y * B2_SCALE - camera.y - 15);
+                }
+                
                 const animatedY = hintY + Math.sin(frameCount * 0.05) * 3;
                 ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.fillRect(hintX - 8, animatedY - 12, 16, 16);
                 ctx.font = 'bold 12px monospace'; ctx.fillStyle = 'white'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('E', hintX, animatedY);
             }
+
             ctx.strokeStyle = 'rgba(255,255,255,0.2)'; ctx.lineWidth = 0.5; ctx.beginPath(); ctx.moveTo(wandScreenX, wandScreenY); ctx.lineTo(mouse.x / scale, mouse.y / scale); ctx.stroke();
 
             renderDialogueUI();
@@ -3733,7 +3750,7 @@
             processAlchemyJobs();
             updateMagicParticles();
             updateMagicEmitters();
-            updateTriggers();
+            updateInteractions();
 
             const lightingQueue = [...activeChunks];
             const processedChunks = new Set(activeChunks);
@@ -3890,25 +3907,51 @@
             triggers.push(trigger);return trigger.id;
         }
 
-        function updateTriggers(){
-            const playerCheckX=player.x+player.width/2, playerCheckY=player.y+player.height, leeway=2;
-            let canInteract=false, activeTrig=null;
-            for(const trigger of triggers){
-                if (trigger.isDestroyed) continue;
-                const isInside=(playerCheckX>=trigger.x&&playerCheckX<=trigger.x+trigger.width&&playerCheckY>=trigger.y-leeway&&playerCheckY<=trigger.y+trigger.height);
-                if(isInside){canInteract=true;activeTrig=trigger;if(!trigger.isActive){trigger.isActive=true;trigger.onEnter(trigger);}}
-                else{if(trigger.isActive){trigger.isActive=false;trigger.onLeave(trigger);}}
-            }
-            player.canInteract=canInteract; player.currentTrigger=activeTrig;
+        function updateInteractions() {
+            let closestInteractable = null;
+            let minDistanceSq = PLAYER_INTERACTION_RADIUS * PLAYER_INTERACTION_RADIUS;
 
-            // After processing, check if the active trigger was volatile and used
-            if (activeTrig && activeTrig.isVolatile && keys['KeyE']) {
-                activeTrig.isDestroyed = true;
+            const playerCenterX = player.x + player.width / 2;
+            const playerCenterY = player.y + player.height / 2;
+
+            // Phase 1: Check static triggers (like the alchemy slab or NPC dialogues)
+            for (const trigger of triggers) {
+                if (trigger.isDestroyed) continue;
+                
+                const isInside = (player.x + player.width > trigger.x && player.x < trigger.x + trigger.width &&
+                                  player.y + player.height > trigger.y && player.y < trigger.y + trigger.height);
+                
+                if (isInside) {
+                    const triggerCenterX = trigger.x + trigger.width / 2;
+                    const triggerCenterY = trigger.y + trigger.height / 2;
+                    const distSq = (playerCenterX - triggerCenterX)**2 + (playerCenterY - triggerCenterY)**2;
+
+                    if (distSq < minDistanceSq) {
+                        minDistanceSq = distSq;
+                        closestInteractable = { type: 'trigger', target: trigger };
+                    }
+                }
             }
-            // Optional: Cleanup destroyed triggers from the main array periodically
-            if (frameCount % 60 === 0) {
-                 triggers = triggers.filter(t => !t.isDestroyed);
+
+            // Phase 2: Check dynamic, pickupable objects
+            for (const body of rigidBodies) {
+                if (body.isDestroyed || !body.body || !body.body.getUserData().isPickup) continue;
+
+                const bodyPos = body.body.getPosition();
+                const worldX = bodyPos.x * B2_SCALE;
+                const worldY = bodyPos.y * B2_SCALE;
+
+                const distSq = (playerCenterX - worldX)**2 + (playerCenterY - worldY)**2;
+
+                if (distSq < minDistanceSq) {
+                    minDistanceSq = distSq;
+                    closestInteractable = { type: 'object', target: body };
+                }
             }
+
+            // Final Step: Update the player's state
+            player.currentInteractable = closestInteractable;
+            player.canInteract = (closestInteractable !== null);
         }
 
         function renderAlchemyUI() {
