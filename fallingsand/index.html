@@ -460,7 +460,7 @@
                     break;
                 case 'structure':
                     if (player.structurePocket.length < player.maxStructureSlots) {
-                        player.structurePocket.push(def.name);
+                        player.structurePocket.push(body); 
                         pickedUp = true;
                     }
                     break;
@@ -845,10 +845,7 @@
                     1,1,1,1,0,0,0,0,0,0,0,0,1,1,1,1,
                     1,1,0,1,1,1,1,1,1,1,1,1,1,0,1,1,
                     1,1,0,0,1,1,1,1,1,1,1,1,0,0,1,1,
-                ].map(p => p === 1 ? MAT.WOOD : MAT.EMPTY),
-                onPlace: (player, mouse) => {
-                    createObjectInWorld('wooden_barrel', mouse.worldX, mouse.worldY)
-                }
+                ].map(p => p === 1 ? MAT.WOOD : MAT.EMPTY)
             }
         };
 
@@ -1488,6 +1485,21 @@
                 this.body.setUserData(this);
                 
                 this._createFixturesFromPixels(); 
+            }
+
+            reintroduceToWorld(x, y) {
+                // If it somehow already has a body, do nothing.
+                if (this.body) return;
+
+                this.isDestroyed = false;
+                this.body = world.createBody({
+                    type: 'dynamic',
+                    position: pl.Vec2(x / B2_SCALE, y / B2_SCALE)
+                });
+                this.body.setUserData(this);
+                
+                // Use the existing method to build fixtures from its stored pixel data.
+                this.rebuildFixtures();
             }
 
             addPixel(type) {
@@ -2714,11 +2726,13 @@
                         break;
                     case 'structure':
                          if (player.structurePocket.length > 0) {
-                             const structName = player.structurePocket.shift(); // Use and remove
-                             const structDef = Object.values(OBJECT_DEFINITIONS).find(d => d.name === structName);
-                             if (structDef && structDef.onPlace) {
-                                 structDef.onPlace(player, mouse);
-                             }
+                             const bodyToPlace = player.structurePocket.shift(); // Get the stored RigidBody
+                             
+                             // Re-create its physics body at the mouse cursor location
+                             bodyToPlace.reintroduceToWorld(mouse.worldX, mouse.worldY);
+
+                             // Add it back to the main simulation array
+                             rigidBodies.push(bodyToPlace);
                          }
                         break;
                 }
@@ -3789,10 +3803,109 @@
 		function playerAlphaAtScreen(screenX,screenY){const t=getWorldTypeAtScreen(screenX,screenY);if(!isFluid(t))return 1;const a=fluidAlpha(t)/255,minAlpha=0.20,strength=0.85,out=1-a*strength;return out<minAlpha?minAlpha:out;}
 		function drawPlayerPx(screenX,screenY,r,g,b){const a=playerAlphaAtScreen(screenX,screenY);if(a>=0.999){ctx.fillStyle=`rgb(${r|0},${g|0},${b|0})`;ctx.fillRect(screenX,screenY,1,1);return;}ctx.save();ctx.globalAlpha=a;ctx.fillStyle=`rgb(${r|0},${g|0},${b|0})`;ctx.fillRect(screenX,screenY,1,1);ctx.restore();}
 		const PLAYER_SPRITE_SCALE=1.0;
-		function computePlayerAim(){const aimDX=mouse.worldX-(player.x+player.width/2),aimDY=(player.y+9)-mouse.worldY,aimAngle=Math.atan2(aimDY,aimDX),wandDir=angleToDir16(aimAngle);playerFacingRight=aimDX>=0;return{facingRight:playerFacingRight,wandDir,aimAngle};}
+
+		function computePlayerAim(){
+            // --- START OF MODIFICATION ---
+            const aimDX = mouse.worldX - (player.x + player.width / 2),
+                  aimDY = mouse.worldY - (player.y + 9), // The vertical origin of the player's arm
+                  aimAngle = Math.atan2(aimDY, aimDX);
+            // --- END OF MODIFICATION ---
+            
+            const wandDir = angleToDir16(aimAngle);
+            playerFacingRight = aimDX >= 0;
+            return { facingRight: playerFacingRight, wandDir, aimAngle };
+        }
+
 		function getPlayerAnimFrame(){const moving=keys['KeyA']||keys['KeyD']||keys['KeyW']||Math.abs(player.vx)>0.05||Math.abs(player.vy)>0.05,rate=moving?6:14,frameIdx=((frameCount/rate)|0)&1;return{bob:frameIdx?1:0,armBob:frameIdx?1:0,frameIdx};}
 		function drawWand(ctx,baseScreenX,baseScreenY,facingRight,wandDir,bob,armBob){const handLocalX=facingRight?8:-1,handLocalY=9+bob-armBob,handX=baseScreenX+handLocalX,handY=baseScreenY+handLocalY,wandLen=3,dx=wandDir.x,dy=wandDir.y,mag=Math.max(Math.abs(dx),Math.abs(dy))||1;ctx.fillStyle='#bfa76a';for(let i=0;i<wandLen;i++)ctx.fillRect(handX+Math.round(dx*i/mag),handY+Math.round(dy*i/mag),1,1);ctx.fillStyle='#ffcc66';ctx.fillRect(handX+Math.round(dx*wandLen/mag),handY+Math.round(dy*wandLen/mag),1,1);return{wandOriginX:handX,wandOriginY:handY};}
-		function renderPlayer(aim,anim){const baseW=8,baseH=16,playerScreenX=Math.round(player.x-camera.x),playerScreenY=Math.round(player.y-camera.y);ctx.imageSmoothingEnabled=false;const anchorX=playerScreenX+(baseW/2),anchorY=playerScreenY+baseH;ctx.save();ctx.translate(anchorX,anchorY);ctx.scale(PLAYER_SPRITE_SCALE,PLAYER_SPRITE_SCALE);const localX=-baseW/2,localY=-baseH;ctx.translate(localX,localY);ctx.restore();const scaledBaseX=Math.round(anchorX+localX*PLAYER_SPRITE_SCALE),scaledBaseY=Math.round(anchorY+localY*PLAYER_SPRITE_SCALE);drawPlayerBodyScreen(scaledBaseX,scaledBaseY,aim.facingRight,anim.bob,anim.frameIdx);return drawWand(ctx,scaledBaseX,scaledBaseY,aim.facingRight,aim.wandDir,anim.bob,anim.armBob);}
+		
+        function renderPlayer(aim, anim){
+			const baseW=8,baseH=16,playerScreenX=Math.round(player.x-camera.x),playerScreenY=Math.round(player.y-camera.y);
+			ctx.imageSmoothingEnabled=false;
+			const anchorX=playerScreenX+(baseW/2),anchorY=playerScreenY+baseH;
+			ctx.save();
+			ctx.translate(anchorX,anchorY);
+			ctx.scale(PLAYER_SPRITE_SCALE,PLAYER_SPRITE_SCALE);
+			const localX=-baseW/2,localY=-baseH;
+			ctx.translate(localX,localY);
+			ctx.restore();
+			const scaledBaseX=Math.round(anchorX+localX*PLAYER_SPRITE_SCALE),scaledBaseY=Math.round(anchorY+localY*PLAYER_SPRITE_SCALE);
+			
+            drawPlayerBodyScreen(scaledBaseX,scaledBaseY,aim.facingRight,anim.bob,anim.frameIdx);
+            
+            // --- START OF REPLACEMENT LOGIC ---
+
+            // Calculate the hand's position, which is the anchor for any held item.
+            const handLocalX = aim.facingRight ? 8 : -1;
+            const handLocalY = 9 + anim.bob - anim.armBob;
+            const handX = scaledBaseX + handLocalX;
+            const handY = scaledBaseY + handLocalY;
+
+            let itemRendered = false;
+
+            // Try to render a tool if it's the active container
+            if (activeContainer === 'tool' && player.toolPocket.length > 0) {
+                const toolName = player.toolPocket[0];
+                const toolDef = Object.values(OBJECT_DEFINITIONS).find(d => d.name === toolName);
+                if (toolDef) {
+                    renderItemInHand(toolDef.pixels, toolDef.width, toolDef.height, handX, handY, aim.aimAngle, aim.facingRight);
+                    itemRendered = true;
+                }
+            }
+            // Try to render a structure if it's the active container
+            else if (activeContainer === 'structure' && player.structurePocket.length > 0) {
+                const body = player.structurePocket[0];
+                renderItemInHand(body.pixels, body.width, body.height, handX, handY, aim.aimAngle, aim.facingRight);
+                itemRendered = true;
+            }
+
+            // If nothing else was rendered, draw the default wand
+            if (!itemRendered) {
+                drawWand(ctx, scaledBaseX, scaledBaseY, aim.facingRight, aim.wandDir, anim.bob, anim.armBob);
+            }
+
+            // The hand position is the origin for the aim line
+            return { wandOriginX: handX, wandOriginY: handY };
+            // --- END OF REPLACEMENT LOGIC ---
+		}
+
+        /**
+         * A generic function to draw an array of pixels as a held item, rotated to the aim angle.
+         */
+        function renderItemInHand(pixels, width, height, handX, handY, angle, facingRight) {
+            ctx.save();
+            ctx.translate(handX, handY);
+            ctx.rotate(angle);
+
+            // --- START OF FIX ---
+            // If facing left, the rotation will make the item upside down.
+            // A vertical scale flip corrects the item's orientation.
+            if (!facingRight) {
+                ctx.scale(1, -1);
+            }
+            // --- END OF FIX ---
+
+            ctx.scale(0.5, 0.5);
+            
+            const offsetX = -width / 2;
+            const offsetY = -height / 2;
+
+            for (let y = 0; y < height; y++) {
+                for (let x = 0; x < width; x++) {
+                    const type = pixels[y * width + x];
+                    if (type !== MAT.EMPTY) {
+                        const color = COLORS[type];
+                        if (color) {
+                            ctx.fillStyle = `rgb(${color[0]}, ${color[1]}, ${color[2]})`;
+                            ctx.fillRect(offsetX + x, offsetY + y, 1, 1);
+                        }
+                    }
+                }
+            }
+            ctx.restore();
+        }
+
+        // --- END OF NEW FUNCTION ---
 		function createWoodenBox(x,y,width=16,height=16){const box=new RigidBody(x,y,width,height,MAT.WOOD);rigidBodies.push(box);}
         
         function updateRigidBodyInteractions() {
@@ -3858,43 +3971,72 @@
             }
         }
 
-        // --- In index.html, replace renderContainers() ---
-
         function renderContainers() {
             const commonY = 40;
             const pouchX = renderWidth - pouchWidth - 12;
             const flaskX = pouchX - flaskWidth - 8;
             
-            // Pouch and Flask (Unchanged)
             renderContainer(pouchGrid,pouchWidth,pouchHeight,pouchX,commonY,activeContainer==='pouch');
             renderContainer(flaskGrid,flaskWidth,flaskHeight,flaskX,commonY,activeContainer==='flask');
 
-            // --- NEW: Tool and Structure Pockets ---
             const pocketW = 48, pocketH = 24;
             const toolX = flaskX - pocketW - 8;
             const structX = toolX - pocketW - 8;
             
-            // Tool Pocket
+            // --- START OF MODIFICATION: TOOL POCKET VISUALS ---
             ctx.fillStyle='rgba(0,0,0,0.5)'; ctx.fillRect(toolX-2,commonY-2,pocketW+4,pocketH+4);
             ctx.strokeStyle=activeContainer==='tool'?'white':'#888'; ctx.lineWidth=2; ctx.strokeRect(toolX-2,commonY-2,pocketW+4,pocketH+4);
             if (player.toolPocket.length > 0) {
-                ctx.fillStyle = 'white';
-                ctx.font = '8px monospace';
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                ctx.fillText(player.toolPocket[0], toolX + pocketW/2, commonY + pocketH/2);
+                const toolName = player.toolPocket[0];
+                const toolDef = Object.values(OBJECT_DEFINITIONS).find(d => d.name === toolName);
+
+                if (toolDef) {
+                    const scale = Math.min((pocketW - 4) / toolDef.width, (pocketH - 4) / toolDef.height);
+                    const renderW = toolDef.width * scale;
+                    const renderH = toolDef.height * scale;
+                    const offsetX = toolX + (pocketW - renderW) / 2;
+                    const offsetY = commonY + (pocketH - renderH) / 2;
+
+                    for (let y = 0; y < toolDef.height; y++) {
+                        for (let x = 0; x < toolDef.width; x++) {
+                            const type = toolDef.pixels[y * toolDef.width + x];
+                            if (type !== MAT.EMPTY) {
+                                const color = COLORS[type];
+                                if(color) {
+                                    ctx.fillStyle = `rgb(${color[0]}, ${color[1]}, ${color[2]})`;
+                                    ctx.fillRect(offsetX + x * scale, offsetY + y * scale, scale, scale);
+                                }
+                            }
+                        }
+                    }
+                }
             }
+            // --- END OF MODIFICATION ---
 
             // Structure Pocket
             ctx.fillStyle='rgba(0,0,0,0.5)'; ctx.fillRect(structX-2,commonY-2,pocketW+4,pocketH+4);
             ctx.strokeStyle=activeContainer==='structure'?'white':'#888'; ctx.lineWidth=2; ctx.strokeRect(structX-2,commonY-2,pocketW+4,pocketH+4);
              if (player.structurePocket.length > 0) {
-                ctx.fillStyle = 'white';
-                ctx.font = '8px monospace';
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                ctx.fillText(player.structurePocket[0], structX + pocketW/2, commonY + pocketH/2);
-            }
+                const body = player.structurePocket[0]; 
+                const scale = Math.min((pocketW - 4) / body.width, (pocketH - 4) / body.height);
+                const renderW = body.width * scale;
+                const renderH = body.height * scale;
+                const offsetX = structX + (pocketW - renderW) / 2;
+                const offsetY = commonY + (pocketH - renderH) / 2;
+
+                for (let y = 0; y < body.height; y++) {
+                    for (let x = 0; x < body.width; x++) {
+                        const type = body.pixels[y * body.width + x];
+                        if (type !== MAT.EMPTY) {
+                            const color = COLORS[type];
+                            if(color) {
+                                ctx.fillStyle = `rgb(${color[0]}, ${color[1]}, ${color[2]})`;
+                                ctx.fillRect(offsetX + x * scale, offsetY + y * scale, scale, scale);
+                            }
+                        }
+                    }
+                }
+             }
         }
 
         function renderContainer(cGrid,cW,cH,screenX,screenY,isActive) {
@@ -3936,7 +4078,11 @@
             ctx.restore();
         }
 
-        const WAND_DIRS_16=[{x:1,y:0},{x:2,y:-1},{x:1,y:-1},{x:1,y:-2},{x:0,y:-1},{x:-1,y:-2},{x:-1,y:-1},{x:-2,y:-1},{x:-1,y:0},{x:-2,y:1},{x:-1,y:1},{x:-1,y:2},{x:0,y:1},{x:1,y:2},{x:1,y:1},{x:2,y:1}];
+        const WAND_DIRS_16 = [
+            {x:1, y:0}, {x:2, y:1}, {x:1, y:1}, {x:1, y:2}, {x:0, y:1}, {x:-1, y:2}, {x:-1, y:1}, {x:-2, y:1}, 
+            {x:-1, y:0}, {x:-2, y:-1}, {x:-1, y:-1}, {x:-1, y:-2}, {x:0, y:-1}, {x:1, y:-2}, {x:1, y:-1}, {x:2, y:-1}
+        ];
+
         function angleToDir16(a){ const step=Math.PI/8; const i=Math.round(a/step)&15; return WAND_DIRS_16[i]; }
         function hashCell(x,y,type){ let h=x*374761393+y*668265263+type*1442695041; h=(h^(h>>13))*1274126177; return(h^(h>>16))&0xff; }
         function metallicColor(x,y,baseRGB){const[br,bg,bb]=baseRGB,s1=0.5+0.5*Math.sin((x*0.35)+(y*0.18)),s2=0.5+0.5*Math.sin((x*0.08)-(y*0.12)),t=0.65*s1+0.35*s2,glint=(Math.sin(x*0.9+y*0.25)>0.985)?0.25:0.0,m=0.85+0.35*t+glint,r=Math.min(255,Math.max(0,br*m)),g=Math.min(255,Math.max(0,bg*(m*0.98))),b=Math.min(255,Math.max(0,bb*(m*1.05)));return[r|0,g|0,b|0];}
