@@ -816,7 +816,7 @@
         }
 
         // --- START OF REPLACEMENT ---
-        function setGrid(x, y, type) {
+        function setGrid(x, y, type, updateChunkComplex = false) {
             debugStats.setCalls++;
             const cx = Math.floor(x / CHUNK_SIZE);
             const cy = Math.floor(y / CHUNK_SIZE);
@@ -855,7 +855,17 @@
             }
             
             chunk.data[lIdx] = type;
-            ensureChunkIsActive(x, y);
+
+            if (updateChunkComplex)
+            {
+                ensureChunkIsActive(x, y);
+                ensureChunkIsActive(x-1, y);
+                ensureChunkIsActive(x+1, y);
+                ensureChunkIsActive(x, y-1);
+                ensureChunkIsActive(x, y+1);
+            } else {
+                ensureChunkIsActive(x, y);
+            }
         }
 
         function getAuxData(map, x, y, defaultValue = 0) {
@@ -2690,7 +2700,7 @@
             const _get = (gx, gy) => isWorldSim ? getGrid(gx, gy) : (getIdx(gx, gy) !== -1 ? grid[getIdx(gx, gy)] : MAT.ROCK_WALL);
             const _set = (gx, gy, gtype) => {
                 if (isWorldSim) {
-                    setGrid(gx, gy, gtype);
+                    setGrid(gx, gy, gtype, true);
                     movedInFrame.add(coordToKey(gx, gy));
                 } else {
                     const gidx = getIdx(gx, gy);
