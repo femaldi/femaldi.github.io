@@ -827,6 +827,7 @@
                 type: 'structure',
                 width: 16,
                 height: 16,
+                canContain: new Set([MAT.SAND, MAT.SOIL, MAT.GUNPOWDER, MAT.COAL, MAT.GLASS, MAT.COPPER, MAT.SILVER, MAT.GOLD, MAT.PLATINUM]),
                 pixels: [ /* Pixel art for a barrel with an opening */
                     0,0,1,1,0,0,0,0,1,1,1,1,1,1,0,0,
                     0,1,1,1,0,0,0,0,1,1,1,1,1,1,1,0,
@@ -867,6 +868,8 @@
             { name: "25 Gunpowder", type: 'material', cost: { [MAT.COPPER]: 5 }, data: { material: MAT.GUNPOWDER, amount: 25 } },
             { name: "25 Oil", type: 'material', cost: { [MAT.COPPER]: 10 }, data: { material: MAT.OIL, amount: 25 } },
             { name: "50 Sand", type: 'material', cost: { [MAT.COPPER]: 1 }, data: { material: MAT.SAND, amount: 50 } },
+            { name: "10 Silver", type: 'material', cost: { [MAT.COPPER]: 100 }, data: { material: MAT.SILVER, amount: 10 } },
+            { name: "10 Gold", type: 'material', cost: { [MAT.SILVER]: 100 }, data: { material: MAT.GOLD, amount: 10 } },
         ];
 
         // --- START OF NEW CODE: TRADE LOGIC FUNCTIONS ---
@@ -1158,7 +1161,30 @@
             return type === MAT.GAS || LIQUIDS.has(type);
         }
 
-        // --- START: NEW CHUNK-BASED DATA HELPERS ---
+        // --- START OF NEW FUNCTION ---
+        /**
+         * Efficiently finds the topmost dynamic rigid body at a given world coordinate.
+         */
+        function getRigidBodyAt(worldX, worldY) {
+            const pMin = pl.Vec2((worldX) / B2_SCALE, (worldY) / B2_SCALE);
+            const pMax = pl.Vec2((worldX + 1) / B2_SCALE, (worldY + 1) / B2_SCALE);
+            const aabb = new pl.AABB(pMin, pMax);
+            let hitBody = null;
+            world.queryAABB(aabb, (fixture) => {
+                const body = fixture.getBody();
+                if (body.getType() === 'dynamic') {
+                    const userData = body.getUserData();
+                    // Ensure it's a body we created with pixel data (not the player)
+                    if (userData && userData.pixels) {
+                        hitBody = userData;
+                        return false; // Stop searching, we found one
+                    }
+                }
+                return true; // Continue searching
+            });
+            return hitBody;
+        }
+        // --- END OF NEW FUNCTION ---
         
         /**
          * Calculates the local 1D index from local 2D coordinates within a chunk.
@@ -1462,6 +1488,22 @@
                 this.body.setUserData(this);
                 
                 this._createFixturesFromPixels(); 
+            }
+
+            addPixel(type) {
+                // Find an empty spot at the top-center of the body's internal grid
+                const startX = Math.floor(this.width / 2) - 1;
+                for (let y = 0; y < this.height; y++) {
+                    for (let dx = 0; dx < 3; dx++) { // Check a 3-pixel wide area
+                        const x = startX + dx;
+                        const lIdx = y * this.width + x;
+                        if (this.pixels[lIdx] === MAT.EMPTY) {
+                            this.pixels[lIdx] = type;
+                            return true; // Pixel placed successfully
+                        }
+                    }
+                }
+                return false; // Could not find a spot
             }
 
             rebuildFixtures() {
@@ -3071,7 +3113,7 @@
                         const rand = Math.random();
                         let newType = (rand < 0.3) ? MAT.FIRE : (rand < 0.7) ? MAT.GAS : MAT.EMPTY;
                         setGrid(ex, ey, newType);
-                    } else if (radius > 15 && Math.random() < 0.05) { // Large explosions can chip away at walls
+                    } else if (radius > 15 && type !== MAT.ADAMANTIUM && type !== MAT.RUNE_WALL) { // Large explosions can chip away at walls
                         setGrid(ex, ey, MAT.GAS);
                     }
                     
@@ -3240,6 +3282,27 @@
                 }
             };
              const _getAux = (gx, gy) => isWorldSim ? getAuxData(etcChunkMap, gx, gy) : 0;
+
+            if (isWorldSim) { // This logic only applies to the main world simulation
+                const destY = y + 1;
+                // Quick check: is the destination pixel marked as being part of a rigid body?
+                if (getAuxData(etcChunkMap, x, destY) === 1) {
+                    // Slower check: find the specific body and its definition
+                    const body = getRigidBodyAt(x, destY);
+                    if (body) {
+                        const def = OBJECT_DEFINITIONS[body.body.getUserData().definitionId];
+                        // Does this body's definition allow it to contain this material type?
+                        if (def && def.canContain && def.canContain.has(type)) {
+                            // Attempt to add the pixel to the body's internal grid
+                            if (body.addPixel(type)) {
+                                _set(x, y, MAT.EMPTY); // Remove the pixel from the world
+                                if (idx !== -1 && !isWorldSim) moved[idx] = 1;
+                                return; // Stop further simulation for this pixel this frame
+                            }
+                        }
+                    }
+                }
+            }
 
             if (_get(x, y + 1) === MAT.FIRE && type === MAT.COAL) { _set(x, y, MAT.COAL_BURNING); if(!isWorldSim && idx!==-1) moved[idx] = 1; return; }
             if (_getAux(x, y + 1) !== 1) {
@@ -3738,6 +3801,11 @@
             const RB_GAS_BUDGET_PER_BODY = 10, RB_GAS_CHANCE = 0.25;
             const isStructural = (t)=>(t!==MAT.EMPTY&&t!==MAT.GAS);
 
+            // --- START OF NEW CONSTANTS FOR EXPLOSION ---
+            const BASE_BARREL_EXPLOSION_RADIUS = 4.0;
+            const GUNPOWDER_RADIUS_FACTOR = 0.4; // Each pixel of gunpowder adds this much to the radius
+            // --- END OF NEW CONSTANTS ---
+
             for (const body of rigidBodies) {
                 if (body.isDestroyed) continue;
                 body.lastSplitTime=body.lastSplitTime??0; body.pendingStructuralDelta=body.pendingStructuralDelta??0;
@@ -3747,10 +3815,36 @@
                     const lIdx=y*body.width+x, type=body.pixels[lIdx]; if(type===MAT.EMPTY)continue;
                     const lPos=pl.Vec2((x-body.width/2+0.5)/B2_SCALE,(y-body.height/2+0.5)/B2_SCALE), wPos=body.body.getWorldPoint(lPos);
                     const wX=Math.floor(wPos.x*B2_SCALE), wY=Math.floor(wPos.y*B2_SCALE);
-                    if (type===MAT.WOOD){ for(let dy=-2;dy<=2;dy++){ for(let dx=-2;dx<=2;dx++){
+                    
+                    if (type === MAT.WOOD){ for(let dy=-2;dy<=2;dy++){ for(let dx=-2;dx<=2;dx++){
                         const worldMaterial = getGrid(wX+dx, wY+dy);
                         if(worldMaterial===MAT.ACID){ const oldT=body.pixels[lIdx],newT=MAT.EMPTY;if(oldT!==newT){body.pixels[lIdx]=newT;setGrid(wX+dx,wY+dy,MAT.EMPTY);pixelsChanged=true;if(isStructural(oldT)!==isStructural(newT))structuralEditsThisTick++;} continue body_pixel_loop; }
-                        if((worldMaterial===MAT.FIRE||worldMaterial===MAT.OIL_BURNING||worldMaterial===MAT.COAL_BURNING)&&Math.random()<0.25){ const oldT=body.pixels[lIdx],newT=MAT.FIRE;if(oldT!==newT){body.pixels[lIdx]=newT;pixelsChanged=true;if(isStructural(oldT)!==isStructural(newT))structuralEditsThisTick++;} continue body_pixel_loop; }
+                        
+                        if((worldMaterial===MAT.FIRE||worldMaterial===MAT.OIL_BURNING||worldMaterial===MAT.COAL_BURNING)&&Math.random()<0.25){
+                            // --- START OF MODIFICATION: BARREL EXPLOSION LOGIC ---
+                            const userData = body.body.getUserData();
+                            if (userData.definitionId === 'wooden_barrel') {
+                                let gunpowderCount = 0;
+                                for (const p of body.pixels) {
+                                    if (p === MAT.GUNPOWDER) gunpowderCount++;
+                                }
+
+                                if (gunpowderCount > 0) {
+                                    const center = body.body.getWorldCenter();
+                                    const radius = BASE_BARREL_EXPLOSION_RADIUS + (gunpowderCount * GUNPOWDER_RADIUS_FACTOR);
+                                    
+                                    triggerExplosion(center.x * B2_SCALE, center.y * B2_SCALE, radius);
+                                    body.isDestroyed = true;
+                                    
+                                    // The body is gone, so stop processing its pixels immediately.
+                                    break body_pixel_loop;
+                                }
+                            }
+                            // --- END OF MODIFICATION ---
+
+                            // If it wasn't a barrel with gunpowder, it burns normally.
+                            const oldT=body.pixels[lIdx],newT=MAT.FIRE;if(oldT!==newT){body.pixels[lIdx]=newT;pixelsChanged=true;if(isStructural(oldT)!==isStructural(newT))structuralEditsThisTick++;} continue body_pixel_loop;
+                        }
                     }}}
                 }}
 
