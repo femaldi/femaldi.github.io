@@ -314,23 +314,34 @@
             const height = 16;
             const pixels = new Uint8Array(width * height).fill(MAT.MAGIC_WALL);
 
-            // --- Engrave the pattern based on the upgrade type ---
+            let messageTitle = "Upgrade Acquired!";
+            let messageText = "Your abilities have been enhanced.";
+
+            // --- Engrave the pattern AND define the message based on the upgrade type ---
             switch (upgradeType) {
                 case 'unlock_reaction':
+                    const key = data.reactionKey;
+                    if (key === 'filter_material') {
+                        messageTitle = "Reaction Unlocked: Filter";
+                        messageText = "Separates impurities. Place a mixture in the LEFT cauldron, place the material to be filtered in the sampler and activate. The sampled material will move to the RIGHT cauldron.";
+                    } else if (key === 'heat_material') {
+                        messageTitle = "Reaction Unlocked: Heat";
+                        messageText = "Applies intense heat to materials in the LEFT cauldron, causing transmutation.";
+                    }
                     // Draw a simple rune pattern
                     const pattern = DWARVEN_RUNES.PATTERNS[Math.floor(Math.random() * DWARVEN_RUNES.PATTERNS.length)];
                     for (let py = 0; py < DWARVEN_RUNES.RUNE_HEIGHT; py++) {
                         for (let px = 0; px < DWARVEN_RUNES.RUNE_WIDTH; px++) {
                             if (pattern[py][px] === 1) {
-                                const canvasX = 4 + px; // Center it
-                                const canvasY = 3 + py;
-                                pixels[canvasY * width + canvasX] = MAT.RUNE_WALL;
+                                pixels[(3 + py) * width + (4 + px)] = MAT.RUNE_WALL;
                             }
                         }
                     }
                     break;
 
                 case 'increase_tool_slots':
+                    messageTitle = "Tool Pouch Expanded!";
+                    messageText = "You can now carry one additional tool.";
                     // Draw a simple pickaxe shape
                     const toolShape = ["01100110","00110100","00011000","00011000","00011000","00011000"];
                     for(let py=0; py<toolShape.length; py++) {
@@ -343,6 +354,8 @@
                     break;
 
                 case 'increase_structure_slots':
+                    messageTitle = "Structure Bag Expanded!";
+                    messageText = "You can now carry one additional placeable structure.";
                      // Draw a simple square outline
                      for(let i = 0; i < 8; i++) {
                          pixels[(4 * width) + 4 + i] = MAT.RUNE_WALL; // Top
@@ -357,9 +370,10 @@
             body.pixels = pixels;
             body.rebuildFixtures();
 
-            // Attach the specific upgrade logic to the object itself
             const userData = body.body.getUserData();
             userData.isPickup = true;
+            userData.messageTitle = messageTitle; // Store the message title
+            userData.messageText = messageText;   // Store the message text
             userData.onPickup = (player) => {
                 switch (upgradeType) {
                     case 'unlock_reaction':
@@ -374,6 +388,7 @@
                         player.maxStructureSlots++;
                         break;
                 }
+                displayMessage(userData.messageTitle, userData.messageText);
             };
 
             rigidBodies.push(body);
@@ -409,6 +424,24 @@
                 body.isDestroyed = true; // Mark for cleanup
                 // Add a small visual effect for feedback
                 spawnMagicParticles(25, body.body.getPosition().x * B2_SCALE, body.body.getPosition().y * B2_SCALE, [200, 180, 255]);
+
+                switch (userData.upgradeType) {
+                    case 'increase_tool_slots':
+                        displayMessage("Tool Pouch Expanded!", "You can now carry one additional tool.");
+                        break;
+                    case 'increase_structure_slots':
+                        displayMessage("Structure Bag Expanded!", "You can now carry one additional placeable structure.");
+                        break;
+                    case 'unlock_reaction':
+                        const key = userData.data.reactionKey;
+                        if (key === 'filter_material') {
+                            displayMessage("Reaction Unlocked: Filter", "Separates impurities. Place a mixture in the LEFT cauldron and activate. The least common material will move to the RIGHT cauldron.");
+                        } else if (key === 'heat_material') {
+                            displayMessage("Reaction Unlocked: Heat", "Applies intense heat to materials in the LEFT cauldron, causing transmutation.");
+                        }
+                        break;
+                }
+
                 return;
             }
 
@@ -494,6 +527,88 @@
                 }
             }
         };
+
+        const UIMessageManager = {
+            isVisible: false,
+            title: '',
+            text: '',
+            timer: 0,
+            maxTime: 0
+        };
+
+        /**
+         * Displays a message at the top of the screen.
+         * @param {string} title - The bolded title of the message.
+         * @param {string} text - The body of the message.
+         * @param {number} durationInFrames - How long the message should stay on screen. 60 = 1 second.
+         */
+        function displayMessage(title, text, durationInFrames = 720) {
+            UIMessageManager.title = title;
+            UIMessageManager.text = text;
+            UIMessageManager.timer = durationInFrames;
+            UIMessageManager.maxTime = durationInFrames;
+            UIMessageManager.isVisible = true;
+        }
+
+        function updateMessageSystem() {
+            if (UIMessageManager.timer > 0) {
+                UIMessageManager.timer--;
+            } else if (UIMessageManager.isVisible) {
+                UIMessageManager.isVisible = false;
+            }
+        }
+
+        function renderMessageUI() {
+            if (!UIMessageManager.isVisible) return;
+
+            // Fade out the message in its last second
+            const fadeDuration = 60;
+            const alpha = UIMessageManager.timer < fadeDuration 
+                ? UIMessageManager.timer / fadeDuration 
+                : 1;
+
+            const boxW = renderWidth - 80;
+            const boxH = 50;
+            const boxX = (renderWidth - boxW) / 2;
+            const boxY = 100;
+
+            // Draw background box
+            ctx.fillStyle = `rgba(20, 20, 30, ${0.8 * alpha})`;
+            ctx.fillRect(boxX, boxY, boxW, boxH);
+            ctx.strokeStyle = `rgba(160, 160, 192, ${0.9 * alpha})`;
+            ctx.strokeRect(boxX, boxY, boxW, boxH);
+
+            // Draw Title
+            ctx.fillStyle = `rgba(255, 217, 102, ${alpha})`;
+            ctx.font = 'bold 10px monospace';
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'top';
+            ctx.fillText(UIMessageManager.title, boxX + 10, boxY + 8);
+
+            // Draw Body Text (with word wrapping)
+            ctx.fillStyle = `rgba(255, 255, 255, ${alpha})`;
+            ctx.font = '8px monospace';
+            
+            const text = UIMessageManager.text;
+            const textX = boxX + 10;
+            let textY = boxY + 24;
+            const maxWidth = boxW - 20;
+            const lineHeight = 10;
+            const words = text.split(' ');
+            let currentLine = '';
+
+            for (let i = 0; i < words.length; i++) {
+                const testLine = currentLine + words[i] + ' ';
+                if (ctx.measureText(testLine).width > maxWidth && i > 0) {
+                    ctx.fillText(currentLine, textX, textY);
+                    currentLine = words[i] + ' ';
+                    textY += lineHeight;
+                } else {
+                    currentLine = testLine;
+                }
+            }
+            ctx.fillText(currentLine, textX, textY);
+        }
 
 
         const DialogueManager = {
@@ -3452,6 +3567,7 @@
             ctx.strokeStyle = 'rgba(255,255,255,0.2)'; ctx.lineWidth = 0.5; ctx.beginPath(); ctx.moveTo(wandScreenX, wandScreenY); ctx.lineTo(mouse.x / scale, mouse.y / scale); ctx.stroke();
 
             renderDialogueUI();
+            renderMessageUI();
             renderPlayerStatsUI();
             renderAlchemyUI();
             renderFloatingArrow();
@@ -4060,6 +4176,7 @@
             updateMagicParticles();
             updateMagicEmitters();
             updateInteractions();
+            updateMessageSystem();
 
             const lightingQueue = [...activeChunks];
             const processedChunks = new Set(activeChunks);
