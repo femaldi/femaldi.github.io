@@ -300,9 +300,84 @@
 
         canvas.style.imageRendering = "pixelated";
 
+        /*
+        
+        createMagicTablet(550, STATION_FLOOR_Y - 16, 'increase_tool_slots');
+        createMagicTablet(570, STATION_FLOOR_Y - 16, 'increase_structure_slots');
+        createMagicTablet(590, STATION_FLOOR_Y - 16, 'unlock_reaction', { reactionKey: 'heat_material' });
+        createMagicTablet(610, STATION_FLOOR_Y - 16, 'unlock_reaction', { reactionKey: 'filter_material' });
+        
+        */
 
+        function createMagicTablet(x, y, upgradeType, data = {}) {
+            const width = 16;
+            const height = 16;
+            const pixels = new Uint8Array(width * height).fill(MAT.MAGIC_WALL);
 
-        // --- In index.html ---
+            // --- Engrave the pattern based on the upgrade type ---
+            switch (upgradeType) {
+                case 'unlock_reaction':
+                    // Draw a simple rune pattern
+                    const pattern = DWARVEN_RUNES.PATTERNS[Math.floor(Math.random() * DWARVEN_RUNES.PATTERNS.length)];
+                    for (let py = 0; py < DWARVEN_RUNES.RUNE_HEIGHT; py++) {
+                        for (let px = 0; px < DWARVEN_RUNES.RUNE_WIDTH; px++) {
+                            if (pattern[py][px] === 1) {
+                                const canvasX = 4 + px; // Center it
+                                const canvasY = 3 + py;
+                                pixels[canvasY * width + canvasX] = MAT.RUNE_WALL;
+                            }
+                        }
+                    }
+                    break;
+
+                case 'increase_tool_slots':
+                    // Draw a simple pickaxe shape
+                    const toolShape = ["01100110","00110100","00011000","00011000","00011000","00011000"];
+                    for(let py=0; py<toolShape.length; py++) {
+                        for(let px=0; px<toolShape[py].length; px++) {
+                            if (toolShape[py][px] === '1') {
+                                 pixels[(5 + py) * width + (4 + px)] = MAT.RUNE_WALL;
+                            }
+                        }
+                    }
+                    break;
+
+                case 'increase_structure_slots':
+                     // Draw a simple square outline
+                     for(let i = 0; i < 8; i++) {
+                         pixels[(4 * width) + 4 + i] = MAT.RUNE_WALL; // Top
+                         pixels[(11 * width) + 4 + i] = MAT.RUNE_WALL; // Bottom
+                         pixels[((5+i) * width) + 4] = MAT.RUNE_WALL; // Left
+                         pixels[((5+i) * width) + 11] = MAT.RUNE_WALL; // Right
+                     }
+                    break;
+            }
+
+            const body = new RigidBody(x, y, width, height, MAT.MAGIC_WALL);
+            body.pixels = pixels;
+            body.rebuildFixtures();
+
+            // Attach the specific upgrade logic to the object itself
+            const userData = body.body.getUserData();
+            userData.isPickup = true;
+            userData.onPickup = (player) => {
+                switch (upgradeType) {
+                    case 'unlock_reaction':
+                        if (data.reactionKey && !player.unlockedReactions.includes(data.reactionKey)) {
+                            player.unlockedReactions.push(data.reactionKey);
+                        }
+                        break;
+                    case 'increase_tool_slots':
+                        player.maxToolSlots++;
+                        break;
+                    case 'increase_structure_slots':
+                        player.maxStructureSlots++;
+                        break;
+                }
+            };
+
+            rigidBodies.push(body);
+        }
 
         function createObjectInWorld(definitionId, x, y) {
             const def = OBJECT_DEFINITIONS[definitionId];
@@ -326,7 +401,20 @@
         function pickupObject(body) {
             if (body.isDestroyed) return;
 
-            const def = OBJECT_DEFINITIONS[body.body.getUserData().definitionId];
+            const userData = body.body.getUserData();
+
+            // Handle new dynamic upgrades which have an onPickup function attached directly
+            if (userData.onPickup) {
+                userData.onPickup(player);
+                body.isDestroyed = true; // Mark for cleanup
+                // Add a small visual effect for feedback
+                spawnMagicParticles(25, body.body.getPosition().x * B2_SCALE, body.body.getPosition().y * B2_SCALE, [200, 180, 255]);
+                return;
+            }
+
+            // Handle old definition-based objects
+            const def = OBJECT_DEFINITIONS[userData.definitionId];
+            
             if (!def) return;
 
             let pickedUp = false;
@@ -356,36 +444,62 @@
         
         const DIALOGUE_TREES = {
             'ylialkemisti_main': {
-                // The 'start' node is where the conversation begins.
                 'start': {
-                    text: "Greetings, traveler. What brings you to my secluded workshop?",
+                    text: "Greetings, Apprentice. You have arrived at a pivotal time. This cave system holds wondrous treasures and profound secrets, culminating in the legendary Philosopher's Stone, deep within the final layer.",
                     options: [
-                        { text: "Who are you?", nextNode: 'who_are_you' },
-                        { text: "What is this place?", nextNode: 'about_place' },
-                        { text: "Nevermind, goodbye.", execute: () => DialogueManager.closeDialogue() }
+                        { text: "What must I do?", nextNode: 'explain_quest' },
                     ]
                 },
-                'who_are_you': {
-                    text: "I am Ylialkemisti, a student of the elemental arts. I seek to understand the fundamental grammar of the world.",
+                'explain_quest': {
+                    text: "The path is fraught with challenges that only a keen mind and a mastery of alchemy can overcome. You must use your wits to transform the very elements around you.",
                     options: [
-                        { text: "Fascinating. Tell me about this place.", nextNode: 'about_place' },
-                        { text: "I see. I'll leave you to it.", execute: () => DialogueManager.closeDialogue() }
+                        { text: "I am ready to learn.", execute: (npc) => {
+                            createMagicTablet(npc.x + 10, npc.y + 12, 'unlock_reaction', { reactionKey: 'filter_material' });
+                            
+                            npc.dialogueState = 'waiting_for_filter';
+                            const stationPieceDef = SetPieceManager.setPieces.find(p => p.name === 'AlchemistStation');
+                            if(stationPieceDef) {
+                                const pieceInfo = { name: "AlchemistStation", bounds: stationPieceDef.getBounds() };
+                                const stationGeo = stationPieceDef.postGenerationHook.call(stationPieceDef, pieceInfo).stationGeometry;
+                                
+                                fillCauldronWithMixture(stationGeo.cauldrons.left, [MAT.SAND, MAT.COPPER]);
+
+                                // --- MODIFICATION: Move the arrow to the slab ---
+                                const slabX = pieceInfo.bounds.x + 130;
+                                const slabY = pieceInfo.bounds.y + pieceInfo.bounds.height - 35; // Calculated Y of the slab's top surface
+                                const slabW = 70;
+                                spawnFloatingArrow(slabX + slabW / 2, slabY - 10); // Point it *above* the slab
+                            }
+                            DialogueManager.closeDialogue();
+                            DialogueManager.startDialogue(npc, DIALOGUE_TREES.ylialkemisti_main);
+                        }}
                     ]
                 },
-                'about_place': {
-                    text: "This is a place of transmutation. The very air hums with potential. With the right materials and insight, creation is possible.",
+                'waiting_for_filter': {
+                    text: "I have dropped a tablet of knowledge for you. Pick it up to learn the 'Filter' reaction. Use it at the runic slab to separate the copper from the sand. Return to me once you have the purified copper.",
                     options: [
-                        { text: "Go back.", nextNode: 'start' }
+                        { text: "I will get to it.", execute: () => DialogueManager.closeDialogue() },
+                        { text: "I have the copper.", nextNode: 'quest_complete' }
+                    ]
+                },
+                'quest_complete': {
+                    text: "Excellent work, Apprentice. You show great promise. This is but the first step on a long journey. Continue your explorations, and may your transmutations be true. If you need any tools or materials for your journey, feel free to talk to me, I can trade any precious metals you find for them.",
+                    options: [
+                        { text: "Thank you, Master.", execute: (npc) => {
+                            npc.dialogueState = 'quest_complete'; 
+                            despawnFloatingArrow();
+                            DialogueManager.closeDialogue();
+                        }}
                     ]
                 }
             }
         };
 
-        // --- In index.html ---
 
         const DialogueManager = {
             isVisible: false,
             npcName: '',
+            npc: null,
             currentNode: null,
             dialogueTree: null,
 
@@ -393,8 +507,9 @@
                 if (!tree) return;
                 this.isVisible = true;
                 this.npcName = npc.name;
+                this.npc = npc;
                 this.dialogueTree = tree;
-                this.currentNode = tree['start'];
+                this.currentNode = tree[npc.dialogueState] || tree['start'];
             },
 
             selectOption: function(index) {
@@ -403,7 +518,7 @@
                 const option = this.currentNode.options[index];
 
                 if (option.execute) {
-                    option.execute();
+                    option.execute(this.npc);
                 } else if (option.nextNode && this.dialogueTree[option.nextNode]) {
                     this.currentNode = this.dialogueTree[option.nextNode];
                 }
@@ -412,10 +527,27 @@
             closeDialogue: function() {
                 this.isVisible = false;
                 this.npcName = '';
+                this.npc = null;
                 this.currentNode = null;
                 this.dialogueTree = null;
             }
         };
+
+        // (Place this function near other world generation helpers)
+        function fillCauldronWithMixture(cauldron, materials) {
+            const numParticles = 800;
+            for (let i = 0; i < numParticles; i++) {
+                const angle = Math.random() * Math.PI;
+                const radius = Math.random() * cauldron.r;
+                const x = Math.floor(cauldron.cx + Math.cos(angle) * radius);
+                const y = Math.floor(cauldron.cy + Math.sin(angle) * radius);
+                
+                if (getGrid(x, y) === MAT.EMPTY) {
+                    const material = materials[i % materials.length];
+                    setGrid(x, y, material);
+                }
+            }
+        }
 
         // --- In index.html ---
 
@@ -427,7 +559,8 @@
                 y: options.y,
                 width: 8, // Using player dimensions for now
                 height: 16,
-                dialogueTreeId: options.dialogueTreeId
+                dialogueTreeId: options.dialogueTreeId,
+                dialogueState: 'start'
             };
             npcs.push(npc);
 
@@ -1552,6 +1685,18 @@
                             height: 15
                         };
 
+                        // --- START OF MODIFICATION ---
+                        const hookData = {
+                            stationGeometry: {
+                                cauldrons: {
+                                    left:  { cx: piece.bounds.x + this.stationGeometry.cauldrons.left.cx,  cy: piece.bounds.y + this.stationGeometry.cauldrons.left.cy,  r: this.stationGeometry.cauldrons.left.r },
+                                    right: { cx: piece.bounds.x + this.stationGeometry.cauldrons.right.cx, cy: piece.bounds.y + this.stationGeometry.cauldrons.right.cy, r: this.stationGeometry.cauldrons.right.r }
+                                },
+                                sampler: { cx: piece.bounds.x + this.stationGeometry.sampler.cx, cy: piece.bounds.y + this.stationGeometry.sampler.cy, r: this.stationGeometry.sampler.r }
+                            }
+                        };
+                        
+                        // Pass this calculated, world-space data to the trigger
                         createTrigger({
                             x: slabBounds.x,
                             y: slabBounds.y,
@@ -1568,26 +1713,15 @@
                                 }
                             },
                             
-                            onInteract: function(trigger) { // The trigger object is passed as an argument
+                            onInteract: function(trigger) { 
                                 isAlchemyUIVisible = true;
-                                // Store the station's geometry on the player object for later use.
                                 player.activeStationGeometry = trigger.associatedData.stationGeometry;
                             },
                             
-                            // --- START OF THE FIX ---
-                            // The 'piece' argument is the lean object with the dynamic 'bounds'.
-                            // 'this' refers to the full set piece definition, which has 'stationGeometry'.
-                            associatedData: {
-                                stationGeometry: {
-                                     cauldrons: {
-                                        left:  { cx: piece.bounds.x + this.stationGeometry.cauldrons.left.cx,  cy: piece.bounds.y + this.stationGeometry.cauldrons.left.cy,  r: this.stationGeometry.cauldrons.left.r },
-                                        right: { cx: piece.bounds.x + this.stationGeometry.cauldrons.right.cx, cy: piece.bounds.y + this.stationGeometry.cauldrons.right.cy, r: this.stationGeometry.cauldrons.right.r }
-                                    },
-                                    sampler: { cx: piece.bounds.x + this.stationGeometry.sampler.cx, cy: piece.bounds.y + this.stationGeometry.sampler.cy, r: this.stationGeometry.sampler.r }
-                                }
-                            }
-                            // --- END OF THE FIX ---
+                            associatedData: hookData // Use the calculated data here
                         });
+
+                        return hookData; // Return the data so other systems can use it
                     }
                 }
             ],
@@ -1840,10 +1974,16 @@
             hp: 100,
             toolPocket: [],
             structurePocket: [],
+            unlockedReactions: ['clear_cauldrons'],
             maxToolSlots: 1,
             maxStructureSlots: 1
         };
         const camera = { x: player.x - viewWidth / 2, y: player.y - viewHeight / 2 };
+        const floatingArrow = {
+            x: 0,
+            y: 0,
+            isVisible: false
+        };
 		const mouse = { x: 0, y: 0, worldX: 0, worldY: 0 };
         
         // --- INPUT HANDLING ---
@@ -1869,7 +2009,7 @@
 
                 if (e.code.startsWith('Digit')) {
                     const index = parseInt(e.code.replace('Digit', ''), 10) - 1;
-                    const reactionKeys = Object.keys(ALCHEMY_REACTIONS);
+                    const reactionKeys = player.unlockedReactions;
                     if (index >= 0 && index < reactionKeys.length) {
                         const reactionKey = reactionKeys[index];
                         
@@ -1917,6 +2057,36 @@
 
         window.addEventListener('keyup', (e) => keys[e.code] = false);
 
+        // --- START OF NEW CODE: ARROW FUNCTIONS ---
+        function spawnFloatingArrow(worldX, worldY) {
+            floatingArrow.x = worldX;
+            floatingArrow.y = worldY;
+            floatingArrow.isVisible = true;
+        }
+
+        function despawnFloatingArrow() {
+            floatingArrow.isVisible = false;
+        }
+
+        function renderFloatingArrow() {
+            if (!floatingArrow.isVisible) return;
+
+            const screenX = Math.round(floatingArrow.x - camera.x);
+            const screenY = Math.round(floatingArrow.y - camera.y);
+
+            // Animate the vertical "bobbing" motion
+            const animatedY = screenY + Math.sin(frameCount * 0.04) * 4;
+
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+            ctx.beginPath();
+            ctx.moveTo(screenX - 5, animatedY);
+            ctx.lineTo(screenX + 5, animatedY);
+            ctx.lineTo(screenX, animatedY + 8);
+            ctx.closePath();
+            ctx.fill();
+        }
+        // --- END OF NEW CODE ---
+
         const PLAYER_SPAWN_ANIM_SPEED = 8; // Ticks per row. Higher is slower.
 
         function updateSpawnAnimation() {
@@ -1934,6 +2104,11 @@
                 createPlayerBody(); // Create the physics body now
                 // Optional: create a small particle burst on completion
                 spawnMagicParticles(30, player.x + player.width / 2, player.y + player.height / 2, [200, 180, 255]);
+
+                const alchemist = npcs.find(npc => npc.name === 'Ylialkemisti');
+                if (alchemist) {
+                    spawnFloatingArrow(alchemist.x + alchemist.width / 2, alchemist.y - 10);
+                }
             }
         }
 
@@ -3278,6 +3453,7 @@
             renderDialogueUI();
             renderPlayerStatsUI();
             renderAlchemyUI();
+            renderFloatingArrow();
             if (debugMode) drawActiveChunkOutlines();
         }
         
@@ -3640,7 +3816,10 @@
                 name: "Filter Material",
                 execute: function(station) {
                     const filterMat = getDominantMaterialInSemicircle(station.sampler);
-                    if (filterMat === null) return;
+                    if (filterMat === null) {
+                        console.log("filterMat empty");
+                        return;
+                    }
                     const source = station.cauldrons.left,
                         target = station.cauldrons.right,
                         manifest = [];
@@ -4101,8 +4280,21 @@
             const boxW=300,boxH=150,boxX=(renderWidth-boxW)/2,boxY=(renderHeight-boxH)/2;
             ctx.fillStyle='#222';ctx.fillRect(boxX,boxY,boxW,boxH);ctx.strokeStyle='#888';ctx.strokeRect(boxX,boxY,boxW,boxH);
             ctx.fillStyle='white';ctx.font='16px monospace';ctx.textAlign='left';ctx.textBaseline='top';ctx.fillText("Select a Reaction:",boxX+10,boxY+10);
-            let yOff=40,idx=1;
-            for(const key in ALCHEMY_REACTIONS){const r=ALCHEMY_REACTIONS[key];ctx.fillText(`[${idx}] ${r.name}`,boxX+20,boxY+yOff);yOff+=20;idx++;}
+            let yOff=40;
+
+            if (player.unlockedReactions.length === 0) {
+                ctx.fillStyle='#aaa';
+                ctx.fillText("No reactions unlocked.", boxX+20, boxY+yOff);
+            } else {
+                player.unlockedReactions.forEach((reactionKey, idx) => {
+                    const r = ALCHEMY_REACTIONS[reactionKey];
+                    if (r) {
+                        ctx.fillText(`[${idx + 1}] ${r.name}`, boxX+20, boxY+yOff);
+                        yOff += 20;
+                    }
+                });
+            }
+
             ctx.fillStyle='#aaa';ctx.fillText("Press [ESC] to close.",boxX+10,boxY+boxH-25);
         }
 
@@ -4243,8 +4435,8 @@
                 dialogueTreeId: 'ylialkemisti_main'
             });
 
-            createObjectInWorld('stone_pick', 480, STATION_FLOOR_Y - 16);
-            createObjectInWorld('wooden_barrel', 520, STATION_FLOOR_Y - 16);
+            //createObjectInWorld('stone_pick', 480, STATION_FLOOR_Y - 16);
+            //createObjectInWorld('wooden_barrel', 520, STATION_FLOOR_Y - 16);
 
             updateLoadingStatus('Finalizing...');
             await yieldToBrowser();
