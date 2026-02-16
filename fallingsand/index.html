@@ -1507,7 +1507,7 @@
                     postGenerationHook: function(piece) {
                         const slabBounds = {
                             x: piece.bounds.x + 130,
-                            y: piece.bounds.y + (piece.bounds.height - 20) - 15,
+                            y: piece.bounds.y + (piece.bounds.height - 20) - 8,
                             width: 70,
                             height: 15
                         };
@@ -3471,6 +3471,7 @@
                     p.y = baseY + (Math.random() - 0.5) * 2;
                     p.vx = (Math.random() - 0.5) * 0.5;
                     p.vy = (Math.random() * 0.8) + 0.4 - (player.vy * 0.1);
+                    p.gravity = 0;
                     const baseColor = [180, 200, 255],
                         colorVariance = 40;
                     p.color = [Math.max(0, Math.min(255, baseColor[0] + (Math.random() - 0.5) * colorVariance)), Math.max(0, Math.min(255, baseColor[1] + (Math.random() - 0.5) * colorVariance)), Math.max(0, Math.min(255, baseColor[2] + (Math.random() - 0.5) * colorVariance))];
@@ -3489,6 +3490,7 @@
                     p.active = true;
                     p.x = x + (Math.random() - 0.5) * 20;
                     p.y = y + (Math.random() - 0.5) * 10;
+                    p.gravity = 0;
                     const colorVariance = 60,
                         r = Math.max(0, Math.min(255, mainColor[0] + (Math.random() - 0.5) * colorVariance)),
                         g = Math.max(0, Math.min(255, mainColor[1] + (Math.random() - 0.5) * colorVariance)),
@@ -3990,6 +3992,23 @@
         }
 
         function updateInteractions() {
+            for (const trigger of triggers) {
+                if (trigger.isDestroyed) continue;
+
+                const isInside = (player.x + player.width > trigger.x && player.x < trigger.x + trigger.width &&
+                                  player.y + player.height > trigger.y && player.y < trigger.y + trigger.height);
+
+                if (isInside && !trigger.isActive) {
+                    // Player has just entered
+                    trigger.isActive = true;
+                    if (trigger.onEnter) trigger.onEnter(trigger);
+                } else if (!isInside && trigger.isActive) {
+                    // Player has just left
+                    trigger.isActive = false;
+                    if (trigger.onLeave) trigger.onLeave(trigger);
+                }
+            }
+
             let closestInteractable = null;
             let minDistanceSq = PLAYER_INTERACTION_RADIUS * PLAYER_INTERACTION_RADIUS;
 
