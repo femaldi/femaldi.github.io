@@ -152,6 +152,7 @@
         const ctx = canvas.getContext('2d');
         const pl = planck;
         let debugMode = false;
+        const STATION_FLOOR_Y = 0;
 
         const generationWorker = new Worker('generation.worker.js'); // ADD THIS LINE
         let WORLD_SEED = 0; // Will be set in mainLoader
@@ -1490,7 +1491,7 @@
                     getBounds: () => {
                         const stationHeight = 200;
                         const stationWidth = SECTOR_SIZE * 2;
-                        const stationTopY = player.y - (stationHeight - 20);
+                        const stationTopY = STATION_FLOOR_Y - 188;
                         const stationTopX = 0;
                         return { x: stationTopX, y: stationTopY, width: stationWidth, height: stationHeight };
                     },
@@ -1781,9 +1782,12 @@
 
         // --- PLAYER AND CAMERA ---
         const player = {
-            x: 100, y: -100, vx: 0, vy: 0,
+            x: 391, y: STATION_FLOOR_Y - 12, vx: 0, vy: 0,
             width: 8, height: 16, speed: 1, onGround: false,
             body: null,
+            isSpawning: true, // ADD: Start in spawning state
+            spawnAnimationTimer: 0, // ADD: Timer for animation speed
+            spawnAnimationProgress: 0, // ADD: Tracks how many rows of the sprite have appeared
             canInteract: false,
             currentInteractable: null,
             activeStationGeometry: null,
@@ -1872,6 +1876,67 @@
         });
 
         window.addEventListener('keyup', (e) => keys[e.code] = false);
+
+        const PLAYER_SPAWN_ANIM_SPEED = 8; // Ticks per row. Higher is slower.
+
+        function updateSpawnAnimation() {
+            if (!player.isSpawning) return;
+
+            player.spawnAnimationTimer++;
+            if (player.spawnAnimationTimer >= PLAYER_SPAWN_ANIM_SPEED) {
+                player.spawnAnimationTimer = 0;
+                player.spawnAnimationProgress++;
+            }
+
+            // Check if the animation is finished (sprite is 16px high)
+            if (player.spawnAnimationProgress > 16) {
+                player.isSpawning = false;
+                createPlayerBody(); // Create the physics body now
+                // Optional: create a small particle burst on completion
+                spawnMagicParticles(30, player.x + player.width / 2, player.y + player.height / 2, [200, 180, 255]);
+            }
+        }
+
+        function renderSpawnAnimation() {
+            if (!player.isSpawning) return;
+
+            const baseScreenX = Math.round(player.x - camera.x);
+            const baseScreenY = Math.round(player.y - camera.y);
+            const cloak = [0x4a, 0x2d, 0x5e];
+            const face = [0x21, 0x1e, 0x20];
+            const sprite = PLAYER_SPRITE[0]; // Use a static sprite frame for spawning
+
+            const materializedRows = player.spawnAnimationProgress;
+
+            // Iterate from the bottom of the sprite upwards
+            for (let y = 15; y >= 0; y--) {
+                const rowProgress = 16 - y;
+                if (rowProgress > materializedRows) continue; // Don't draw rows that haven't appeared yet
+
+                const row = sprite[y];
+                for (let x = 0; x < 8; x++) {
+                    const ch = row[x];
+                    if (ch === '.') continue;
+
+                    const sx = baseScreenX + x - 4;
+                    const sy = baseScreenY + y - 8;
+                    let r, g, b;
+
+                    // If this is the active row being drawn, make it glow
+                    if (rowProgress === materializedRows) {
+                        const flicker = Math.random() * 55;
+                        r = 200 + flicker;
+                        g = 180 + flicker;
+                        b = 255;
+                    } else { // Otherwise, draw the final sprite color
+                        [r, g, b] = (ch === 'F') ? face : cloak;
+                    }
+                    
+                    ctx.fillStyle = `rgb(${r|0},${g|0},${b|0})`;
+                    ctx.fillRect(sx, sy, 1, 1);
+                }
+            }
+        }
 
         /**
          * getPlayerSubmersionRatio - unchanged.
@@ -2048,7 +2113,7 @@
             player.body = world.createBody({type:'dynamic', position:pl.Vec2(player.x/B2_SCALE,player.y/B2_SCALE), fixedRotation:true, linearDamping:PLAYER_DEFAULT_DAMPING});
             player.body.setUserData(player);
             const halfWidth=(player.width/2-1)/B2_SCALE, halfHeight=(player.height/2-2)/B2_SCALE;
-            player.body.createFixture(pl.Box(halfWidth,halfHeight,pl.Vec2(0,-2/B2_SCALE),0),{density:1.0,friction:0.3});
+            player.body.createFixture(pl.Box(halfWidth,halfHeight,pl.Vec2(0,-2/B2_SCALE),0),{density:1.0,friction:0.05});
             const footRadius=(player.width/2-1)/B2_SCALE;
             player.body.createFixture(pl.Circle(pl.Vec2(0,(player.height/2-2)/B2_SCALE),footRadius),{friction:0.05});
         }
@@ -2222,6 +2287,7 @@
         }
         
         function updatePlayer() {
+            if (player.isSpawning) return;
             if (DialogueManager.isVisible) {
                 player.body.setLinearVelocity(pl.Vec2(0, 0));
                 return;
@@ -2267,6 +2333,7 @@
         }
         
         function syncPlayerWithBody() {
+            if (!player.body) return;
             const pos = player.body.getPosition();
             player.x = (pos.x * B2_SCALE) - (player.width / 2);
             player.y = (pos.y * B2_SCALE) - (player.height / 2);
@@ -3129,13 +3196,21 @@
 
             
             // Player and Particles
-            const aim = computePlayerAim();
-            const anim = getPlayerAnimFrame();
-            const playerDraw = renderPlayer(aim, anim);
-            wandScreenX = playerDraw.wandOriginX;
-            wandScreenY = playerDraw.wandOriginY;
-            
-            renderNpcs(anim);
+            if (player.isSpawning) {
+                renderSpawnAnimation();
+                // Set wand position to a default during spawn
+                wandScreenX = Math.round(player.x - camera.x + 4);
+                wandScreenY = Math.round(player.y - camera.y + 9);
+                renderNpcs({bob:0, frameIdx:0});
+            } else {
+                const aim = computePlayerAim();
+                const anim = getPlayerAnimFrame();
+                const playerDraw = renderPlayer(aim, anim);
+                wandScreenX = playerDraw.wandOriginX;
+                wandScreenY = playerDraw.wandOriginY;
+                renderNpcs(anim);
+            }
+
 
             for (const p of pouredParticles) { const [r, g, b] = COLORS[p.type]; ctx.fillStyle = `rgb(${r},${g},${b})`; ctx.fillRect(Math.round(p.x - camera.x), Math.round(p.y - camera.y), 1, 1); }
             for (let i = 0; i < MAX_MAGIC_PARTICLES; i++) { const p = magicParticlePool[i]; if (p.active) { ctx.fillStyle = `rgb(${p.color[0]},${p.color[1]},${p.color[2]})`; ctx.fillRect(Math.round(p.x - camera.x), Math.round(p.y - camera.y), 1, 1); } }
@@ -3717,6 +3792,7 @@
             
             // --- UPDATE LOGIC ---
             if (toolUseCooldown > 0) toolUseCooldown--;
+            updateSpawnAnimation();
             updatePlayer();
             updateRigidBodyInteractions();
             // --- THIS IS THE FIX ---
@@ -4104,17 +4180,17 @@
             createNpc({
                 name: 'Ylialkemisti',
                 x: 450, // Positioned to the right of the cauldrons
-                y: -108,
+                y: STATION_FLOOR_Y - 16,
                 dialogueTreeId: 'ylialkemisti_main'
             });
 
-            createObjectInWorld('stone_pick', 480, -108);
-            createObjectInWorld('wooden_barrel', 520, -108);
+            createObjectInWorld('stone_pick', 480, STATION_FLOOR_Y - 16);
+            createObjectInWorld('wooden_barrel', 520, STATION_FLOOR_Y - 16);
 
             updateLoadingStatus('Finalizing...');
             await yieldToBrowser();
             activateInitialChunks();
-            createPlayerBody();
+            //createPlayerBody();
             //createWoodenBox(150, -150, 24, 64);
 
             updateLoadingStatus('Done!');
