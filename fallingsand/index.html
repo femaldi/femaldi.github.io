@@ -858,11 +858,7 @@
 
             if (updateChunkComplex)
             {
-                ensureChunkIsActive(x, y);
-                ensureChunkIsActive(x-1, y);
-                ensureChunkIsActive(x+1, y);
-                ensureChunkIsActive(x, y-1);
-                ensureChunkIsActive(x, y+1);
+                activateChunkAt(x, y);
             } else {
                 ensureChunkIsActive(x, y);
             }
