@@ -202,6 +202,46 @@
             }
         });
 
+        world.on('pre-solve', function(contact) {
+            const fixtureA = contact.getFixtureA();
+            const fixtureB = contact.getFixtureB();
+            const bodyA = fixtureA.getBody();
+            const bodyB = fixtureB.getBody();
+            const userDataA = bodyA.getUserData();
+            const userDataB = bodyB.getUserData();
+
+            // Check if one of the bodies is the player and the other is static terrain.
+            const isPlayerA = (userDataA === player);
+            const isPlayerB = (userDataB === player);
+            const isStaticA = (bodyA.getType() === 'static');
+            const isStaticB = (bodyB.getType() === 'static');
+
+            if ((isPlayerA && isStaticB) || (isPlayerB && isStaticA)) {
+                const manifold = contact.getWorldManifold();
+                if (!manifold || !manifold.normal) return;
+
+                // The 'normal' vector points from body A to body B. We need to ensure
+                // it always points FROM the static world TO the player.
+                let worldNormal = manifold.normal;
+                if (isPlayerA) {
+                    // If A is the player, the normal points away from the player. Flip it.
+                    worldNormal = { x: -worldNormal.x, y: -worldNormal.y };
+                }
+
+                // A "walkable" surface has a normal that points mostly upwards (Y is negative).
+                // We use a threshold of -0.5 to include gentle slopes as walkable.
+                const isWalkableSurface = worldNormal.y < -0.5;
+
+                if (isWalkableSurface) {
+                    // If it's a floor or walkable slope, apply the default friction.
+                    contact.resetFriction();
+                } else {
+                    // If it's a wall, ceiling, or steep slope, set friction to zero to prevent sticking.
+                    contact.setFriction(0.0);
+                }
+            }
+        });
+
         const B2_SCALE = 30; // 30 pixels = 1 meter in the physics world
         let rigidBodies = [];
         let staticWorldBodies = []; // To hold temporary terrain colliders
