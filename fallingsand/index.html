@@ -516,13 +516,27 @@
                     ]
                 },
                 'quest_complete': {
-                    text: "Excellent work, Apprentice. You show great promise. This is but the first step on a long journey. Continue your explorations, and may your transmutations be true. If you need any tools or materials, feel free to talk to me, I can trade any precious metals you find for them.",
+                    text: "Excellent work, Apprentice. You show great promise. This is but the first step on a long journey. Continue your explorations, and may your transmutations be true. If you need any tools or materials, we can trade.",
                     options: [
+                        { text: "Trade with me.", nextNode: 'trading_post'},
                         { text: "Thank you, Master.", execute: (npc) => {
                             npc.dialogueState = 'quest_complete'; 
                             despawnFloatingArrow();
                             DialogueManager.closeDialogue();
                         }}
+                    ]
+                },
+                // --- START OF NEW CODE ---
+                'trading_post': {
+                    text: "Of course. Place your metals in the left cauldron as payment. What can I offer you?",
+                    options: [
+                        { text: "Show me your wares.", execute: (npc) => {
+                             npc.dialogueState = 'quest_complete'; 
+                             player.activeStationGeometry = npc.associatedData.stationGeometry;
+                             TradeManager.isVisible = true;
+                             DialogueManager.closeDialogue();
+                        }},
+                        { text: "Nevermind.", nextNode: 'quest_complete' }
                     ]
                 }
             }
@@ -675,7 +689,8 @@
                 width: 8, // Using player dimensions for now
                 height: 16,
                 dialogueTreeId: options.dialogueTreeId,
-                dialogueState: 'start'
+                dialogueState: 'start',
+                associatedData: {}
             };
             npcs.push(npc);
 
@@ -835,6 +850,95 @@
                 }
             }
         };
+
+        const TradeManager = {
+            isVisible: false,
+            currentPage: 0,
+            itemsPerPage: 5,
+        };
+
+        const TRADE_INVENTORY = [
+            { name: "Heat Reaction Tablet", type: 'tablet', cost: { [MAT.COPPER]: 50 }, data: { upgradeType: 'unlock_reaction', reactionData: { reactionKey: 'heat_material' } } },
+            { name: "Clear Cauldron Tablet", type: 'tablet', cost: { [MAT.SILVER]: 25 }, data: { upgradeType: 'unlock_reaction', reactionData: { reactionKey: 'clear_cauldrons' } } },
+            { name: "Tool Pouch Expansion", type: 'tablet', cost: { [MAT.GOLD]: 10 }, data: { upgradeType: 'increase_tool_slots' } },
+            { name: "Structure Bag Expansion", type: 'tablet', cost: { [MAT.GOLD]: 10 }, data: { upgradeType: 'increase_structure_slots' } },
+            { name: "Wooden Barrel", type: 'structure', cost: { [MAT.COPPER]: 20 }, data: { definitionId: 'wooden_barrel' } },
+            { name: "Stone Pick", type: 'tool', cost: { [MAT.COPPER]: 5 }, data: { definitionId: 'stone_pick' } },
+            { name: "25 Gunpowder", type: 'material', cost: { [MAT.COPPER]: 5 }, data: { material: MAT.GUNPOWDER, amount: 25 } },
+            { name: "25 Oil", type: 'material', cost: { [MAT.COPPER]: 10 }, data: { material: MAT.OIL, amount: 25 } },
+            { name: "50 Sand", type: 'material', cost: { [MAT.COPPER]: 1 }, data: { material: MAT.SAND, amount: 50 } },
+        ];
+
+        // --- START OF NEW CODE: TRADE LOGIC FUNCTIONS ---
+        function countMetalsInCauldron(cauldron) {
+            const counts = { [MAT.COPPER]: 0, [MAT.SILVER]: 0, [MAT.GOLD]: 0 };
+            forEachInDownwardSemicircle(cauldron, (x, y) => {
+                const type = getGrid(x, y);
+                if (counts[type] !== undefined) {
+                    counts[type]++;
+                }
+            });
+            return counts;
+        }
+
+        function subtractMetalsFromCauldron(cauldron, cost) {
+            const costCopy = { ...cost };
+            // Iterate backwards to remove from the top of the pile first
+            const r = cauldron.r, cx = cauldron.cx, cy = cauldron.cy;
+            const minX = Math.floor(cx - r), maxX = Math.ceil(cx + r);
+            const minY = Math.floor(cy), maxY = Math.ceil(cy + r);
+
+            for (let y = maxY; y >= minY; y--) {
+                for (let x = minX; x <= maxX; x++) {
+                    const dx = x - cx, dy = y - cy;
+                    if (dx * dx + dy * dy > r * r) continue;
+                    
+                    const type = getGrid(x, y);
+                    if (costCopy[type] && costCopy[type] > 0) {
+                        setGrid(x, y, MAT.EMPTY);
+                        costCopy[type]--;
+                    }
+                }
+            }
+        }
+
+        function purchaseItem(item) {
+            const station = player.activeStationGeometry;
+            if (!station) return;
+
+            const playerMetals = countMetalsInCauldron(station.cauldrons.left);
+
+            // Check if player can afford it
+            for (const mat in item.cost) {
+                if ((playerMetals[mat] || 0) < item.cost[mat]) {
+                    displayMessage("Transaction Failed", "You do not have enough metal in the left cauldron.", 240);
+                    return;
+                }
+            }
+
+            // If affordable, subtract cost and spawn item
+            subtractMetalsFromCauldron(station.cauldrons.left, item.cost);
+            const target = station.cauldrons.right;
+            const spawnX = target.cx;
+            const spawnY = target.cy - 10; // Spawn slightly above the bottom
+
+            switch (item.type) {
+                case 'tablet':
+                    createMagicTablet(spawnX, spawnY, item.data.upgradeType, item.data.reactionData);
+                    break;
+                case 'structure':
+                    createObjectInWorld(item.data.definitionId, spawnX, spawnY);
+                    break;
+                case 'tool':
+                    createObjectInWorld(item.data.definitionId, spawnX, spawnY);
+                    break;
+                case 'material':
+                    fillCauldronWithMixture(target, Array(item.data.amount).fill(item.data.material));
+                    break;
+            }
+            displayMessage("Transaction Complete!", `You have purchased ${item.name}.`, 240);
+        }
+        // --- END OF NEW CODE ---
 
         // --- RUNE DEFINITIONS ---
         // A library of rune patterns. 1 represents the rune material, 0 is empty.
@@ -2105,6 +2209,12 @@
         // --- INPUT HANDLING ---
         const keys = {};
         window.addEventListener('keydown', (e) => {
+            if (UIMessageManager.isVisible) {
+                UIMessageManager.isVisible = false;
+                UIMessageManager.timer = 0;
+                return; // Consume the key press and do nothing else.
+            }
+
             if (DialogueManager.isVisible) {
                 if (e.code.startsWith('Digit')) {
                     const index = parseInt(e.code.replace('Digit', ''), 10) - 1;
@@ -2135,6 +2245,29 @@
 
                         isAlchemyUIVisible = false;
                         player.activeStationGeometry = null; 
+                    }
+                }
+                return;
+            }
+
+            if (TradeManager.isVisible) {
+                if (e.code === 'Escape') {
+                    TradeManager.isVisible = false;
+                    TradeManager.currentPage = 0;
+                    return;
+                }
+                if (e.code === 'Digit0') {
+                    const totalPages = Math.ceil(TRADE_INVENTORY.length / TradeManager.itemsPerPage);
+                    TradeManager.currentPage = (TradeManager.currentPage + 1) % totalPages;
+                    return;
+                }
+                if (e.code.startsWith('Digit')) {
+                    const index = parseInt(e.code.replace('Digit', ''), 10) - 1;
+                    if (index >= 0 && index < TradeManager.itemsPerPage) {
+                        const itemIndex = (TradeManager.currentPage * TradeManager.itemsPerPage) + index;
+                        if (itemIndex < TRADE_INVENTORY.length) {
+                            purchaseItem(TRADE_INVENTORY[itemIndex]);
+                        }
                     }
                 }
                 return;
@@ -2627,6 +2760,11 @@
             if (isAlchemyUIVisible) {
                 player.body.setLinearVelocity(pl.Vec2(0, 0));
                 return;
+            }
+
+            if (TradeManager.isVisible) { 
+                player.body.setLinearVelocity(pl.Vec2(0, 0)); 
+                return; 
             }
 
             const submersionRatio = getPlayerSubmersionRatio();
@@ -3567,10 +3705,11 @@
             ctx.strokeStyle = 'rgba(255,255,255,0.2)'; ctx.lineWidth = 0.5; ctx.beginPath(); ctx.moveTo(wandScreenX, wandScreenY); ctx.lineTo(mouse.x / scale, mouse.y / scale); ctx.stroke();
 
             renderDialogueUI();
-            renderMessageUI();
             renderPlayerStatsUI();
             renderAlchemyUI();
+            renderTradeUI();
             renderFloatingArrow();
+            renderMessageUI();
 
             if (debugMode)
             {
@@ -4437,6 +4576,64 @@
             player.canInteract = (closestInteractable !== null);
         }
 
+        function renderTradeUI() {
+            if (!TradeManager.isVisible) return;
+
+            // --- START: NEW LOGIC TO COUNT METALS ---
+            const station = player.activeStationGeometry;
+            let availableMetals = { [MAT.COPPER]: 0, [MAT.SILVER]: 0, [MAT.GOLD]: 0 };
+            if (station) {
+                availableMetals = countMetalsInCauldron(station.cauldrons.left);
+            }
+            // --- END: NEW LOGIC TO COUNT METALS ---
+
+            ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(0, 0, renderWidth, renderHeight);
+            const boxW = 340, boxH = 180, boxX = (renderWidth - boxW) / 2, boxY = (renderHeight - boxH) / 2;
+            ctx.fillStyle = '#222'; ctx.fillRect(boxX, boxY, boxW, boxH);
+            ctx.strokeStyle = '#888'; ctx.strokeRect(boxX, boxY, boxW, boxH);
+            ctx.fillStyle = 'white'; ctx.font = '16px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+            ctx.fillText("Alchemist's Wares:", boxX + 10, boxY + 10);
+
+            // --- ADD: DISPLAY AVAILABLE PAYMENT ---
+            ctx.fillStyle = '#c0c0c0';
+            ctx.font = '8px monospace';
+            const paymentText = `Payment Available: ${availableMetals[MAT.COPPER]} Copper, ${availableMetals[MAT.SILVER]} Silver, ${availableMetals[MAT.GOLD]} Gold`;
+            ctx.fillText(paymentText, boxX + 10, boxY + 30);
+
+
+            const startIndex = TradeManager.currentPage * TradeManager.itemsPerPage;
+            const endIndex = startIndex + TradeManager.itemsPerPage;
+            const itemsToShow = TRADE_INVENTORY.slice(startIndex, endIndex);
+
+            // --- MODIFICATION: SINGLE-LINE ITEM DISPLAY ---
+            let yOff = 50; // Adjusted starting Y-offset
+            itemsToShow.forEach((item, index) => {
+                const itemNum = index + 1;
+                let costString = Object.entries(item.cost).map(([mat, amount]) => {
+                    return `${amount} ${MATERIAL_NAME[mat]}`;
+                }).join(', ');
+
+                const fullItemText = `[${itemNum}] ${item.name} (Cost: ${costString})`;
+                
+                ctx.fillStyle = 'white';
+                ctx.font = '8px monospace';
+                ctx.fillText(fullItemText, boxX + 20, boxY + yOff);
+                yOff += 15; // Use a smaller increment for single lines
+            });
+
+            const totalPages = Math.ceil(TRADE_INVENTORY.length / TradeManager.itemsPerPage);
+            if (totalPages > 1) {
+                ctx.fillStyle = '#ffd966';
+                ctx.font = '8px monospace';
+                // --- MODIFICATION: CLEARER NEXT PAGE TEXT ---
+                ctx.fillText(`Press [0] for Next Page (${TradeManager.currentPage + 1}/${totalPages})`, boxX + 20, boxY + boxH - 40);
+            }
+
+            ctx.fillStyle = '#aaa';
+            ctx.font = '8px monospace';
+            ctx.fillText("Press [ESC] to close.", boxX + 10, boxY + boxH - 25);
+        }
+
         function renderAlchemyUI() {
             if(!isAlchemyUIVisible)return;
             ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(0,0,renderWidth,renderHeight);
@@ -4597,6 +4794,15 @@
                 y: STATION_FLOOR_Y - 16,
                 dialogueTreeId: 'ylialkemisti_main'
             });
+
+            const stationPieceDef = SetPieceManager.setPieces.find(p => p.name === 'AlchemistStation');
+            if (stationPieceDef) {
+                const pieceInfo = { name: "AlchemistStation", bounds: stationPieceDef.getBounds() };
+                const npcObject = npcs.find(n => n.name === 'Ylialkemisti');
+                if(npcObject) {
+                    npcObject.associatedData.stationGeometry = stationPieceDef.postGenerationHook.call(stationPieceDef, pieceInfo).stationGeometry;
+                }
+            }
 
             //createObjectInWorld('stone_pick', 480, STATION_FLOOR_Y - 16);
             //createObjectInWorld('wooden_barrel', 520, STATION_FLOOR_Y - 16);
