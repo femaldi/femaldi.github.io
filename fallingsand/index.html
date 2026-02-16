@@ -454,7 +454,7 @@
                     text: "The path is fraught with challenges that only a keen mind and a mastery of alchemy can overcome. You must use your wits to transform the very elements around you.",
                     options: [
                         { text: "I am ready to learn.", execute: (npc) => {
-                            createMagicTablet(npc.x + 10, npc.y + 12, 'unlock_reaction', { reactionKey: 'filter_material' });
+                            createMagicTablet(npc.x + 64, npc.y - 12, 'unlock_reaction', { reactionKey: 'filter_material' });
                             
                             npc.dialogueState = 'waiting_for_filter';
                             const stationPieceDef = SetPieceManager.setPieces.find(p => p.name === 'AlchemistStation');
@@ -468,7 +468,7 @@
                                 const slabX = pieceInfo.bounds.x + 130;
                                 const slabY = pieceInfo.bounds.y + pieceInfo.bounds.height - 35; // Calculated Y of the slab's top surface
                                 const slabW = 70;
-                                spawnFloatingArrow(slabX + slabW / 2, slabY - 10); // Point it *above* the slab
+                                spawnFloatingArrow(slabX + slabW / 2, slabY - 50); // Point it *above* the slab
                             }
                             DialogueManager.closeDialogue();
                             DialogueManager.startDialogue(npc, DIALOGUE_TREES.ylialkemisti_main);
@@ -483,7 +483,7 @@
                     ]
                 },
                 'quest_complete': {
-                    text: "Excellent work, Apprentice. You show great promise. This is but the first step on a long journey. Continue your explorations, and may your transmutations be true. If you need any tools or materials for your journey, feel free to talk to me, I can trade any precious metals you find for them.",
+                    text: "Excellent work, Apprentice. You show great promise. This is but the first step on a long journey. Continue your explorations, and may your transmutations be true. If you need any tools or materials, feel free to talk to me, I can trade any precious metals you find for them.",
                     options: [
                         { text: "Thank you, Master.", execute: (npc) => {
                             npc.dialogueState = 'quest_complete'; 
@@ -535,7 +535,7 @@
 
         // (Place this function near other world generation helpers)
         function fillCauldronWithMixture(cauldron, materials) {
-            const numParticles = 800;
+            const numParticles = 160;
             for (let i = 0; i < numParticles; i++) {
                 const angle = Math.random() * Math.PI;
                 const radius = Math.random() * cauldron.r;
@@ -1674,7 +1674,7 @@
                             left:  { cx: 260, cy: 160, r: 32 - 4 },
                             right: { cx: 390, cy: 160, r: 32 - 4 }
                         },
-                        sampler: { cx: 325, cy: 170, r: 16 - 4 }
+                        sampler: { cx: 325, cy: 177, r: 16 - 4 }
                     },
                     
                     postGenerationHook: function(piece) {
@@ -1698,6 +1698,7 @@
                         
                         // Pass this calculated, world-space data to the trigger
                         createTrigger({
+                            name: 'alchemy_slab',
                             x: slabBounds.x,
                             y: slabBounds.y,
                             width: slabBounds.width,
@@ -2075,7 +2076,7 @@
             const screenY = Math.round(floatingArrow.y - camera.y);
 
             // Animate the vertical "bobbing" motion
-            const animatedY = screenY + Math.sin(frameCount * 0.04) * 4;
+            const animatedY = screenY + Math.sin(frameCount * 0.12) * 4;
 
             ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
             ctx.beginPath();
@@ -2107,7 +2108,7 @@
 
                 const alchemist = npcs.find(npc => npc.name === 'Ylialkemisti');
                 if (alchemist) {
-                    spawnFloatingArrow(alchemist.x + alchemist.width / 2, alchemist.y - 10);
+                    spawnFloatingArrow(alchemist.x + alchemist.width / 2 - 2, alchemist.y - 24);
                 }
             }
         }
@@ -3454,7 +3455,12 @@
             renderPlayerStatsUI();
             renderAlchemyUI();
             renderFloatingArrow();
-            if (debugMode) drawActiveChunkOutlines();
+
+            if (debugMode)
+            {
+                drawActiveChunkOutlines();
+                renderStationGeometryDebug();
+            } 
         }
         
         // This group of functions can remain as-is
@@ -4133,6 +4139,46 @@
             ctx.fillStyle='#ffd966';ctx.fillText(`MAT: ${hudMaterial}`,renderWidth-6,6+10);
         }
 
+        function renderStationGeometryDebug() {
+            const slabTrigger = triggers.find(t => t.name === 'alchemy_slab');
+            if (!slabTrigger || !slabTrigger.associatedData || !slabTrigger.associatedData.stationGeometry) {
+                return;
+            }
+
+            const stationGeo = slabTrigger.associatedData.stationGeometry;
+            
+            ctx.fillStyle = 'rgba(0, 255, 0, 0.3)';
+            ctx.strokeStyle = 'rgba(0, 255, 0, 0.7)';
+            ctx.lineWidth = 1;
+
+            // Draw left cauldron
+            const leftCauldron = stationGeo.cauldrons.left;
+            const screenLeftX = leftCauldron.cx - camera.x;
+            const screenLeftY = leftCauldron.cy - camera.y;
+            ctx.beginPath();
+            ctx.arc(screenLeftX, screenLeftY, leftCauldron.r, 0, Math.PI);
+            ctx.fill();
+            ctx.stroke();
+
+            // Draw right cauldron
+            const rightCauldron = stationGeo.cauldrons.right;
+            const screenRightX = rightCauldron.cx - camera.x;
+            const screenRightY = rightCauldron.cy - camera.y;
+            ctx.beginPath();
+            ctx.arc(screenRightX, screenRightY, rightCauldron.r, 0, Math.PI);
+            ctx.fill();
+            ctx.stroke();
+            
+            // Draw sampler
+            const sampler = stationGeo.sampler;
+            const screenSamplerX = sampler.cx - camera.x;
+            const screenSamplerY = sampler.cy - camera.y;
+            ctx.beginPath();
+            ctx.arc(screenSamplerX, screenSamplerY, sampler.r, 0, Math.PI);
+            ctx.fill();
+            ctx.stroke();
+        }
+
         function renderDebugUI() {
             // Calculate derived stats
             const activeSectors = Array.from(sectorGrid.values()).filter(s => s.state === 'ready').length;
@@ -4206,7 +4252,7 @@
         // --- END OF NEW FUNCTION ---
 
         function createTrigger(options){
-            const trigger={id:nextTriggerId++,x:options.x,y:options.y,width:options.width,height:options.height,onEnter:options.onEnter||function(){},onLeave:options.onLeave||function(){},onInteract:options.onInteract||function(){},isActive:false,associatedData:options.associatedData, isVolatile: options.isVolatile || false, isDestroyed: false};
+            const trigger={id:nextTriggerId++,name: options.name || null,x:options.x,y:options.y,width:options.width,height:options.height,onEnter:options.onEnter||function(){},onLeave:options.onLeave||function(){},onInteract:options.onInteract||function(){},isActive:false,associatedData:options.associatedData, isVolatile: options.isVolatile || false, isDestroyed: false};
             triggers.push(trigger);return trigger.id;
         }
 
