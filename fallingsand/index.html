@@ -65,6 +65,13 @@
         .btn-gold { background-color: #ffd700; color: #333; }
         .btn-platinum { background-color: #e5e4e2; color: #333; }
         .btn-rune-wall { background-color: #2a2a3a; color: #d0c0ff; border: 1px solid #5a4a7a; }
+        .btn-ground { background-color: #6b4d3c; color: white; }
+        .btn-iron { background-color: #7a7a7a; color: white; }
+        .btn-obsidian { background-color: #2a223a; color: white; }
+        .btn-lava { background-color: #fc440f; color: white; }
+        .btn-steam { background-color: #d0d0d0; color: #333; }
+        .btn-smoke { background-color: #444444; color: white; }
+        .btn-methane { background-color: #e0f0e0; color: #333; }
         .btn-eraser { background-color: #000; color: white; border: 1px solid #555; }
         button.active {
             outline: 2px solid white;
@@ -106,8 +113,12 @@
     <div class="controls">
         <button class="btn-sand active" onclick="setMaterial('sand')">Sand</button>
         <button class="btn-soil" onclick="setMaterial('soil')">Soil</button>
+        <button class="btn-ground" onclick="setMaterial('ground')">Ground</button>
         <button class="btn-water" onclick="setMaterial('water')">Water</button>
-        <button class="btn-gas" onclick="setMaterial('gas')">Gas</button>
+        <button class="btn-lava" onclick="setMaterial('lava')">Lava</button>
+        <button class="btn-steam" onclick="setMaterial('steam')">Steam</button>
+        <button class="btn-smoke" onclick="setMaterial('smoke')">Smoke</button>
+        <button class="btn-methane" onclick="setMaterial('methane')">Methane</button>
         <button class="btn-wall" onclick="setMaterial('wall')">Wall</button>
         <button class="btn-wood" onclick="setMaterial('wood')">Wood</button>
         <button class="btn-fire" onclick="setMaterial('fire')">Fire</button>
@@ -123,6 +134,8 @@
         <button class="btn-gold" onclick="setMaterial('gold')">Gold</button>
         <button class="btn-platinum" onclick="setMaterial('platinum')">Platinum</button>
         <button class="btn-rune-wall" onclick="setMaterial('rune-wall')">Rune Wall</button>
+        <button class="btn-iron" onclick="setMaterial('iron')">Iron</button>
+        <button class="btn-obsidian" onclick="setMaterial('obsidian')">Obsidian</button>
         <button class="btn-eraser" onclick="setMaterial('empty')">Eraser</button>
     </div>
 
@@ -717,61 +730,61 @@
 
         // --- MATERIAL DEFINITIONS ---
         const MAT = {
-            EMPTY: 0, ROCK_WALL: 1, SAND: 2, WATER: 3, SOIL: 4, GAS: 5, 
+            EMPTY: 0, ROCK_WALL: 1, SAND: 2, WATER: 3, SOIL: 4, 
             WOOD: 10, FIRE: 11, GUNPOWDER: 12, GUNPOWDER_IGNITED: 13,
             OIL: 14, OIL_BURNING: 15,
             COAL:16, COAL_BURNING:17,
             ACID:18, GLASS:19, GLASS_WALL: 20,
             ADAMANTIUM: 21, COPPER: 22, SILVER: 23, GOLD: 24, PLATINUM: 25, RUNE_WALL: 26,
             SANDSTONE_WALL: 27, VOLCANIC_WALL: 28, LABYRINTH_WALL: 29, MAGIC_WALL: 30,
+            // --- START OF NEW MATERIALS (Remove GAS: 5) ---
+            GROUND: 31, IRON: 32, RUSTED_IRON: 33, OBSIDIAN: 34,
+            LAVA: 40, 
+            STEAM: 50, SMOKE: 51, METHANE: 52, METHANE_BURNING: 53,
+            // --- END OF NEW MATERIALS ---
             RIGID_BODY_STUB: 99
         };
 
         const COLORS = {
             [MAT.ROCK_WALL]: [100, 100, 100], [MAT.SAND]: [246, 215, 176],
             [MAT.WATER]: [79, 164, 244], [MAT.SOIL]: [93, 64, 55],
-            [MAT.GAS]: [200, 200, 200], [MAT.WOOD]: [139, 69, 19],
-            [MAT.FIRE]: [255, 69, 0], [MAT.GUNPOWDER]: [60, 60, 60],
-            [MAT.GUNPOWDER_IGNITED]: [120, 80, 80], [MAT.OIL]: [90, 70, 30], [MAT.OIL_BURNING]: [255, 69, 0],
+            [MAT.WOOD]: [139, 69, 19], [MAT.FIRE]: [255, 69, 0], 
+            [MAT.GUNPOWDER]: [60, 60, 60], [MAT.GUNPOWDER_IGNITED]: [120, 80, 80], 
+            [MAT.OIL]: [90, 70, 30], [MAT.OIL_BURNING]: [255, 69, 0],
             [MAT.COAL]: [30, 30, 30], [MAT.COAL_BURNING]: [255, 69, 0],
             [MAT.ACID]: [0, 255, 0], [MAT.GLASS]: [200, 200, 255], [MAT.GLASS_WALL]: [180, 180, 235],
             [MAT.ADAMANTIUM]: [77, 82, 87], [MAT.COPPER]: [184, 115, 51],
             [MAT.SILVER]: [192, 192, 192], [MAT.GOLD]: [255, 215, 100],
             [MAT.PLATINUM]: [229, 228, 226], [MAT.RUNE_WALL]: [200, 200, 100],
-            [MAT.SANDSTONE_WALL]: [130, 100, 70],
-            [MAT.VOLCANIC_WALL]: [45, 20, 20],
-            [MAT.LABYRINTH_WALL]: [70, 75, 80],
-            [MAT.MAGIC_WALL]: [40, 25, 60]
+            [MAT.SANDSTONE_WALL]: [130, 100, 70], [MAT.VOLCANIC_WALL]: [45, 20, 20],
+            [MAT.LABYRINTH_WALL]: [70, 75, 80], [MAT.MAGIC_WALL]: [40, 25, 60],
+            // --- START OF NEW COLORS ---
+            [MAT.GROUND]: [107, 77, 60], [MAT.IRON]: [122, 122, 122],
+            [MAT.RUSTED_IRON]: [180, 90, 50], [MAT.OBSIDIAN]: [42, 34, 58],
+            [MAT.LAVA]: [252, 68, 15], [MAT.STEAM]: [208, 208, 208],
+            [MAT.SMOKE]: [68, 68, 68], [MAT.METHANE]: [180, 240, 180], [MAT.METHANE_BURNING]: [255, 150, 50],
+            // --- END OF NEW COLORS ---
         };
 
         const MATERIAL_NAME = {
-            [MAT.EMPTY]: 'Empty',
-            [MAT.ROCK_WALL]: 'Wall',
-            [MAT.SAND]: 'Sand',
-            [MAT.WATER]: 'Water',
-            [MAT.SOIL]: 'Soil',
-            [MAT.GAS]: 'Gas',
-            [MAT.WOOD]: 'Wood',
-            [MAT.FIRE]: 'Fire',
-            [MAT.GUNPOWDER]: 'Gunpowder',
-            [MAT.GUNPOWDER_IGNITED]: 'Gunpowder (Ignited)',
-            [MAT.OIL]: 'Oil',
-            [MAT.OIL_BURNING]: 'Burning Oil',
-            [MAT.COAL]: 'Coal',
-            [MAT.COAL_BURNING]: 'Burning Coal',
-            [MAT.ACID]: 'Acid',
-            [MAT.GLASS]: 'Glass',
-            [MAT.GLASS_WALL]: 'Glass Wall',
-            [MAT.ADAMANTIUM]: 'Adamantium', 
-            [MAT.COPPER]: 'Copper',
-            [MAT.SILVER]: 'Silver', 
-            [MAT.GOLD]: 'Gold', 
-            [MAT.PLATINUM]: 'Platinum',
-            [MAT.RUNE_WALL]: 'Rune Wall',
-            [MAT.SANDSTONE_WALL]: 'Sandstone Wall', 
-            [MAT.VOLCANIC_WALL]: 'Volcanic Wall',
-            [MAT.LABYRINTH_WALL]: 'Labyrinth Wall', 
-            [MAT.MAGIC_WALL]: 'Magic Wall'
+            [MAT.EMPTY]: 'Empty', [MAT.ROCK_WALL]: 'Wall', [MAT.SAND]: 'Sand',
+            [MAT.WATER]: 'Water', [MAT.SOIL]: 'Soil', [MAT.WOOD]: 'Wood',
+            [MAT.FIRE]: 'Fire', [MAT.GUNPOWDER]: 'Gunpowder',
+            [MAT.GUNPOWDER_IGNITED]: 'Gunpowder (Ignited)', [MAT.OIL]: 'Oil',
+            [MAT.OIL_BURNING]: 'Burning Oil', [MAT.COAL]: 'Coal',
+            [MAT.COAL_BURNING]: 'Burning Coal', [MAT.ACID]: 'Acid',
+            [MAT.GLASS]: 'Glass', [MAT.GLASS_WALL]: 'Glass Wall',
+            [MAT.ADAMANTIUM]: 'Adamantium', [MAT.COPPER]: 'Copper',
+            [MAT.SILVER]: 'Silver', [MAT.GOLD]: 'Gold', [MAT.PLATINUM]: 'Platinum',
+            [MAT.RUNE_WALL]: 'Rune Wall', [MAT.SANDSTONE_WALL]: 'Sandstone Wall', 
+            [MAT.VOLCANIC_WALL]: 'Volcanic Wall', [MAT.LABYRINTH_WALL]: 'Labyrinth Wall', 
+            [MAT.MAGIC_WALL]: 'Magic Wall',
+            // --- START OF NEW NAMES (Remove Gas) ---
+            [MAT.GROUND]: 'Ground', [MAT.IRON]: 'Iron',
+            [MAT.RUSTED_IRON]: 'Rusted Iron', [MAT.OBSIDIAN]: 'Obsidian',
+            [MAT.LAVA]: 'Lava', [MAT.STEAM]: 'Steam',
+            [MAT.SMOKE]: 'Smoke', [MAT.METHANE]: 'Methane', [MAT.METHANE_BURNING]: 'Burning Methane'
+            // --- END OF NEW NAMES ---
         };
 
         const WALL_TYPES = new Set([
@@ -1012,10 +1025,18 @@
 
 
         const LIQUID_DENSITY = {
-            [MAT.ACID]: 3,
+            [MAT.ACID]: 4,
+            [MAT.LAVA]: 3,
             [MAT.WATER]: 2,
             [MAT.OIL]: 1,
             [MAT.OIL_BURNING]: 1
+        };
+
+        const GAS_DENSITY = {
+            [MAT.SMOKE]: 3,
+            [MAT.METHANE]: 2,
+            [MAT.METHANE_BURNING]: 2,
+            [MAT.STEAM]: 1,
         };
 
         const ALWAYS_VISIBLE_MATERIALS = new Set([
@@ -1041,7 +1062,11 @@
             MAT.WOOD,
             MAT.GLASS_WALL,
             MAT.ADAMANTIUM,
-            MAT.RUNE_WALL
+            MAT.RUNE_WALL, 
+            MAT.GROUND, 
+            MAT.IRON, 
+            MAT.RUSTED_IRON, 
+            MAT.OBSIDIAN
         ]);
 
 
@@ -1069,6 +1094,7 @@
             [MAT.COPPER]: { color: [220, 200, 200], intensity: 0.01, radius: 3 },
             [MAT.SILVER]: { color: [200, 200, 220], intensity: 0.01, radius: 3 },
             [MAT.GOLD]: { color: [220, 220, 180], intensity: 0.01, radius: 3 },
+            [MAT.LAVA]: { color: [250, 180, 100], intensity: 1.0, radius: 16 },
         };
 
         const PLAYER_INTERACTION_RADIUS = 30; // Max distance for right-click actions
@@ -1147,15 +1173,17 @@
         let fluidsImageData = null;
         let fluidsPixels = null;
 
-        // Tune per material/category
         function fluidAlpha(type) {
-            if (type === MAT.GAS) return 80;     // ~30%
-            if (LIQUIDS.has(type)) return 140;   // ~55%
+            if (type === MAT.METHANE_BURNING) return 120; // Make it visible but transparent
+            if (type === MAT.SMOKE) return 100;
+            if (type === MAT.STEAM) return 80;
+            if (type === MAT.METHANE) return 40;
+            if (LIQUIDS.has(type)) return 140;
             return 255;
         }
 
         function isFluid(type) {
-            return type === MAT.GAS || LIQUIDS.has(type);
+            return GASES.has(type) || LIQUIDS.has(type);
         }
 
         // --- START OF NEW FUNCTION ---
@@ -1533,7 +1561,7 @@
                 const mask = new Uint8Array(this.width * this.height);
                 for (let i = 0; i < mask.length; i++) {
                     const t = this.pixels[i];
-                    mask[i] = (t !== MAT.EMPTY && t !== MAT.GAS) ? 1 : 0;
+                    mask[i] = (t !== MAT.EMPTY && !GASES.has(t)) ? 1 : 0;
                 }
                 return mask;
             }
@@ -1546,7 +1574,7 @@
 
                 for (let i = 0; i < mask.length; i++) {
                     const t = this.pixels[i];
-                    mask[i] = (t !== MAT.EMPTY && t !== MAT.GAS) ? 1 : 0;
+                    mask[i] = (t !== MAT.EMPTY && !GASES.has(t)) ? 1 : 0;
                 }
 
                 if (!mask.some(v => v === 1)) {
@@ -1688,7 +1716,7 @@
         }
 
         function isPixelSolidForConnectivity(type) {
-            return type !== MAT.EMPTY && type !== MAT.GAS;
+            return type !== MAT.EMPTY && !GASES.has(type);
         }
 
         function findPixelIslands(pixels, width, height) {
@@ -1834,7 +1862,7 @@
                 for (let x = startX; x < endX; x++) {
                     // Check for a gas pixel that is directly above an empty pixel.
                     // This is the "leading edge" of a gas cloud that needs to be simulated.
-                    if (getGrid(x, y) === MAT.GAS && getGrid(x, y + 1) === MAT.EMPTY) {
+                    if ( GASES.has(getGrid(x, y)) && getGrid(x, y + 1) === MAT.EMPTY) {
                         const chunkX = Math.floor(x / CHUNK_SIZE);
                         const chunkY = Math.floor(y / CHUNK_SIZE);
                         gasChunks.add(coordToKey(chunkX, chunkY));
@@ -2640,25 +2668,38 @@
         function setMaterial(name) {
             const map = {
                 sand: MAT.SAND, water: MAT.WATER, oil: MAT.OIL, coal: MAT.COAL,
-                soil: MAT.SOIL, wall: MAT.ROCK_WALL, gas: MAT.GAS, wood: MAT.WOOD,
+                soil: MAT.SOIL, wall: MAT.ROCK_WALL, wood: MAT.WOOD,
                 fire: MAT.FIRE, gunpowder: MAT.GUNPOWDER, acid: MAT.ACID,
                 glass: MAT.GLASS, 'glass-wall': MAT.GLASS_WALL, empty: MAT.EMPTY,
                 adamantium: MAT.ADAMANTIUM, copper: MAT.COPPER, silver: MAT.SILVER,
                 gold: MAT.GOLD, platinum: MAT.PLATINUM,
-                'rune-wall': MAT.RUNE_WALL
+                'rune-wall': MAT.RUNE_WALL,
+                // --- START OF NEW MATERIALS (and removed gas) ---
+                ground: MAT.GROUND, iron: MAT.IRON, obsidian: MAT.OBSIDIAN,
+                lava: MAT.LAVA, steam: MAT.STEAM, smoke: MAT.SMOKE, methane: MAT.METHANE
+                // --- END OF NEW MATERIALS ---
             };
             if (map[name] === undefined) { console.warn('Unknown material:', name); return; }
             currentMaterial = map[name];
             document.querySelectorAll('.controls button').forEach(btn => btn.classList.remove('active'));
-            const btn = document.querySelector(`.btn-${name}`);
+            // --- FIX for new button class names ---
+            const btnClass = name.replace('_', '-');
+            const btn = document.querySelector(`.btn-${btnClass}`);
             if (btn) btn.classList.add('active');
         }
 
         function isFlammable(type) {
-            return (type === MAT.WOOD || type === MAT.GUNPOWDER || type === MAT.OIL || type === MAT.COAL);
+            return (type === MAT.WOOD || type === MAT.GUNPOWDER || type === MAT.OIL || type === MAT.COAL || type === MAT.METHANE);
         }
 
-        const LIQUIDS = new Set([MAT.WATER, MAT.OIL, MAT.OIL_BURNING, MAT.ACID]);
+        const LIQUIDS = new Set([MAT.WATER, MAT.OIL, MAT.OIL_BURNING, MAT.ACID, MAT.LAVA]);
+        const GASES = new Set([MAT.STEAM, MAT.SMOKE, MAT.METHANE, MAT.METHANE_BURNING]);
+        const FIRE_PASSABLE = new Set([
+            MAT.EMPTY, 
+            MAT.STEAM, 
+            MAT.METHANE, // Methane is fuel, so fire should spread into it
+            MAT.METHANE_BURNING // It's already fire
+        ]);
 
         function tryIgniteAt(x, y, probability = 1.0) {
             const type = getGrid(x, y);
@@ -2667,11 +2708,16 @@
             switch (type) {
                 case MAT.GUNPOWDER:
                     setGrid(x, y, MAT.GUNPOWDER_IGNITED);
-                    setAuxData(etcChunkMap, x, y, 3 + Math.floor(Math.random() * 5)); // Ignition timer
+                    setAuxData(etcChunkMap, x, y, 3 + Math.floor(Math.random() * 5));
                     break;
                 case MAT.OIL: setGrid(x, y, MAT.OIL_BURNING); break;
                 case MAT.COAL: setGrid(x, y, MAT.COAL_BURNING); break;
                 case MAT.WOOD: setGrid(x, y, MAT.FIRE); break;
+                // --- ADD METHANE ---
+                case MAT.METHANE:
+                    setGrid(x, y, MAT.METHANE_BURNING); // Change to burning state instead of exploding
+                    setAuxData(etcChunkMap, x, y, 10 + Math.floor(Math.random() * 5));
+                    break;
             }
         }
 
@@ -2760,7 +2806,8 @@
             MAT.SOIL, MAT.WOOD, MAT.SAND, 
             MAT.GUNPOWDER, MAT.COAL, MAT.COAL_BURNING, MAT.GLASS, 
             MAT.GLASS_WALL, MAT.ADAMANTIUM, MAT.COPPER, MAT.SILVER, 
-            MAT.GOLD, MAT.PLATINUM, MAT.RUNE_WALL
+            MAT.GOLD, MAT.PLATINUM, MAT.RUNE_WALL,
+            MAT.GROUND, MAT.IRON, MAT.RUSTED_IRON, MAT.OBSIDIAN
         ].includes(type);
         
         function updateRigidBodyGrid() {
@@ -2908,7 +2955,7 @@
                     const idx = getIdx(x,y,cW,cH);
                     const type = containerGrid[idx];
 
-                    if (type !== MAT.EMPTY && type !== MAT.GAS) {
+                    if (type !== MAT.EMPTY && !GASES.has(type)) {
                         containerGrid[idx] = MAT.EMPTY;
                         const baseSpawnX = player.x + (playerFacingRight?player.width:0), baseSpawnY = player.y+9;
                         const spawnOffsetX = (Math.random()-0.5)*2, spawnOffsetY = (Math.random()-0.5)*2;
@@ -2949,7 +2996,7 @@
                 const nextX = p.x + p.vx, nextY = p.y + p.vy;
                 const nextIX = Math.floor(nextX), nextIY = Math.floor(nextY);
 
-                const gridBlocked = getGrid(nextIX, nextIY) !== MAT.EMPTY && getGrid(nextIX, nextIY) !== MAT.GAS;
+                const gridBlocked = getGrid(nextIX, nextIY) !== MAT.EMPTY && !GASES.has(getGrid(nextIX, nextIY));
                 const rigidBlocked = getAuxData(etcChunkMap, nextIX, nextIY) === 1; // 1 means rigid body
                 const isObstructed = gridBlocked || rigidBlocked;
                 const hasStopped = (p.vx*p.vx + p.vy*p.vy < 1.0);
@@ -2957,7 +3004,7 @@
                 if (isObstructed || hasStopped) {
                     let placeX = Math.floor(p.x), placeY = Math.floor(p.y);
                     while (true) {
-                        if (getGrid(placeX, placeY) === MAT.EMPTY || getGrid(placeX, placeY) === MAT.GAS) {
+                        if (getGrid(placeX, placeY) === MAT.EMPTY || GASES.has(getGrid(placeX, placeY))) {
                             setGrid(placeX, placeY, p.type);
                             break;
                         }
@@ -3031,6 +3078,16 @@
                         stepLiquid(startX + lx, startY + ly);
                     }
                 }
+
+                // --- ADD PASS 3 for GASES (top-down) ---
+                for (let ly = 0; ly < CHUNK_SIZE; ly++) {
+                    for (let lx = (scanDir ? 0 : CHUNK_SIZE - 1);
+                        (scanDir ? lx < CHUNK_SIZE : lx >= 0);
+                        lx += (scanDir ? 1 : -1)) {
+                            
+                        stepGas(startX + lx, startY + ly);
+                    }
+                }
             }
         }
 
@@ -3051,12 +3108,11 @@
             if(isWorldSim && movedInFrame.has(coordToKey(x,y))) return;
             if(!isWorldSim && moved[idx]) return;
 
-            if (WALL_TYPES.has(type) || [MAT.EMPTY, MAT.WOOD, MAT.GLASS_WALL, MAT.ADAMANTIUM, MAT.RUNE_WALL, MAT.RIGID_BODY_STUB].includes(type) || LIQUIDS.has(type)) return;
+            if (WALL_TYPES.has(type) || [MAT.EMPTY, MAT.WOOD, MAT.GLASS_WALL, MAT.ADAMANTIUM, MAT.RUNE_WALL, MAT.RIGID_BODY_STUB, MAT.GROUND, MAT.IRON, MAT.RUSTED_IRON, MAT.OBSIDIAN].includes(type) || LIQUIDS.has(type) || GASES.has(type)) return;
             
             if (type === MAT.FIRE) updateFire(x, y, idx, moved, grid, w, h, getIdx, setter);
             else if ([MAT.SAND, MAT.SOIL, MAT.GUNPOWDER, MAT.COAL, MAT.GLASS, MAT.COPPER, MAT.SILVER, MAT.GOLD, MAT.PLATINUM].includes(type)) updateSolid(x, y, type, idx, moved, grid, w, h, getIdx, setter);
             else if (type === MAT.COAL_BURNING) updateBurningCoal(x, y, idx, moved, grid, w, h, getIdx, setter);
-            else if (type === MAT.GAS) updateGas(x, y, idx, moved, grid, w, h, getIdx, setter);
             else if (type === MAT.GUNPOWDER_IGNITED) updateIgnitedGunpowder(x, y, idx, moved, grid, w, h, getIdx, setter);
         }
 
@@ -3068,9 +3124,26 @@
             if(isWorldSim && movedInFrame.has(coordToKey(x,y))) return;
             if(!isWorldSim && moved[idx]) return;
 
-            if (![MAT.WATER, MAT.OIL, MAT.OIL_BURNING, MAT.ACID].includes(type)) return;
+            if (!LIQUIDS.has(type)) return;
             
             updateLiquid(x, y, type, idx, moved, grid, w, h, getIdx, setter);
+        }
+
+        function stepGas(x, y, moved, grid, w, h, getIdx, setter) {
+            const isWorldSim = !grid;
+            const type = isWorldSim ? getGrid(x, y) : grid[getIdx(x, y)];
+            const idx = isWorldSim ? -1 : getIdx(x, y);
+
+            if(isWorldSim && movedInFrame.has(coordToKey(x,y))) return;
+            if(!isWorldSim && moved[idx]) return;
+
+            if (!GASES.has(type)) return;
+            
+            if (type === MAT.METHANE_BURNING) {
+                updateBurningMethane(x, y, type, idx, moved, grid, w, h, getIdx, setter);
+            } else {
+                updateGas(x, y, type, idx, moved, grid, w, h, getIdx, setter);
+            }
         }
 
         function updateIgnitedGunpowder(x, y, idx, moved, grid, w, h, getIdx, setter) {
@@ -3125,10 +3198,10 @@
                     // Check if the material is blast-resistant (e.g., Adamantium, special walls)
                     if (!WALL_TYPES.has(type) && type !== MAT.ADAMANTIUM && type !== MAT.RUNE_WALL) {
                         const rand = Math.random();
-                        let newType = (rand < 0.3) ? MAT.FIRE : (rand < 0.7) ? MAT.GAS : MAT.EMPTY;
+                        let newType = (rand < 0.3) ? MAT.FIRE : (rand < 0.7) ? MAT.SMOKE : MAT.EMPTY;
                         setGrid(ex, ey, newType);
                     } else if (radius > 15 && type !== MAT.ADAMANTIUM && type !== MAT.RUNE_WALL) { // Large explosions can chip away at walls
-                        setGrid(ex, ey, MAT.GAS);
+                        setGrid(ex, ey, MAT.SMOKE);
                     }
                     
                     // Any modification requires the chunk to be activated for the next simulation step.
@@ -3213,22 +3286,37 @@
                 }
                 if (nType === MAT.OIL) { _set(nx, ny, MAT.OIL_BURNING); return; }
                 if (nType === MAT.COAL) { _set(nx, ny, MAT.COAL_BURNING); return; }
+
+                // --- START OF FIX ---
+                // Add the missing check to see if fire is next to methane.
+                if (nType === MAT.METHANE && Math.random() < 0.9) {
+                    if (isWorldSim) {
+                        tryIgniteAt(nx, ny); // This correctly sets the METHANE_BURNING state and timer
+                    } else {
+                        // Simplified ignition for non-world grids (e.g., inventory)
+                       _set(nx, ny, MAT.FIRE);
+                    }
+                    _set(x, y, MAT.SMOKE); // The fire is consumed igniting the gas
+                    return; // Stop processing this fire pixel for this frame
+                }
+                // --- END OF FIX ---
+
                 if (nType === MAT.WOOD) { nearbyFuel = true; if (Math.random() < 0.02) _set(nx, ny, MAT.FIRE); }
-                if (nType === MAT.WATER) { _set(nx, ny, MAT.GAS); _set(x, y, MAT.GAS); return; }
+                if (nType === MAT.WATER) { _set(nx, ny, MAT.STEAM); _set(x, y, MAT.STEAM); return; }
             }
             let targetX = x, targetY = y;
             if (!nearbyFuel && y > 0) {
                 let nextX = x, nextY = y - 1;
                 if (Math.random() < 0.5) nextX += Math.random() < 0.5 ? -1 : 1;
                 const nextType = _get(nextX, nextY);
-                if (nextType === MAT.EMPTY || nextType === MAT.GAS) {
+                if (FIRE_PASSABLE.has(nextType)) {
                     _set(x, y, nextType);
                     _set(nextX, nextY, MAT.FIRE);
                     targetX = nextX; targetY = nextY;
                 }
             }
             if (Math.random() < (nearbyFuel ? 0.01 : 0.15)) {
-                _set(targetX, targetY, Math.random() < 0.15 ? MAT.GAS : MAT.EMPTY);
+                _set(targetX, targetY, Math.random() < 0.15 ? MAT.SMOKE : MAT.EMPTY);
             }
         }
 
@@ -3254,7 +3342,7 @@
                 _tryIgniteAt(nx, ny, 0.02);
             }
             if (Math.random() < 0.02 && _get(x, y - 1) === MAT.EMPTY) _set(x, y - 1, MAT.FIRE);
-            if (Math.random() < 0.003) _set(x, y, Math.random() < 0.15 ? MAT.GAS : MAT.EMPTY);
+            if (Math.random() < 0.003) _set(x, y, Math.random() < 0.15 ? MAT.SMOKE : MAT.EMPTY);
             if (isWorldSim && getGrid(x, y) === MAT.COAL_BURNING) activateChunkAt(x, y);
         }
 
@@ -3279,8 +3367,59 @@
                 _tryIgniteAt(nx, ny, 0.05);
             }
             if (Math.random() < 0.05 && _get(x, y - 1) === MAT.EMPTY) _set(x, y - 1, MAT.FIRE);
-            if (Math.random() < 0.008) _set(x, y, Math.random() < 0.15 ? MAT.GAS : MAT.EMPTY);
+            if (Math.random() < 0.008) _set(x, y, Math.random() < 0.15 ? MAT.SMOKE : MAT.EMPTY);
             if (isWorldSim && getGrid(x, y) === MAT.OIL_BURNING) activateChunkAt(x, y);
+        }
+
+        function updateBurningMethane(x, y, type, idx, moved, grid, w, h, getIdx, setter) {
+            const isWorldSim = !grid;
+            const _get = (gx, gy) => isWorldSim ? getGrid(gx, gy) : (getIdx(gx, gy) !== -1 ? grid[getIdx(gx, gy)] : MAT.ROCK_WALL);
+            const _set = (gx, gy, gtype) => {
+                if (isWorldSim) {
+                    setGrid(gx, gy, gtype, true);
+                    movedInFrame.add(coordToKey(gx, gy));
+                } else {
+                    const gidx = getIdx(gx, gy);
+                    if (gidx !== -1) { setter(gidx, gtype); moved[gidx] = 1; }
+                }
+            };
+
+            // 1. Manage Lifespan Timer
+            let timer = isWorldSim ? getAuxData(etcChunkMap, x, y) : 1;
+            timer--;
+
+            if (timer <= 0) {
+                _set(x, y, MAT.SMOKE);
+                if (isWorldSim) setAuxData(etcChunkMap, x, y, 0);
+                if(!isWorldSim && idx!==-1) moved[idx] = 1;
+                return;
+            }
+
+            // --- START OF REPLACEMENT LOGIC ---
+            // 2. Spread fire to ALL adjacent flammable materials
+            const DIRS_8 = [[-1,0],[1,0],[0,-1],[0,1],[-1,-1],[-1,1],[1,-1],[1,1]];
+            for (const dir of DIRS_8) {
+                const nx = x + dir[0], ny = y + dir[1];
+                const neighborType = _get(nx, ny);
+
+                // Use the generic isFlammable check to ignite any valid neighbor
+                if (isFlammable(neighborType) && Math.random() < 0.6) {
+                    if (isWorldSim) {
+                        tryIgniteAt(nx, ny);
+                    } else {
+                         _set(nx, ny, MAT.FIRE); // Simplified ignition for inventories
+                    }
+                }
+            }
+            // --- END OF REPLACEMENT LOGIC ---
+
+            // 3. Persist the new decremented timer value
+            if (isWorldSim) {
+                setAuxData(etcChunkMap, x, y, timer);
+            }
+
+            // 4. If not burned out, move like a normal gas
+            updateGas(x, y, type, idx, moved, grid, w, h, getIdx, setter);
         }
 
         function updateSolid(x, y, type, idx, moved, grid, w, h, getIdx, setter) {
@@ -3321,7 +3460,7 @@
             if (_get(x, y + 1) === MAT.FIRE && type === MAT.COAL) { _set(x, y, MAT.COAL_BURNING); if(!isWorldSim && idx!==-1) moved[idx] = 1; return; }
             if (_getAux(x, y + 1) !== 1) {
                 const belowType = _get(x, y + 1);
-                if ([MAT.EMPTY, MAT.GAS].includes(belowType) || isLiquid(belowType)) {
+                if ([MAT.EMPTY, ...GASES].includes(belowType) || isLiquid(belowType)) {
                     _set(x, y, belowType);
                     _set(x, y + 1, type);
                     if(!isWorldSim && idx!==-1) moved[idx] = 1;
@@ -3332,7 +3471,7 @@
             for (let dx of [dir, -dir]) {
                 if (_getAux(x + dx, y + 1) !== 1) {
                     const diagType = _get(x + dx, y + 1);
-                    if ([MAT.EMPTY, MAT.GAS].includes(diagType) || isLiquid(diagType)) {
+                    if ([MAT.EMPTY, ...GASES].includes(diagType) || isLiquid(diagType)) {
                         _set(x, y, diagType);
                         _set(x + dx, y + 1, type);
                         if(!isWorldSim && idx!==-1) moved[idx] = 1;
@@ -3356,12 +3495,25 @@
             };
              const _getAux = (gx, gy) => isWorldSim ? getAuxData(etcChunkMap, gx, gy) : 0;
 
+            if (type === MAT.LAVA) {
+                for (const n of [{x:0,y:1},{x:0,y:-1},{x:1,y:0},{x:-1,y:0}]) {
+                    const nx = x + n.x, ny = y + n.y;
+                    const nType = _get(nx, ny);
+                    if (nType === MAT.WATER) {
+                        _set(x, y, MAT.OBSIDIAN);
+                        _set(nx, ny, MAT.STEAM);
+                        if(!isWorldSim && idx!==-1) moved[idx] = 1; return;
+                    }
+                    if (isWorldSim) tryIgniteAt(nx, ny, 0.4);
+                }
+            }
+
             if (type === MAT.ACID) {
                 let consumed = false;
                 for (const n of [{x:0,y:1},{x:0,y:-1},{x:1,y:0},{x:-1,y:0}]) {
                     const nx = x + n.x, ny = y + n.y;
                     const nType = _get(nx, ny);
-                    const isImmune = [MAT.EMPTY,MAT.GLASS,MAT.GAS,MAT.GLASS_WALL,MAT.ADAMANTIUM,MAT.RUNE_WALL].includes(nType);
+                    const isImmune = [MAT.EMPTY,MAT.GLASS,MAT.GLASS_WALL,MAT.ADAMANTIUM,MAT.RUNE_WALL,MAT.OBSIDIAN].includes(nType);
                     if (!isImmune && !isLiquid(nType) && Math.random() < 0.25) {
                         _set(nx, ny, MAT.EMPTY);
                         if (Math.random() < 0.2) { _set(x, y, MAT.EMPTY); consumed = true; break; }
@@ -3377,36 +3529,53 @@
             const belowType = _get(x, y + 1);
             if (belowType === MAT.FIRE) {
                 if (type === MAT.OIL) _set(x, y, MAT.OIL_BURNING);
-                else { _set(x, y, MAT.GAS); _set(x, y + 1, MAT.GAS); }
+                else { _set(x, y, MAT.SMOKE); _set(x, y + 1, MAT.SMOKE); }
                 if(!isWorldSim && idx!==-1) moved[idx] = 1;
                 return;
             }
-            if ([MAT.EMPTY, MAT.GAS].includes(belowType)) { _set(x, y, belowType); _set(x, y + 1, type); if(!isWorldSim && idx!==-1) moved[idx] = 1; return; }
+            if ([MAT.EMPTY, ...GASES].includes(belowType)) { _set(x, y, belowType); _set(x, y + 1, type); if(!isWorldSim && idx!==-1) moved[idx] = 1; return; }
             if (LIQUID_DENSITY[type] > LIQUID_DENSITY[belowType]) { _set(x, y, belowType); _set(x, y + 1, type); if(!isWorldSim && idx!==-1) moved[idx] = 1; return; }
             tryMoveLiquidSide(x, y, type, Math.random() < 0.5 ? -1 : 1, 20, 1, idx, moved, grid, w, h, getIdx, setter);
             if (_get(x, y) === MAT.OIL_BURNING) updateBurningOil(x, y, idx, moved, grid, w, h, getIdx, setter);
         }
 
-        function updateGas(x, y, idx, moved, grid, w, h, getIdx, setter) {
+        function updateGas(x, y, type, idx, moved, grid, w, h, getIdx, setter) {
              const isWorldSim = !grid;
              const _get = (gx, gy) => isWorldSim ? getGrid(gx, gy) : (getIdx(gx, gy) !== -1 ? grid[getIdx(gx, gy)] : MAT.ROCK_WALL);
              const _set = (gx, gy, gtype) => {
                 if (isWorldSim) {
-                    setGrid(gx, gy, gtype);
+                    setGrid(gx, gy, gtype, true);
                     movedInFrame.add(coordToKey(gx, gy));
                 } else {
                     const gidx = getIdx(gx, gy);
                     if (gidx !== -1) { setter(gidx, gtype); moved[gidx] = 1; }
                 }
             };
+            
             const aboveType = _get(x, y - 1);
-            if ([MAT.EMPTY, MAT.WATER, MAT.SAND, MAT.SOIL, MAT.GUNPOWDER].includes(aboveType)) {
+
+            // --- START OF MODIFICATION: DENSITY CHECK ---
+            // If the space above is another gas, check densities
+            if (GASES.has(aboveType)) {
+                if (GAS_DENSITY[type] < GAS_DENSITY[aboveType]) {
+                    // This gas is lighter, so it should rise. Swap with the gas above.
+                    _set(x, y, aboveType);
+                    _set(x, y - 1, type);
+                    if(!isWorldSim && idx!==-1) moved[idx] = 1;
+                    return;
+                }
+            }
+            // Otherwise, check if it can rise into non-gas materials
+            else if ([MAT.EMPTY, MAT.WATER, MAT.OIL, MAT.ACID, MAT.SAND, MAT.SOIL, MAT.GUNPOWDER].includes(aboveType)) {
                 _set(x, y, aboveType);
-                _set(x, y - 1, MAT.GAS);
+                _set(x, y - 1, type);
                  if(!isWorldSim && idx!==-1) moved[idx] = 1;
                 return;
             }
-            tryMoveLiquidSide(x, y, MAT.GAS, Math.random() < 0.5 ? -1 : 1, 4, -1, idx, moved, grid, w, h, getIdx, setter);
+            // --- END OF MODIFICATION ---
+
+            // If it can't move up, try to move sideways
+            tryMoveLiquidSide(x, y, type, Math.random() < 0.5 ? -1 : 1, 4, -1, idx, moved, grid, w, h, getIdx, setter);
         }
 
         function tryMoveLiquidSide(x, y, type, dir, limit, vDir, idx, moved, grid, w, h, getIdx, setter) {
@@ -3424,18 +3593,25 @@
             const _getAux = (gx, gy) => isWorldSim ? getAuxData(etcChunkMap, gx, gy) : 0;
             
             let targetX = x;
-            const movable = [MAT.EMPTY, MAT.GAS, MAT.FIRE];
-            const allMovable = [...LIQUIDS, ...movable];
+            const movable = [MAT.EMPTY];
+            const allMovable = [...LIQUIDS, ...GASES, ...movable];
             for (let i = 1; i <= limit; i++) {
                 const nextX = x + (dir * i);
                 if (_getAux(nextX, y) === 1) break;
                 const content = _get(nextX, y);
+
+                if (GASES.has(type) && GASES.has(content)) {
+                    // A gas can only push a gas of equal or greater density sideways.
+                    if (GAS_DENSITY[type] < GAS_DENSITY[content]) break;
+                }
+
                 if (allMovable.includes(content) && type != content) {
                     targetX = nextX;
                     const vType = _get(nextX, y + vDir);
                     if (movable.includes(vType)) break;
                 } else break;
             }
+
             if (targetX !== x) {
                 const tType = _get(targetX, y);
                 _set(x, y, tType);
@@ -3912,7 +4088,7 @@
             const now = performance.now();
             const SPLIT_COOLDOWN_MS = 250, SPLIT_DELTA_THRESHOLD = 25;
             const RB_GAS_BUDGET_PER_BODY = 10, RB_GAS_CHANCE = 0.25;
-            const isStructural = (t)=>(t!==MAT.EMPTY&&t!==MAT.GAS);
+            const isStructural = (t)=>(t!==MAT.EMPTY&&!GASES.has(t));
 
             // --- START OF NEW CONSTANTS FOR EXPLOSION ---
             const BASE_BARREL_EXPLOSION_RADIUS = 4.0;
@@ -3933,7 +4109,7 @@
                         const worldMaterial = getGrid(wX+dx, wY+dy);
                         if(worldMaterial===MAT.ACID){ const oldT=body.pixels[lIdx],newT=MAT.EMPTY;if(oldT!==newT){body.pixels[lIdx]=newT;setGrid(wX+dx,wY+dy,MAT.EMPTY);pixelsChanged=true;if(isStructural(oldT)!==isStructural(newT))structuralEditsThisTick++;} continue body_pixel_loop; }
                         
-                        if((worldMaterial===MAT.FIRE||worldMaterial===MAT.OIL_BURNING||worldMaterial===MAT.COAL_BURNING)&&Math.random()<0.25){
+                        if((worldMaterial===MAT.FIRE||worldMaterial===MAT.OIL_BURNING||worldMaterial===MAT.COAL_BURNING||worldMaterial===MAT.METHANE_BURNING)&&Math.random()<0.25){
                             // --- START OF MODIFICATION: BARREL EXPLOSION LOGIC ---
                             const userData = body.body.getUserData();
                             if (userData.definitionId === 'wooden_barrel') {
@@ -3962,10 +4138,10 @@
                 }}
 
                 let rbGasBudget=RB_GAS_BUDGET_PER_BODY;
-                function emitGas(lIdx){ const lx=lIdx%body.width,ly=(lIdx/body.width)|0,lPos=pl.Vec2((lx-body.width/2+0.5)/B2_SCALE,(ly-body.height/2+0.5)/B2_SCALE),wPos=body.body.getWorldPoint(lPos),wx=Math.floor(wPos.x*B2_SCALE),wy=Math.floor(wPos.y*B2_SCALE); if(getGrid(wx,wy)===MAT.EMPTY||getGrid(wx,wy)===MAT.GAS)setGrid(wx,wy,MAT.GAS); }
-                const localSetter=(idx,type)=>{ if(idx===-1)return; const oldT=body.pixels[idx]; if(type===MAT.GAS){ if(rbGasBudget>0&&Math.random()<RB_GAS_CHANCE){emitGas(idx);rbGasBudget--;} const newT=MAT.EMPTY;if(oldT!==newT){body.pixels[idx]=newT;pixelsChanged=true;if(isStructural(oldT)!==isStructural(newT))structuralEditsThisTick++;} return; } if(oldT!==type){body.pixels[idx]=type;pixelsChanged=true;if(isStructural(oldT)!==isStructural(type))structuralEditsThisTick++;} };
+                function emitGas(lIdx){ const lx=lIdx%body.width,ly=(lIdx/body.width)|0,lPos=pl.Vec2((lx-body.width/2+0.5)/B2_SCALE,(ly-body.height/2+0.5)/B2_SCALE),wPos=body.body.getWorldPoint(lPos),wx=Math.floor(wPos.x*B2_SCALE),wy=Math.floor(wPos.y*B2_SCALE); if(getGrid(wx,wy)===MAT.EMPTY||getGrid(wx,wy)===MAT.SMOKE)setGrid(wx,wy,MAT.SMOKE); }
+                const localSetter=(idx,type)=>{ if(idx===-1)return; const oldT=body.pixels[idx]; if(type===MAT.SMOKE){ if(rbGasBudget>0&&Math.random()<RB_GAS_CHANCE){emitGas(idx);rbGasBudget--;} const newT=MAT.EMPTY;if(oldT!==newT){body.pixels[idx]=newT;pixelsChanged=true;if(isStructural(oldT)!==isStructural(newT))structuralEditsThisTick++;} return; } if(oldT!==type){body.pixels[idx]=type;pixelsChanged=true;if(isStructural(oldT)!==isStructural(type))structuralEditsThisTick++;} };
                 runSimulationOnSmallGrid(body.moved,body.pixels,body.width,body.height,localSetter);
-                if (pixelsChanged){ let leaks=0; for(let y=0;y<body.height&&leaks<3;y++){ for(let x=0;x<body.width&&leaks<3;x++){ if(body.pixels[y*body.width+x]!==MAT.FIRE)continue; const lPos=pl.Vec2((x-body.width/2+0.5)/B2_SCALE,(y-body.height/2+0.5)/B2_SCALE),wPos=body.body.getWorldPoint(lPos),wX=Math.floor(wPos.x*B2_SCALE),wY=Math.floor(wPos.y*B2_SCALE); const dirs=[{dx:1,dy:0},{dx:-1,dy:0},{dx:0,dy:1},{dx:0,dy:-1}],d=dirs[(Math.random()*dirs.length)|0]; const checkType=getGrid(wX+d.dx,wY+d.dy); if(checkType===MAT.EMPTY||checkType===MAT.GAS){setGrid(wX+d.dx,wY+d.dy,MAT.FIRE);leaks++;} }}}
+                if (pixelsChanged){ let leaks=0; for(let y=0;y<body.height&&leaks<3;y++){ for(let x=0;x<body.width&&leaks<3;x++){ if(body.pixels[y*body.width+x]!==MAT.FIRE)continue; const lPos=pl.Vec2((x-body.width/2+0.5)/B2_SCALE,(y-body.height/2+0.5)/B2_SCALE),wPos=body.body.getWorldPoint(lPos),wX=Math.floor(wPos.x*B2_SCALE),wY=Math.floor(wPos.y*B2_SCALE); const dirs=[{dx:1,dy:0},{dx:-1,dy:0},{dx:0,dy:1},{dx:0,dy:-1}],d=dirs[(Math.random()*dirs.length)|0]; const checkType=getGrid(wX+d.dx,wY+d.dy); if(checkType===MAT.EMPTY||checkType===MAT.SMOKE){setGrid(wX+d.dx,wY+d.dy,MAT.FIRE);leaks++;} }}}
                 if(structuralEditsThisTick>0)body.pendingStructuralDelta+=structuralEditsThisTick;
                 if(body.pendingStructuralDelta>=SPLIT_DELTA_THRESHOLD&&(now-body.lastSplitTime)>SPLIT_COOLDOWN_MS){body.needsShapeUpdate=true;body.pendingStructuralDelta=0;body.lastSplitTime=now;}
             }
@@ -4365,7 +4541,7 @@
                                 setAuxData(etcChunkMap, x, y, 8 + Math.floor(Math.random() * 6));
                                 break;
                             case MAT.WATER:
-                                setGrid(x, y, MAT.GAS);
+                                setGrid(x, y, MAT.STEAM);
                                 break;
                             default:
                                 changed = false;

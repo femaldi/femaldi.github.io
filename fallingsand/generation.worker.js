@@ -7,15 +7,19 @@ const CHUNK_SIZE = 16;
 const CHUNK_SIZE_SQ = 16 * 16;
 const SECTOR_SIZE = 512;
 
-// Material constants, must match index.html
 const MAT = {
-    EMPTY: 0, ROCK_WALL: 1, SAND: 2, WATER: 3, SOIL: 4, GAS: 5, 
+    EMPTY: 0, ROCK_WALL: 1, SAND: 2, WATER: 3, SOIL: 4, 
     WOOD: 10, FIRE: 11, GUNPOWDER: 12, GUNPOWDER_IGNITED: 13,
     OIL: 14, OIL_BURNING: 15,
     COAL:16, COAL_BURNING:17,
     ACID:18, GLASS:19, GLASS_WALL: 20,
     ADAMANTIUM: 21, COPPER: 22, SILVER: 23, GOLD: 24, PLATINUM: 25, RUNE_WALL: 26,
     SANDSTONE_WALL: 27, VOLCANIC_WALL: 28, LABYRINTH_WALL: 29, MAGIC_WALL: 30,
+    // --- START OF NEW MATERIALS ---
+    GROUND: 31, IRON: 32, RUSTED_IRON: 33, OBSIDIAN: 34,
+    LAVA: 40, 
+    STEAM: 50, SMOKE: 51, METHANE: 52, METHANE_BURNING: 53,
+    // --- END OF NEW MATERIALS ---
 };
 
 // Rune definitions for set pieces, must match index.html
@@ -298,7 +302,7 @@ self.onmessage = (event) => {
 
     if (type === 'init') {
         WORLD_SEED = seed; // Note: 'seed' is the correct property name from the event data
-        console.log("init:" + WORLD_SEED)
+        //console.log("init:" + WORLD_SEED)
         PerlinNoise.seed(WORLD_SEED);
         self.postMessage({ type: 'init-ack' });
         return;
@@ -307,7 +311,7 @@ self.onmessage = (event) => {
     if (type === 'generate-and-bake') {
         // This map will be populated with the newly generated terrain data
         const terrainMap = new Map();
-        console.log("Generate and bake", event.data)
+        //console.log("Generate and bake", event.data)
         const startX = sx * SECTOR_SIZE;
         const startY = sy * SECTOR_SIZE;
 
