@@ -1124,6 +1124,7 @@
 
         let tSimMs = 0, tRenderMs = 0, tOtherMs = 0, tOtherMs2 = 0, tOtherMs3 = 0;
         const movedInFrame = new Set();
+        let hoveredBody = null;
 
         const MAX_LIGHT_LEVEL = 30;
         const LIGHTING_UPDATE_INTERVAL = 30;
@@ -3926,6 +3927,52 @@
         // --- RENDERING ---
         function setPixel(x,y,r,g,b,a=255){ const i=(y*renderWidth+x)*4; pixels[i]=r; pixels[i+1]=g; pixels[i+2]=b; pixels[i+3]=a; }
 
+        // --- START OF NEW FUNCTION ---
+        /**
+         * Renders all dynamic rigid bodies, applying a highlight effect to the one under the cursor.
+         */
+        function renderRigidBodies() {
+            const BRIGHTNESS_BOOST = 40; // How much lighter to make the hovered object
+
+            for (const body of rigidBodies) {
+                if (!body.body || body.isDestroyed) continue;
+
+                const pos = body.body.getPosition(), angle = body.body.getAngle();
+                ctx.save();
+                ctx.translate(pos.x * B2_SCALE - camera.x, pos.y * B2_SCALE - camera.y);
+                ctx.rotate(angle);
+
+                const isHovered = (body === hoveredBody);
+
+                for (let y = 0; y < body.height; y++) {
+                    for (let x = 0; x < body.width; x++) {
+                        const type = body.pixels[y * body.width + x];
+                        if (type === MAT.EMPTY) continue;
+                        
+                        let r, g, b;
+                        // Get base color
+                        if (SHIMMERING_METALS.has(type)) { 
+                            [r, g, b] = metallicColor(x, y, COLORS[type]); 
+                        } else { 
+                            [r, g, b] = varyColor(...COLORS[type], x, y, type, 8); 
+                        }
+
+                        // If this is the hovered body, apply the brightness boost.
+                        if (isHovered) {
+                            r = Math.min(255, r + BRIGHTNESS_BOOST);
+                            g = Math.min(255, g + BRIGHTNESS_BOOST);
+                            b = Math.min(255, b + BRIGHTNESS_BOOST);
+                        }
+                        
+                        ctx.fillStyle = `rgb(${r|0},${g|0},${b|0})`;
+                        ctx.fillRect(x - body.width / 2, y - body.height / 2, 1, 1);
+                    }
+                }
+                ctx.restore();
+            }
+        }
+        // --- END OF NEW FUNCTION ---
+
         function render() {
             firePixelsCoords = [];
 
@@ -3993,26 +4040,7 @@
             ctx.putImageData(imageData, 0, 0);
             renderBloom();
 
-            // Render Rigid Bodies
-            for (const body of rigidBodies) {
-                if (!body.body) continue;
-                const pos = body.body.getPosition(), angle = body.body.getAngle();
-                ctx.save();
-                ctx.translate(pos.x * B2_SCALE - camera.x, pos.y * B2_SCALE - camera.y);
-                ctx.rotate(angle);
-                for (let y = 0; y < body.height; y++) {
-                    for (let x = 0; x < body.width; x++) {
-                        const type = body.pixels[y * body.width + x];
-                        if (type === MAT.EMPTY) continue;
-                        let r, g, b;
-                        if (SHIMMERING_METALS.has(type)) { [r, g, b] = metallicColor(x, y, COLORS[type]); } else { [r, g, b] = varyColor(...COLORS[type], x, y, type, 8); }
-                        ctx.fillStyle = `rgb(${r|0},${g|0},${b|0})`;
-                        ctx.fillRect(x - body.width / 2, y - body.height / 2, 1, 1);
-                    }
-                }
-                ctx.restore();
-            }
-
+            renderRigidBodies();
             
             // Player and Particles
             if (player.isSpawning) {
@@ -4415,7 +4443,48 @@
         function hashCell(x,y,type){ let h=x*374761393+y*668265263+type*1442695041; h=(h^(h>>13))*1274126177; return(h^(h>>16))&0xff; }
         function metallicColor(x,y,baseRGB){const[br,bg,bb]=baseRGB,s1=0.5+0.5*Math.sin((x*0.35)+(y*0.18)),s2=0.5+0.5*Math.sin((x*0.08)-(y*0.12)),t=0.65*s1+0.35*s2,glint=(Math.sin(x*0.9+y*0.25)>0.985)?0.25:0.0,m=0.85+0.35*t+glint,r=Math.min(255,Math.max(0,br*m)),g=Math.min(255,Math.max(0,bg*(m*0.98))),b=Math.min(255,Math.max(0,bb*(m*1.05)));return[r|0,g|0,b|0];}
         function varyColor(r,g,b,x,y,type,strength=18){ const n=hashCell(x,y,type)/255, delta=(n-0.5)*strength*2; return[Math.max(0,Math.min(255,r+delta)),Math.max(0,Math.min(255,g+delta)),Math.max(0,Math.min(255,b+delta))]; }
-        function updateHoverMaterial(){ hudMaterial = MATERIAL_NAME[getGrid(mouse.worldX, mouse.worldY)] || 'Unknown'; }
+        
+        function updateHoverMaterial(){
+            // Reset the hover target at the start of each check.
+            hoveredBody = null;
+            
+            const body = getRigidBodyAt(mouse.worldX, mouse.worldY);
+
+            if (body && body.body) {
+                const userData = body.body.getUserData();
+
+                // --- START OF REPLACEMENT LOGIC ---
+                // The main condition is now simply whether the object is pickupable.
+                if (userData && userData.isPickup) {
+                    // If it is, we want to highlight it.
+                    hoveredBody = body;
+
+                    // Now, we figure out what name to display in the UI.
+                    // Case 1: It's an object from a static definition (e.g., barrel, pickaxe).
+                    if (userData.definitionId) {
+                        const def = OBJECT_DEFINITIONS[userData.definitionId];
+                        if (def) {
+                            hudMaterial = def.name;
+                        }
+                    } 
+                    // Case 2: It's a dynamic object with a message title (i.e., a magic tablet).
+                    else if (userData.messageTitle) {
+                        hudMaterial = userData.messageTitle;
+                    } 
+                    // Fallback for any future pickup items that might not have a name.
+                    else {
+                        hudMaterial = 'Item';
+                    }
+                    
+                    return; // A pickupable item was found and handled, so we are done.
+                }
+                // --- END OF REPLACEMENT LOGIC ---
+            }
+
+            // If no pickupable rigid body was found, fall back to showing the material on the grid.
+            hudMaterial = MATERIAL_NAME[getGrid(mouse.worldX, mouse.worldY)] || 'Unknown';
+        }
+
         
         function generateRunicSlab(slabX,slabY,slabWidth,slabHeight,bgMat,runeMat) {
             for(let y=slabY;y<slabY+slabHeight;y++)for(let x=slabX;x<slabX+slabWidth;x++) setGrid(x,y,bgMat);
@@ -4960,7 +5029,7 @@
         function drawHUD(){
             ctx.imageSmoothingEnabled=false;ctx.font='8px monospace';ctx.textAlign='right';ctx.textBaseline='top';
             ctx.fillStyle='#00ff90';ctx.fillText(`FPS: ${hudFPS}`,renderWidth-6,6);
-            ctx.fillStyle='#ffd966';ctx.fillText(`MAT: ${hudMaterial}`,renderWidth-6,6+10);
+            ctx.fillStyle='#ffd966';ctx.fillText(`${hudMaterial}`,renderWidth-6,6+10);
         }
 
         function renderStationGeometryDebug() {
