@@ -3498,24 +3498,17 @@
 
             // --- Phase 1: Reactions ---
 
-            // High-priority check: Water flowing over fresh obsidian continues to cool the lava below it.
             if (type === MAT.WATER && _get(x, y + 1) === MAT.OBSIDIAN) {
-                
-                // --- START OF MODIFICATION: ADD PRE-CHECK FOR LAVA ---
-                // Before reacting, check if there is actually any lava "heat" source below the obsidian layer.
                 let isLavaBelow = false;
-                for (let i = 1; i <= LAVA_SOLIDIFICATION_DEPTH + 1; i++) { // Scan one deeper just in case
+                for (let i = 1; i <= LAVA_SOLIDIFICATION_DEPTH + 1; i++) {
                     if (_get(x, y + 1 + i) === MAT.LAVA) {
                         isLavaBelow = true;
-                        break; // Found a heat source, no need to keep checking.
+                        break;
                     }
                 }
 
-                // Only proceed with the reaction if the obsidian is still "hot" (i.e., has lava under it).
                 if (isLavaBelow) {
-                // --- END OF MODIFICATION ---
                     _set(x, y, MAT.STEAM);
-
                     const depthVariation = (PerlinNoise.noise(x * 0.1, 42) * 4);
                     const dynamicDepth = Math.max(2, LAVA_SOLIDIFICATION_DEPTH + Math.floor(depthVariation));
 
@@ -3533,8 +3526,6 @@
                 }
             }
 
-
-            // Original direct-contact reactions for initial obsidian creation.
             const DIRS_4 = [{x:0,y:1},{x:0,y:-1},{x:1,y:0},{x:-1,y:0}];
             for (const dir of DIRS_4) {
                 const nx = x + dir.x, ny = y + dir.y;
@@ -3567,10 +3558,27 @@
 
             // --- Phase 2: Behaviors (if no reaction occurred) ---
             if (type === MAT.LAVA) {
+                //
+                // --- START OF MODIFICATION ---
+                // Spread heat to neighbors AND melt obsidian
                 for (const dir of DIRS_4) {
-                    if (isWorldSim) tryIgniteAt(x + dir.x, y + dir.y, 0.4);
+                    const nx = x + dir.x;
+                    const ny = y + dir.y;
+                    const nType = _get(nx, ny);
+
+                    // New logic: Small chance to melt adjacent obsidian back into lava
+                    if (isWorldSim && nType === MAT.OBSIDIAN) ensureChunkIsActive(x, y);
+                    if (nType === MAT.OBSIDIAN && Math.random() < 0.005) { // 1% chance per neighbor per frame
+                        _set(nx, ny, MAT.LAVA);
+                        
+                    }
+
+                    // Existing logic: Ignite flammable materials
+                    if (isWorldSim) tryIgniteAt(nx, ny, 0.4);
                 }
+                // --- END OF MODIFICATION ---
             }
+
             if (type === MAT.ACID) {
                 let consumed = false;
                 for (const dir of DIRS_4) {
