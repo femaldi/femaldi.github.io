@@ -1104,6 +1104,7 @@
         // Off-screen canvas for the bloom effect
         let bloomCanvas;
         let bloomCtx;
+        let bloomGrid; 
         // --- End of new variables ---
 
         let pendingActiveChunks = []; // An array to hold active chunks that were deferred from the previous frame.
@@ -4304,22 +4305,54 @@
         }
 
         function renderBloom() {
-            const bloomResolution = 4, blurPasses = 3;
-            bloomCtx.clearRect(0, 0, bloomCanvas.width, bloomCanvas.height);
-            bloomCtx.globalCompositeOperation = 'source-over';
-            const camX = Math.floor(camera.x), camY = Math.floor(camera.y);
+            const bloomResolution = 4;
+            const blurPasses = 3;
+            const bloomWidth = bloomCanvas.width;
+            const bloomHeight = bloomCanvas.height;
+            const MAX_COMPOUND_INTENSITY = 1.5; // This is the limit you requested!
 
+            // --- PASS 1: Accumulate bloom intensity into the grid ---
+            bloomGrid.fill(0); // Clear the grid for the new frame.
+            
+            const camX = Math.floor(camera.x);
+            const camY = Math.floor(camera.y);
+
+            // Iterate all VISIBLE pixels on the main screen
             for (let y = 0; y < viewHeight; y++) {
                 for (let x = 0; x < viewWidth; x++) {
                     const type = getGrid(x + camX, y + camY);
                     const bloomConfig = BLOOM_MATERIALS[type];
+                    
                     if (bloomConfig) {
-                        const [r, g, b] = bloomConfig.color;
-                        bloomCtx.fillStyle = `rgba(${r},${g},${b},${bloomConfig.intensity})`;
-                        bloomCtx.fillRect(x/bloomResolution,y/bloomResolution,1,1);
+                        // Find the corresponding cell in our low-resolution grid
+                        const bx = Math.floor(x / bloomResolution);
+                        const by = Math.floor(y / bloomResolution);
+                        const bloomIdx = by * bloomWidth + bx;
+
+                        // Add this pixel's intensity to the grid cell, but cap it at the max value.
+                        const currentIntensity = bloomGrid[bloomIdx];
+                        bloomGrid[bloomIdx] = Math.min(MAX_COMPOUND_INTENSITY, currentIntensity + bloomConfig.intensity);
                     }
                 }
             }
+
+            // --- PASS 2: Render the accumulated grid to the bloom canvas ---
+            bloomCtx.clearRect(0, 0, bloomWidth, bloomHeight);
+            bloomCtx.globalCompositeOperation = 'source-over';
+            
+            // Now, iterate the small bloom grid (much faster than the whole screen)
+            for (let by = 0; by < bloomHeight; by++) {
+                for (let bx = 0; bx < bloomWidth; bx++) {
+                    const intensity = bloomGrid[by * bloomWidth + bx];
+                    if (intensity > 0) {
+                        // We use a generic bright color. The intensity is what matters.
+                        bloomCtx.fillStyle = `rgba(255, 220, 180, ${intensity})`;
+                        bloomCtx.fillRect(bx, by, 1, 1);
+                    }
+                }
+            }
+
+            // --- The rest of the function (blurring and drawing) is unchanged ---
             bloomCtx.globalCompositeOperation = 'copy';
             for (let i = 0; i < blurPasses; i++) {
                 bloomCtx.filter = `blur(${1 << i}px)`;
@@ -5176,6 +5209,7 @@
             bloomCanvas.width = renderWidth / bloomResolution;
             bloomCanvas.height = renderHeight / bloomResolution;
             bloomCtx = bloomCanvas.getContext('2d');
+            bloomGrid = new Float32Array(bloomCanvas.width * bloomCanvas.height);
 
             updateLoadingStatus('Carving Background Strata...');
             await yieldToBrowser();
