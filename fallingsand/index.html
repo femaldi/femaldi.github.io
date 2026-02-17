@@ -1083,6 +1083,7 @@
         const REGEN_COOLDOWN = 250;
         const REBUILD_COOLDOWN = 250;
         const MIN_ISLAND_PIXELS = 5;
+        const LAVA_SOLIDIFICATION_DEPTH = 10;
 
         // --- Add these new variables ---
         const BLOOM_MATERIALS = {
@@ -3389,7 +3390,7 @@
             timer--;
 
             if (timer <= 0) {
-                _set(x, y, MAT.SMOKE);
+                Math.random() < 0.2 ? _set(x, y, MAT.SMOKE) : _set(x, y, MAT.EMPTY);
                 if (isWorldSim) setAuxData(etcChunkMap, x, y, 0);
                 if(!isWorldSim && idx!==-1) moved[idx] = 1;
                 return;
@@ -3493,27 +3494,89 @@
                     if (gidx !== -1) { setter(gidx, gtype); moved[gidx] = 1; }
                 }
             };
-             const _getAux = (gx, gy) => isWorldSim ? getAuxData(etcChunkMap, gx, gy) : 0;
+            const _getAux = (gx, gy) => isWorldSim ? getAuxData(etcChunkMap, gx, gy) : 0;
 
-            if (type === MAT.LAVA) {
-                for (const n of [{x:0,y:1},{x:0,y:-1},{x:1,y:0},{x:-1,y:0}]) {
-                    const nx = x + n.x, ny = y + n.y;
-                    const nType = _get(nx, ny);
-                    if (nType === MAT.WATER) {
-                        _set(x, y, MAT.OBSIDIAN);
-                        _set(nx, ny, MAT.STEAM);
-                        if(!isWorldSim && idx!==-1) moved[idx] = 1; return;
+            // --- Phase 1: Reactions ---
+
+            // High-priority check: Water flowing over fresh obsidian continues to cool the lava below it.
+            if (type === MAT.WATER && _get(x, y + 1) === MAT.OBSIDIAN) {
+                
+                // --- START OF MODIFICATION: ADD PRE-CHECK FOR LAVA ---
+                // Before reacting, check if there is actually any lava "heat" source below the obsidian layer.
+                let isLavaBelow = false;
+                for (let i = 1; i <= LAVA_SOLIDIFICATION_DEPTH + 1; i++) { // Scan one deeper just in case
+                    if (_get(x, y + 1 + i) === MAT.LAVA) {
+                        isLavaBelow = true;
+                        break; // Found a heat source, no need to keep checking.
                     }
-                    if (isWorldSim) tryIgniteAt(nx, ny, 0.4);
+                }
+
+                // Only proceed with the reaction if the obsidian is still "hot" (i.e., has lava under it).
+                if (isLavaBelow) {
+                // --- END OF MODIFICATION ---
+                    _set(x, y, MAT.STEAM);
+
+                    const depthVariation = (PerlinNoise.noise(x * 0.1, 42) * 4);
+                    const dynamicDepth = Math.max(2, LAVA_SOLIDIFICATION_DEPTH + Math.floor(depthVariation));
+
+                    for (let i = 1; i <= dynamicDepth; i++) {
+                        const scanY = y + 1 + i;
+                        const scannedCell = _get(x, scanY);
+                        
+                        if (scannedCell === MAT.LAVA) {
+                            _set(x, scanY, MAT.OBSIDIAN);
+                        } else if (scannedCell !== MAT.OBSIDIAN) {
+                            break;
+                        }
+                    }
+                    if(!isWorldSim && idx!==-1) moved[idx] = 1; return;
                 }
             }
 
+
+            // Original direct-contact reactions for initial obsidian creation.
+            const DIRS_4 = [{x:0,y:1},{x:0,y:-1},{x:1,y:0},{x:-1,y:0}];
+            for (const dir of DIRS_4) {
+                const nx = x + dir.x, ny = y + dir.y;
+                const nType = _get(nx, ny);
+
+                if (type === MAT.LAVA && nType === MAT.WATER) {
+                    _set(nx, ny, MAT.STEAM);
+                    for (let dy = -1; dy <= 1; dy++) {
+                        for (let dx = -1; dx <= 1; dx++) {
+                            if (_get(nx + dx, ny + dy) === MAT.LAVA) {
+                                _set(nx + dx, ny + dy, MAT.OBSIDIAN);
+                            }
+                        }
+                    }
+                    if(!isWorldSim && idx!==-1) moved[idx] = 1; return;
+                }
+                if (type === MAT.WATER && nType === MAT.LAVA) {
+                    _set(x, y, MAT.STEAM);
+                    for (let dy = -1; dy <= 1; dy++) {
+                        for (let dx = -1; dx <= 1; dx++) {
+                            if (_get(x + dx, y + dy) === MAT.LAVA) {
+                                _set(x + dx, y + dy, MAT.OBSIDIAN);
+                            }
+                        }
+                    }
+                    if(!isWorldSim && idx!==-1) moved[idx] = 1; return;
+                }
+            }
+
+
+            // --- Phase 2: Behaviors (if no reaction occurred) ---
+            if (type === MAT.LAVA) {
+                for (const dir of DIRS_4) {
+                    if (isWorldSim) tryIgniteAt(x + dir.x, y + dir.y, 0.4);
+                }
+            }
             if (type === MAT.ACID) {
                 let consumed = false;
-                for (const n of [{x:0,y:1},{x:0,y:-1},{x:1,y:0},{x:-1,y:0}]) {
-                    const nx = x + n.x, ny = y + n.y;
+                for (const dir of DIRS_4) {
+                    const nx = x + dir.x, ny = y + dir.y;
                     const nType = _get(nx, ny);
-                    const isImmune = [MAT.EMPTY,MAT.GLASS,MAT.GLASS_WALL,MAT.ADAMANTIUM,MAT.RUNE_WALL,MAT.OBSIDIAN].includes(nType);
+                    const isImmune = [MAT.EMPTY,MAT.GLASS,MAT.GLASS_WALL,MAT.ADAMANTIUM,MAT.RUNE_WALL, MAT.OBSIDIAN, ...GASES].includes(nType);
                     if (!isImmune && !isLiquid(nType) && Math.random() < 0.25) {
                         _set(nx, ny, MAT.EMPTY);
                         if (Math.random() < 0.2) { _set(x, y, MAT.EMPTY); consumed = true; break; }
@@ -3521,22 +3584,30 @@
                 }
                 if (consumed) { if(!isWorldSim && idx!==-1) moved[idx] = 1; return; }
             }
-            if (_getAux(x, y + 1) === 1) {
+             if (type === MAT.OIL_BURNING) {
+                updateBurningOil(x, y, idx, moved, grid, w, h, getIdx, setter);
+             }
+
+
+            // --- Phase 3: Movement (if no reaction occurred) ---
+            if (_getAux(x, y + 1) === 1) { 
                 tryMoveLiquidSide(x, y, type, Math.random() < 0.5 ? -1 : 1, 20, 1, idx, moved, grid, w, h, getIdx, setter);
-                if (_get(x, y) === MAT.OIL_BURNING) updateBurningOil(x, y, idx, moved, grid, w, h, getIdx, setter);
                 return;
             }
             const belowType = _get(x, y + 1);
             if (belowType === MAT.FIRE) {
                 if (type === MAT.OIL) _set(x, y, MAT.OIL_BURNING);
-                else { _set(x, y, MAT.SMOKE); _set(x, y + 1, MAT.SMOKE); }
+                else { _set(x, y, MAT.STEAM); _set(x, y + 1, MAT.STEAM); } 
                 if(!isWorldSim && idx!==-1) moved[idx] = 1;
                 return;
             }
-            if ([MAT.EMPTY, ...GASES].includes(belowType)) { _set(x, y, belowType); _set(x, y + 1, type); if(!isWorldSim && idx!==-1) moved[idx] = 1; return; }
-            if (LIQUID_DENSITY[type] > LIQUID_DENSITY[belowType]) { _set(x, y, belowType); _set(x, y + 1, type); if(!isWorldSim && idx!==-1) moved[idx] = 1; return; }
+            if ([MAT.EMPTY, ...GASES].includes(belowType)) { 
+                _set(x, y, belowType); _set(x, y + 1, type); if(!isWorldSim && idx!==-1) moved[idx] = 1; return;
+            }
+            if (LIQUID_DENSITY[type] > LIQUID_DENSITY[belowType]) { 
+                _set(x, y, belowType); _set(x, y + 1, type); if(!isWorldSim && idx!==-1) moved[idx] = 1; return;
+            }
             tryMoveLiquidSide(x, y, type, Math.random() < 0.5 ? -1 : 1, 20, 1, idx, moved, grid, w, h, getIdx, setter);
-            if (_get(x, y) === MAT.OIL_BURNING) updateBurningOil(x, y, idx, moved, grid, w, h, getIdx, setter);
         }
 
         function updateGas(x, y, type, idx, moved, grid, w, h, getIdx, setter) {
