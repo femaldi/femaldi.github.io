@@ -255,6 +255,10 @@
             }
         });
 
+        const TOOLBAR_SLOT_SIZE = 32;
+        const TOOLBAR_SLOT_SPACING = 12;
+        const TOOLBAR_STACK_OFFSET = 3;
+
         const B2_SCALE = 30; // 30 pixels = 1 meter in the physics world
         let rigidBodies = [];
         let staticWorldBodies = []; // To hold temporary terrain colliders
@@ -1155,8 +1159,8 @@
         // --- INVENTORY AND CONTAINERS ---
         const pouchWidth = 32;
         const pouchHeight = 32;
-        const flaskWidth = 24;
-        const flaskHeight = 40;
+        const flaskWidth = 32;
+        const flaskHeight = 32;
 
         let pouchGrid = new Array(pouchWidth * pouchHeight).fill(MAT.EMPTY);
         let flaskGrid = new Array(flaskWidth * flaskHeight).fill(MAT.EMPTY);
@@ -2280,7 +2284,9 @@
             structurePocket: [],
             unlockedReactions: ['clear_cauldrons'],
             maxToolSlots: 1,
-            maxStructureSlots: 1
+            maxStructureSlots: 1,
+            toolIndex: 0,
+            structureIndex: 0,
         };
         const camera = { x: player.x - viewWidth / 2, y: player.y - viewHeight / 2 };
         const floatingArrow = {
@@ -2357,34 +2363,40 @@
                 return;
             }
 
-            if (e.code === 'KeyL') {
-                debugMode = !debugMode;
-                return;
-            }
+            // Gameplay inputs
+            switch (e.code) {
+                // Toolbar selection
+                case 'Digit1': activeContainer = 'flask'; break;
+                case 'Digit2': activeContainer = 'pouch'; break;
+                case 'Digit3': activeContainer = 'tool'; break;
+                case 'Digit4': activeContainer = 'structure'; break;
 
-            if (e.code === 'KeyP') {
-                saveMapToImage(); // This function needs to be re-thought for an infinite world
-                return;
-            }
+                // Toolbar item cycling
+                case 'KeyQ':
+                    if (activeContainer === 'tool' && player.toolPocket.length > 0) {
+                        player.toolIndex = (player.toolIndex + 1) % player.toolPocket.length;
+                    } else if (activeContainer === 'structure' && player.structurePocket.length > 0) {
+                        player.structureIndex = (player.structureIndex + 1) % player.structurePocket.length;
+                    }
+                    break;
 
-            keys[e.code] = true;
-            
-            if (e.code === 'KeyQ') {
-                const cycle = ['pouch', 'flask', 'tool', 'structure'];
-                const currentIndex = cycle.indexOf(activeContainer);
-                const nextIndex = (currentIndex + 1) % cycle.length;
-                activeContainer = cycle[nextIndex];
-            }
-
-            if (e.code === 'KeyE' && player.canInteract && player.currentInteractable) {
-                const interactable = player.currentInteractable;
+                // Player interaction
+                case 'KeyE':
+                    if (player.canInteract && player.currentInteractable) {
+                        const interactable = player.currentInteractable;
+                        if (interactable.type === 'trigger') interactable.target.onInteract(interactable.target);
+                        else if (interactable.type === 'object') pickupObject(interactable.target);
+                    }
+                    break;
                 
-                if (interactable.type === 'trigger') {
-                    const trigger = interactable.target;
-                    trigger.onInteract(trigger); // Call the trigger's function
-                } else if (interactable.type === 'object') {
-                    pickupObject(interactable.target); // Call the pickup function
-                }
+                // Debug / Util keys
+                case 'KeyL': debugMode = !debugMode; break;
+                case 'KeyP': saveMapToImage(); break;
+
+                // Default to player movement keys
+                default:
+                    keys[e.code] = true;
+                    break;
             }
         });
 
@@ -2774,7 +2786,12 @@
                         break;
                     case 'structure':
                          if (player.structurePocket.length > 0) {
-                             const bodyToPlace = player.structurePocket.shift(); // Get the stored RigidBody
+                             const bodyToPlace = player.structurePocket.splice(player.structureIndex, 1)[0];
+                             
+                             // Reset index if it's now out of bounds
+                             if (player.structureIndex >= player.structurePocket.length) {
+                                 player.structureIndex = 0;
+                             }
                              
                              // Re-create its physics body at the mouse cursor location
                              bodyToPlace.reintroduceToWorld(mouse.worldX, mouse.worldY);
@@ -4037,6 +4054,7 @@
 
             ctx.strokeStyle = 'rgba(255,255,255,0.2)'; ctx.lineWidth = 0.5; ctx.beginPath(); ctx.moveTo(wandScreenX, wandScreenY); ctx.lineTo(mouse.x / scale, mouse.y / scale); ctx.stroke();
 
+            renderToolbar();
             renderDialogueUI();
             renderPlayerStatsUI();
             renderAlchemyUI();
@@ -4101,7 +4119,7 @@
 
             // Try to render a tool if it's the active container
             if (activeContainer === 'tool' && player.toolPocket.length > 0) {
-                const toolName = player.toolPocket[0];
+                const toolName = player.toolPocket[player.toolIndex];
                 const toolDef = Object.values(OBJECT_DEFINITIONS).find(d => d.name === toolName);
                 if (toolDef) {
                     renderItemInHand(toolDef.pixels, toolDef.width, toolDef.height, handX, handY, aim.aimAngle, aim.facingRight);
@@ -4110,7 +4128,7 @@
             }
             // Try to render a structure if it's the active container
             else if (activeContainer === 'structure' && player.structurePocket.length > 0) {
-                const body = player.structurePocket[0];
+                const body = player.structurePocket[player.structureIndex];
                 renderItemInHand(body.pixels, body.width, body.height, handX, handY, aim.aimAngle, aim.facingRight);
                 itemRendered = true;
             }
@@ -4227,73 +4245,95 @@
             }
         }
 
-        function renderContainers() {
-            const commonY = 40;
-            const pouchX = renderWidth - pouchWidth - 12;
-            const flaskX = pouchX - flaskWidth - 8;
+        // --- START OF REPLACEMENT ---
+        function renderToolbar() {
+            const numSlots = 4;
+            const totalWidth = (numSlots * TOOLBAR_SLOT_SIZE) + ((numSlots - 1) * TOOLBAR_SLOT_SPACING);
+            const startX = Math.floor((renderWidth - totalWidth) / 2);
+            const startY = renderHeight - TOOLBAR_SLOT_SIZE - 10;
+
+            // 1. FLASK
+            drawToolbarSlot(startX, startY, 'Flask', flaskGrid, flaskWidth, flaskHeight, 1, activeContainer === 'flask');
             
-            renderContainer(pouchGrid,pouchWidth,pouchHeight,pouchX,commonY,activeContainer==='pouch');
-            renderContainer(flaskGrid,flaskWidth,flaskHeight,flaskX,commonY,activeContainer==='flask');
-
-            const pocketW = 48, pocketH = 24;
-            const toolX = flaskX - pocketW - 8;
-            const structX = toolX - pocketW - 8;
+            // 2. POUCH
+            drawToolbarSlot(startX + TOOLBAR_SLOT_SIZE + TOOLBAR_SLOT_SPACING, startY, 'Pouch', pouchGrid, pouchWidth, pouchHeight, 1, activeContainer === 'pouch');
             
-            // --- START OF MODIFICATION: TOOL POCKET VISUALS ---
-            ctx.fillStyle='rgba(0,0,0,0.5)'; ctx.fillRect(toolX-2,commonY-2,pocketW+4,pocketH+4);
-            ctx.strokeStyle=activeContainer==='tool'?'white':'#888'; ctx.lineWidth=2; ctx.strokeRect(toolX-2,commonY-2,pocketW+4,pocketH+4);
-            if (player.toolPocket.length > 0) {
-                const toolName = player.toolPocket[0];
-                const toolDef = Object.values(OBJECT_DEFINITIONS).find(d => d.name === toolName);
+            // 3. TOOL
+            drawToolbarSlot(startX + 2 * (TOOLBAR_SLOT_SIZE + TOOLBAR_SLOT_SPACING), startY, '<Tool>', player.toolPocket, 0, 0, player.maxToolSlots, activeContainer === 'tool');
 
-                if (toolDef) {
-                    const scale = Math.min((pocketW - 4) / toolDef.width, (pocketH - 4) / toolDef.height);
-                    const renderW = toolDef.width * scale;
-                    const renderH = toolDef.height * scale;
-                    const offsetX = toolX + (pocketW - renderW) / 2;
-                    const offsetY = commonY + (pocketH - renderH) / 2;
+            // 4. STRUCTURE
+            drawToolbarSlot(startX + 3 * (TOOLBAR_SLOT_SIZE + TOOLBAR_SLOT_SPACING), startY, '<Structure>', player.structurePocket, 0, 0, player.maxStructureSlots, activeContainer === 'structure');
+        }
 
-                    for (let y = 0; y < toolDef.height; y++) {
-                        for (let x = 0; x < toolDef.width; x++) {
-                            const type = toolDef.pixels[y * toolDef.width + x];
+        function drawToolbarSlot(screenX, screenY, label, content, contentW, contentH, maxSlots, isActive) {
+            // Draw stacked card effect
+            ctx.fillStyle = 'rgba(0,0,0,0.5)';
+            for (let i = 0; i < maxSlots; i++) {
+                ctx.strokeRect(screenX - i * TOOLBAR_STACK_OFFSET, screenY - i * TOOLBAR_STACK_OFFSET, TOOLBAR_SLOT_SIZE, TOOLBAR_SLOT_SIZE);
+            }
+
+            // Draw main slot background
+            ctx.fillRect(screenX, screenY, TOOLBAR_SLOT_SIZE, TOOLBAR_SLOT_SIZE);
+            
+            // Draw highlight for active slot
+            ctx.strokeStyle = isActive ? 'white' : '#888';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(screenX, screenY, TOOLBAR_SLOT_SIZE, TOOLBAR_SLOT_SIZE);
+
+            // Draw content
+            if (label === '<Tool>' || label === '<Structure>') {
+                const isTool = label === '<Tool>';
+                const pocket = isTool ? player.toolPocket : player.structurePocket;
+                const index = isTool ? player.toolIndex : player.structureIndex;
+
+                if (pocket.length === 0) {
+                    ctx.fillStyle = '#888';
+                    ctx.font = '8px monospace';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText(label, screenX + TOOLBAR_SLOT_SIZE / 2, screenY + TOOLBAR_SLOT_SIZE / 2);
+                } else {
+                    const item = pocket[index];
+                    const pixels = isTool ? Object.values(OBJECT_DEFINITIONS).find(d => d.name === item)?.pixels : item.pixels;
+                    const itemW = isTool ? 16 : item.width; // Default width for tools
+                    const itemH = isTool ? 16 : item.height; // Default height
+
+                    if(pixels) {
+                        const scale = Math.min((TOOLBAR_SLOT_SIZE - 8) / itemW, (TOOLBAR_SLOT_SIZE - 8) / itemH);
+                        const renderW = itemW * scale;
+                        const renderH = itemH * scale;
+                        const offsetX = screenX + (TOOLBAR_SLOT_SIZE - renderW) / 2;
+                        const offsetY = screenY + (TOOLBAR_SLOT_SIZE - renderH) / 2;
+
+                        for (let y = 0; y < itemH; y++) for (let x = 0; x < itemW; x++) {
+                            const type = pixels[y * itemW + x];
                             if (type !== MAT.EMPTY) {
                                 const color = COLORS[type];
                                 if(color) {
-                                    ctx.fillStyle = `rgb(${color[0]}, ${color[1]}, ${color[2]})`;
+                                    ctx.fillStyle = `rgb(${color[0]},${color[1]},${color[2]})`;
                                     ctx.fillRect(offsetX + x * scale, offsetY + y * scale, scale, scale);
                                 }
                             }
                         }
                     }
                 }
-            }
-            // --- END OF MODIFICATION ---
-
-            // Structure Pocket
-            ctx.fillStyle='rgba(0,0,0,0.5)'; ctx.fillRect(structX-2,commonY-2,pocketW+4,pocketH+4);
-            ctx.strokeStyle=activeContainer==='structure'?'white':'#888'; ctx.lineWidth=2; ctx.strokeRect(structX-2,commonY-2,pocketW+4,pocketH+4);
-             if (player.structurePocket.length > 0) {
-                const body = player.structurePocket[0]; 
-                const scale = Math.min((pocketW - 4) / body.width, (pocketH - 4) / body.height);
-                const renderW = body.width * scale;
-                const renderH = body.height * scale;
-                const offsetX = structX + (pocketW - renderW) / 2;
-                const offsetY = commonY + (pocketH - renderH) / 2;
-
-                for (let y = 0; y < body.height; y++) {
-                    for (let x = 0; x < body.width; x++) {
-                        const type = body.pixels[y * body.width + x];
-                        if (type !== MAT.EMPTY) {
-                            const color = COLORS[type];
-                            if(color) {
-                                ctx.fillStyle = `rgb(${color[0]}, ${color[1]}, ${color[2]})`;
-                                ctx.fillRect(offsetX + x * scale, offsetY + y * scale, scale, scale);
-                            }
-                        }
+            } else { // Flask or Pouch
+                for(let y=0;y<contentH;y++) for(let x=0;x<contentW;x++){
+                    const type=content[getIdx(x,y,contentW,contentH)];
+                    if(type!==MAT.EMPTY){
+                        const [r,g,b] = varyColor(...COLORS[type],x,y,type,8);
+                        ctx.fillStyle=`rgb(${r},${g},${b})`;
+                        ctx.fillRect(screenX+x,screenY+y,1,1);
                     }
                 }
-             }
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+                ctx.font = 'bold 8px monospace';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(label, screenX + TOOLBAR_SLOT_SIZE / 2, screenY + TOOLBAR_SLOT_SIZE / 2);
+            }
         }
+        // --- END OF REPLACEMENT ---
 
         function renderContainer(cGrid,cW,cH,screenX,screenY,isActive) {
             ctx.fillStyle='rgba(0,0,0,0.5)'; ctx.fillRect(screenX-2,screenY-2,cW+4,cH+4);
@@ -4885,7 +4925,7 @@
             const t2 = performance.now();
             // --- RENDER LOGIC ---
             render();
-            renderContainers();
+            
             drawHUD();
             tRenderMs = performance.now() - t2;
             
