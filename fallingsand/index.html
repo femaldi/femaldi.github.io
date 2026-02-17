@@ -333,6 +333,7 @@
 
             let messageTitle = "Upgrade Acquired!";
             let messageText = "Your abilities have been enhanced.";
+            let name = "Magic Tablet: ";
 
             // --- Engrave the pattern AND define the message based on the upgrade type ---
             switch (upgradeType) {
@@ -340,9 +341,11 @@
                     const key = data.reactionKey;
                     if (key === 'filter_material') {
                         messageTitle = "Reaction Unlocked: Filter";
+                        name += "Filter";
                         messageText = "Separates impurities. Place a mixture in the LEFT cauldron, place the material to be filtered in the sampler and activate. The sampled material will move to the RIGHT cauldron.";
                     } else if (key === 'heat_material') {
                         messageTitle = "Reaction Unlocked: Heat";
+                        name += "Heat";
                         messageText = "Applies intense heat to materials in the LEFT cauldron, causing transmutation.";
                     }
                     // Draw a simple rune pattern
@@ -358,6 +361,7 @@
 
                 case 'increase_tool_slots':
                     messageTitle = "Tool Pouch Expanded!";
+                    name += "Additional Tool Slot";
                     messageText = "You can now carry one additional tool.";
                     // Draw a simple pickaxe shape
                     const toolShape = ["01100110","00110100","00011000","00011000","00011000","00011000"];
@@ -372,6 +376,7 @@
 
                 case 'increase_structure_slots':
                     messageTitle = "Structure Bag Expanded!";
+                    name += "Additional Structure Slot";
                     messageText = "You can now carry one additional placeable structure.";
                      // Draw a simple square outline
                      for(let i = 0; i < 8; i++) {
@@ -383,7 +388,7 @@
                     break;
             }
 
-            const body = new RigidBody(x, y, width, height, MAT.MAGIC_WALL);
+            const body = new RigidBody(x, y, width, height, MAT.MAGIC_WALL, name);
             body.pixels = pixels;
             body.rebuildFixtures();
 
@@ -418,7 +423,7 @@
                 return;
             }
 
-            const body = new RigidBody(x, y, def.width, def.height, MAT.WOOD); // Material is placeholder
+            const body = new RigidBody(x, y, def.width, def.height, MAT.WOOD, def.name); // Material is placeholder
             body.pixels = new Uint8Array(def.pixels);
             body.rebuildFixtures();
 
@@ -1498,7 +1503,8 @@
         }
 
         class RigidBody {
-            constructor(x, y, width, height, material) {
+            constructor(x, y, width, height, material, name = 'Object') {
+                this.name = name;
                 this.width = width;
                 this.height = height;
                 this.pixels = new Uint8Array(width * height);
@@ -1791,7 +1797,7 @@
                     const nx = p.x-minX, ny = p.y-minY;
                     newPixels[ny*newWidth+nx] = body.pixels[p.y*body.width+p.x];
                 }
-                const nb = new RigidBody(worldX, worldY, newWidth, newHeight, body.materialType);
+                const nb = new RigidBody(worldX, worldY, newWidth, newHeight, body.materialType, body.name);
                 nb.pixels = newPixels;
                 nb.rebuildFixtures();
                 nb.body.setAngle(oldAngle);
@@ -4209,7 +4215,7 @@
         }
 
         // --- END OF NEW FUNCTION ---
-		function createWoodenBox(x,y,width=16,height=16){const box=new RigidBody(x,y,width,height,MAT.WOOD);rigidBodies.push(box);}
+		function createWoodenBox(x,y,width=16,height=16){const box=new RigidBody(x,y,width,height,MAT.WOOD, "Wooden Box");rigidBodies.push(box);}
         
         function updateRigidBodyInteractions() {
             const now = performance.now();
@@ -4445,46 +4451,33 @@
         function metallicColor(x,y,baseRGB){const[br,bg,bb]=baseRGB,s1=0.5+0.5*Math.sin((x*0.35)+(y*0.18)),s2=0.5+0.5*Math.sin((x*0.08)-(y*0.12)),t=0.65*s1+0.35*s2,glint=(Math.sin(x*0.9+y*0.25)>0.985)?0.25:0.0,m=0.85+0.35*t+glint,r=Math.min(255,Math.max(0,br*m)),g=Math.min(255,Math.max(0,bg*(m*0.98))),b=Math.min(255,Math.max(0,bb*(m*1.05)));return[r|0,g|0,b|0];}
         function varyColor(r,g,b,x,y,type,strength=18){ const n=hashCell(x,y,type)/255, delta=(n-0.5)*strength*2; return[Math.max(0,Math.min(255,r+delta)),Math.max(0,Math.min(255,g+delta)),Math.max(0,Math.min(255,b+delta))]; }
         
+        // --- START OF REPLACEMENT ---
         function updateHoverMaterial(){
-            // Reset the hover target at the start of each check.
+            // Reset the highlight target at the start of each check.
             hoveredBody = null;
             
             const body = getRigidBodyAt(mouse.worldX, mouse.worldY);
 
+            // If the cursor is over any rigid body...
             if (body && body.body) {
+                // ...display its name in the HUD.
+                hudMaterial = body.name || 'Object';
+
+                // Then, check if it's specifically a pickupable item.
                 const userData = body.body.getUserData();
-
-                // --- START OF REPLACEMENT LOGIC ---
-                // The main condition is now simply whether the object is pickupable.
                 if (userData && userData.isPickup) {
-                    // If it is, we want to highlight it.
+                    // If it is pickupable, highlight it.
                     hoveredBody = body;
-
-                    // Now, we figure out what name to display in the UI.
-                    // Case 1: It's an object from a static definition (e.g., barrel, pickaxe).
-                    if (userData.definitionId) {
-                        const def = OBJECT_DEFINITIONS[userData.definitionId];
-                        if (def) {
-                            hudMaterial = def.name;
-                        }
-                    } 
-                    // Case 2: It's a dynamic object with a message title (i.e., a magic tablet).
-                    else if (userData.messageTitle) {
-                        hudMaterial = userData.messageTitle;
-                    } 
-                    // Fallback for any future pickup items that might not have a name.
-                    else {
-                        hudMaterial = 'Item';
-                    }
-                    
-                    return; // A pickupable item was found and handled, so we are done.
                 }
-                // --- END OF REPLACEMENT LOGIC ---
+                
+                // We've handled the rigid body, so we're done.
+                return;
             }
 
-            // If no pickupable rigid body was found, fall back to showing the material on the grid.
+            // If no rigid body was found, fall back to showing the material on the static grid.
             hudMaterial = MATERIAL_NAME[getGrid(mouse.worldX, mouse.worldY)] || 'Unknown';
         }
+        // --- END OF REPLACEMENT ---
 
         
         function generateRunicSlab(slabX,slabY,slabWidth,slabHeight,bgMat,runeMat) {
@@ -5433,6 +5426,8 @@
                 y: STATION_FLOOR_Y - 16,
                 dialogueTreeId: 'ylialkemisti_main'
             });
+
+            createWoodenBox(750,STATION_FLOOR_Y - 100, 32, 32);
 
             const stationPieceDef = SetPieceManager.setPieces.find(p => p.name === 'AlchemistStation');
             if (stationPieceDef) {
