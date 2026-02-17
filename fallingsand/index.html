@@ -1929,19 +1929,22 @@
                     name: "Caves",
                     // Defines the biome's boundaries based on the player's spawn point.
                     getBounds: (spawnSX, spawnSY) => ({
-                        x1: spawnSX - 4,
+                        // --- START OF MODIFICATION ---
+                        // Changed from spawnSX - 4 and spawnSX + 4 to expand the biome width to 20 sectors.
+                        x1: spawnSX - 10,
                         y1: spawnSY,
-                        x2: spawnSX + 4,
+                        x2: spawnSX + 9, 
                         y2: spawnSY + 24,
+                        // --- END OF MODIFICATION ---
                     }),
                     // Determines generation parameters for a specific sector within this biome.
                     getGenerationParams: function(sx, sy, bounds) {
                         const sectorsPerLayer = 5;
                         const layerIndex = Math.floor((sy - bounds.y1) / sectorsPerLayer);
                         
-                        // Return a simple object describing how the worker should generate this sector.
                         return {
-                            layer: Math.min(4, layerIndex) // Clamp to max layer index
+                            layer: Math.min(4, layerIndex), // Clamp to max layer index
+                            bounds: bounds // Pass the biome boundaries to the worker
                         };
                     }
                 }
@@ -1961,8 +1964,6 @@
                 return null; // No biome found for this sector
             }
         };
-
-        // --- In index.html ---
 
         const SetPieceManager = {
             setPieces: [
