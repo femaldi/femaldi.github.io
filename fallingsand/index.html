@@ -796,6 +796,20 @@
             // --- END OF NEW NAMES ---
         };
 
+        const MATERIAL_DENSITY = {
+            // Default player density is 1.0. Higher numbers are heavier.
+            [MAT.WOOD]: 0.7,
+            [MAT.GLASS]: 1.2,
+            [MAT.ROCK_WALL]: 2.5, // Not a rigid body, but for reference
+            [MAT.COPPER]: 8.9,
+            [MAT.IRON]: 7.8,
+            [MAT.RUSTED_IRON]: 7.8,
+            [MAT.SILVER]: 10.5,
+            [MAT.GOLD]: 19.3,
+            [MAT.PLATINUM]: 21.4,
+            [MAT.ADAMANTIUM]: 50.0 // Make it extremely heavy
+        };
+
         const WALL_TYPES = new Set([
             MAT.ROCK_WALL, MAT.SANDSTONE_WALL, MAT.VOLCANIC_WALL, 
             MAT.LABYRINTH_WALL, MAT.MAGIC_WALL
@@ -1402,6 +1416,17 @@
                 const key = coordToKey(sx, sy);
                 sectorGrid.set(key, { state: 'ready', sx: sx, sy: sy });
 
+                const setPiecesInSector = SetPieceManager.getSetPiecesForSector(sx, sy);
+                for (const pieceInfo of setPiecesInSector) {
+                    // We must find the original full definition to get the hook *function*.
+                    const pieceDef = SetPieceManager.setPieces.find(p => p.name === pieceInfo.name);
+                    if (pieceDef && pieceDef.postGenerationHook) {
+                        // The 'pieceInfo' object already contains the final calculated world 'bounds'.
+                        // We execute the hook now.
+                        pieceDef.postGenerationHook(pieceInfo);
+                    }
+                }
+
                 isGenerating = false;
                 isRenderCacheInvalid = true; // Invalidate cache now that all data is ready
             }
@@ -1528,6 +1553,34 @@
                 this._createFixturesFromPixels(); 
             }
 
+            _createSimpleBoxFixture() {
+                // First, remove any fixtures that might have been created by the constructor
+                let f = this.body.getFixtureList();
+                while (f) {
+                    const next = f.getNext();
+                    this.body.destroyFixture(f);
+                    f = next;
+                }
+
+                // Create a new box shape, making it slightly smaller than the visual body
+                const halfWidth = (this.width / 2) / B2_SCALE;
+                const halfHeight = (this.height / 2) / B2_SCALE;
+                
+                // Ensure dimensions are not negative if the object is very small
+                if (halfWidth <= 0 || halfHeight <= 0) return;
+
+                const shape = pl.Box(halfWidth, halfHeight);
+                const density = MATERIAL_DENSITY[this.materialType] || 1.0;
+
+                this.body.createFixture(shape, { 
+                    density: density, 
+                    friction: 0.6, 
+                    restitution: 0.1 
+                });
+
+                this.body.resetMassData();
+            }
+
             reintroduceToWorld(x, y) {
                 // If it somehow already has a body, do nothing.
                 if (this.body) return;
@@ -1595,6 +1648,7 @@
                     return;
                 }
 
+                const density = MATERIAL_DENSITY[this.materialType] || 1.0;
                 const islands = extractIslands(mask, w, h);
 
                 for (const island of islands) {
@@ -1629,7 +1683,7 @@
                             : [pl.Vec2(ax,ay), pl.Vec2(bx,by), pl.Vec2(cx,cy)];
 
                         try {
-                            this.body.createFixture(pl.Polygon(verts), { density: 1.0, friction: 0.6, restitution: 0.1 });
+                            this.body.createFixture(pl.Polygon(verts), { density: density, friction: 0.6, restitution: 0.1 });
                             this.fixtureCount++;
                         } catch (e) { continue; }
                     }
@@ -1971,6 +2025,209 @@
             }
         };
 
+        // --- START OF REPLACEMENT ---
+        /**
+         * Creates a simple, rectangular rigid body, first clearing the space for it in the world grid.
+         * @param {number} worldX - The world X-coordinate for the top-left corner.
+         * @param {number} worldY - The world Y-coordinate for the top-left corner.
+         * @param {number} width - The width of the rectangle.
+         * @param {number} height - The height of the rectangle.
+         * @param {number} material - The MAT id to fill the body with.
+         */
+        function createRigidBodyRectangle(worldX, worldY, width, height, material) {
+            // --- START OF MODIFICATION ---
+            // Step 1: Carve out the space in the static world grid before creating the body.
+            // This ensures the background terrain is removed.
+            for (let iy = worldY; iy < worldY + height; iy++) {
+                for (let ix = worldX; ix < worldX + width; ix++) {
+                    // Set the underlying grid pixel to EMPTY.
+                    setGrid(ix, iy, MAT.EMPTY);
+                    // Ensure the chunks are activated so lighting and physics colliders update correctly.
+                    activateChunkAt(ix, iy);
+                }
+            }
+            // --- END OF MODIFICATION ---
+
+            // Step 2: Create the dynamic RigidBody object as before.
+            const centerX = worldX + width / 2;
+            const centerY = worldY + height / 2;
+            
+            const name = MATERIAL_NAME[material] || 'Block';
+
+            const body = new RigidBody(centerX, centerY, width, height, material, name);
+            body._createSimpleBoxFixture();
+            rigidBodies.push(body);
+        }
+        // --- END OF REPLACEMENT ---
+
+        // --- START OF REPLACEMENT: parseSetPieceImage ---
+        /**
+         * Parses image data into a format the game can use, now with rigid body detection.
+         * @param {ImageData} imageData - The raw pixel data from a canvas.
+         * @returns {object} An object containing parsed data for terrain, treasures, and rigid bodies.
+         */
+        function parseSetPieceImage(imageData) {
+            console.log("--- Starting Set Piece Image Parsing (v2) ---");
+            const unmatchedColors = new Set();
+
+            const colorToMaterialMap = new Map();
+            for (const matId in COLORS) {
+                const color = COLORS[matId];
+                const key = `${color[0]},${color[1]},${color[2]}`;
+                colorToMaterialMap.set(key, parseInt(matId));
+            }
+            console.log(`Built color-to-material map with ${colorToMaterialMap.size} entries.`);
+
+            const { width, height, data } = imageData;
+            // Use a signed array to allow for a special value (-1) for "transparent"
+            const pixels = new Int16Array(width * height).fill(-1);
+            const rigidBodies = [];
+            let treasureCoords = null;
+            
+            // --- Define special colors ---
+            const treasureColor = { r: 1, g: 1, b: 1 };
+            const emptyColor = { r: 255, g: 255, b: 255 };
+            const rigidBodyMarkerColor = { r: 100, g: 100, b: 0 };
+            
+            const visited = new Uint8Array(width * height); // Prevents reprocessing pixels for rigid bodies
+
+            for (let y = 0; y < height; y++) {
+                for (let x = 0; x < width; x++) {
+                    const idx = y * width + x;
+                    if (visited[idx]) continue; // Skip if already part of a processed rigid body
+
+                    const i = idx * 4;
+                    const r = data[i], g = data[i + 1], b = data[i + 2], a = data[i + 3];
+
+                    // Rule: Transparent pixels are ignored (-1), letting the biome show through.
+                    if (a < 128) {
+                        pixels[idx] = -1; // -1 means "do not touch the world"
+                        continue;
+                    }
+
+                    // Rule: Check for rigid body marker (100, 100, 0)
+                    if (r === rigidBodyMarkerColor.r && g === rigidBodyMarkerColor.g && b === rigidBodyMarkerColor.b) {
+                        visited[idx] = 1;
+                        pixels[idx] = MAT.EMPTY; // The marker itself isn't drawn
+
+                        // The body's material is the color of the pixel to the immediate right
+                        const bodyPixelIndex = (y * width + (x + 1)) * 4;
+                        const bodyR = data[bodyPixelIndex], bodyG = data[bodyPixelIndex + 1], bodyB = data[bodyPixelIndex + 2];
+                        const bodyColorKey = `${bodyR},${bodyG},${bodyB}`;
+                        
+                        if (colorToMaterialMap.has(bodyColorKey)) {
+                            const bodyMaterial = colorToMaterialMap.get(bodyColorKey);
+                            
+                            // Scan to find the bounds of this single-color rectangle
+                            let endX = x + 1;
+                            while (endX < width && data[(y * width + endX) * 4] === bodyR && data[(y * width + endX) * 4 + 1] === bodyG && data[(y * width + endX) * 4 + 2] === bodyB) {
+                                endX++;
+                            }
+                            let endY = y;
+                            while (endY < height && data[(endY * width + x + 1) * 4] === bodyR && data[(endY * width + x + 1) * 4 + 1] === bodyG && data[(endY * width + x + 1) * 4 + 2] === bodyB) {
+                                endY++;
+                            }
+
+                            const rbWidth = endX - (x + 1);
+                            const rbHeight = endY - y;
+
+                            if (rbWidth > 0 && rbHeight > 0) {
+                                console.log(`Found Rigid Body definition: Material ${bodyMaterial}, Size ${rbWidth}x${rbHeight}`);
+                                rigidBodies.push({ x: x + 1, y: y, width: rbWidth, height: rbHeight, material: bodyMaterial });
+                                
+                                // Mark the entire area as visited and set pixels to MAT.EMPTY
+                                for (let ry = y; ry < endY; ry++) {
+                                    for (let rx = x; rx < endX; rx++) {
+                                        const rIdx = ry * width + rx;
+                                        visited[rIdx] = 1;
+                                        pixels[rIdx] = MAT.EMPTY;
+                                    }
+                                }
+                            }
+                        }
+                        continue;
+                    }
+
+                    // Rule: Treasure marker (1, 1, 1)
+                    if (r === treasureColor.r && g === treasureColor.g && b === treasureColor.b) {
+                        treasureCoords = { x, y };
+                        pixels[idx] = -1; // Marker is not drawn
+                        console.log(`Found treasure marker at local coords: {x: ${x}, y: ${y}}`);
+                        continue;
+                    }
+                    
+                    // Rule: Explicit empty (255, 255, 255)
+                    if (r === emptyColor.r && g === emptyColor.g && b === emptyColor.b) {
+                        pixels[idx] = MAT.EMPTY; // Explicitly carve empty space
+                        continue;
+                    }
+
+                    // Standard color lookup
+                    const colorKey = `${r},${g},${b}`;
+                    if (colorToMaterialMap.has(colorKey)) {
+                        pixels[idx] = colorToMaterialMap.get(colorKey);
+                    } else {
+                        pixels[idx] = -1; // Default to transparent if color is not found
+                        if (!unmatchedColors.has(colorKey)) {
+                            console.warn(`Unmatched color found in image: rgb(${r}, ${g}, ${b}). Treating as transparent.`);
+                            unmatchedColors.add(colorKey);
+                        }
+                    }
+                }
+            }
+            
+            console.log("Image parsing complete. Result:", { width, height, treasureCoords, rigidBodies });
+            console.log("--- Finished Set Piece Image Parsing ---");
+            
+            return { width, height, pixels, treasureCoords, rigidBodies };
+        }
+        // --- END OF REPLACEMENT ---
+
+        const SetPieceLoader = {
+            async loadAll() {
+                const imagePieces = SetPieceManager.setPieces.filter(p => p.imagePath);
+                if (imagePieces.length === 0) return;
+
+                const promises = imagePieces.map(piece => {
+                    return new Promise((resolve, reject) => {
+                        const img = new Image();
+                        img.crossOrigin = "Anonymous";
+                        img.src = piece.imagePath;
+
+                        img.onload = () => {
+                            const tempCanvas = document.createElement('canvas');
+                            const tempCtx = tempCanvas.getContext('2d');
+                            tempCanvas.width = img.width;
+                            tempCanvas.height = img.height;
+                            tempCtx.drawImage(img, 0, 0);
+
+                            const imageData = tempCtx.getImageData(0, 0, img.width, img.height);
+                            
+                            // --- START OF MODIFICATION ---
+                            // The loader's only job is to parse the image data.
+                            // The final world bounds will be calculated later.
+                            piece.parsedData = parseSetPieceImage(imageData);
+                            console.log(`%cSuccessfully loaded and parsed image for: ${piece.name}`, 'color: #76ff7a;');
+                            // --- END OF MODIFICATION ---
+
+                            resolve();
+                        };
+
+                        img.onerror = () => {
+                            // --- START OF MODIFICATION: LOGGING ---
+                            console.error(`Failed to load set piece image: ${piece.imagePath}`);
+                            // Keep the promise going so one bad image doesn't stop the game from loading.
+                            resolve(); 
+                            // --- END OF MODIFICATION ---
+                        };
+                    });
+                });
+
+                await Promise.all(promises);
+            }
+        };
+        // --- END OF NEW CODE ---
+
         const SetPieceManager = {
             setPieces: [
                 {
@@ -2039,32 +2296,115 @@
 
                         return hookData; // Return the data so other systems can use it
                     }
-                }
+                },
+                {
+                    name: "ForgottenShrine",
+                    imagePath: '/assets/wood_puzzle.png',
+                    spawnLocalX: 256, // World X-coordinate for the center
+                    spawnLocalY: 256, // World Y-coordinate for the center
+                    targetSectorOffsetX: 2,  // Spawn 2 sectors to the right
+                    targetSectorOffsetY: 0,  // Spawn in the same horizontal layer
+                    bounds: null,      // This will be calculated by the loader
+                    parsedData: null,  // This will be filled by the loader
+                    postGenerationHook: function(piece) {
+                        // Safety check to ensure the image was parsed correctly before proceeding.
+                        if (!piece.parsedData) {
+                            console.warn(`postGenerationHook for '${piece.name}' was called, but no parsedData was found.`);
+                            return;
+                        }
+
+                        // --- Part 1: Spawn Treasure ---
+                        // Check if the parser found treasure coordinates in the image.
+                        if (piece.parsedData.treasureCoords) {
+                            // Calculate the absolute world coordinates of the treasure marker.
+                            const treasureWorldX = piece.bounds.x + piece.parsedData.treasureCoords.x;
+                            const treasureWorldY = piece.bounds.y + piece.parsedData.treasureCoords.y;
+                            
+                            console.log(`Spawning treasure for '${piece.name}' at:`, treasureWorldX, treasureWorldY);
+                            
+                            // Call the function to create the treasure item at that location.
+                            createMagicTablet(treasureWorldX, treasureWorldY, 'increase_tool_slots');
+                        }
+                        
+                        // --- Part 2: Spawn Rigid Bodies ---
+                        // Check if the parser found a list of rigid body definitions.
+                        if (piece.parsedData.rigidBodies) {
+                            console.log(`Spawning ${piece.parsedData.rigidBodies.length} rigid body/bodies for '${piece.name}'.`);
+
+                            // Loop through each rigid body definition found in the image.
+                            for (const rbDef of piece.parsedData.rigidBodies) {
+                                // Calculate the absolute world coordinates for the top-left corner of the rigid body.
+                                const worldX = piece.bounds.x + rbDef.x;
+                                const worldY = piece.bounds.y + rbDef.y;
+
+                                // Call the helper function to create the rectangular rigid body in the world.
+                                createRigidBodyRectangle(worldX, worldY, rbDef.width, rbDef.height, rbDef.material);
+                            }
+                        }
+                    }
+                },
             ],
             
+            // --- START OF REPLACEMENT ---
             getSetPiecesForSector: function(sx, sy) {
-                const overlapping = [];
-                const sectorBounds = {
-                    x1: sx * SECTOR_SIZE, y1: sy * SECTOR_SIZE,
-                    x2: (sx + 1) * SECTOR_SIZE, y2: (sy + 1) * SECTOR_SIZE
-                };
+                const piecesForSector = [];
 
                 for (const piece of this.setPieces) {
-                    const pieceBounds = piece.getBounds();
-                    const pieceBoundsRect = { x1: pieceBounds.x, y1: pieceBounds.y, x2: pieceBounds.x + pieceBounds.width, y2: pieceBounds.y + pieceBounds.height };
+                    // Case 1: Image-based piece with explicit sector assignment
+                    if (piece.targetSectorOffsetX !== undefined) {
+                        const targetSX = playerSpawnSX + piece.targetSectorOffsetX;
+                        const targetSY = playerSpawnSY + piece.targetSectorOffsetY;
 
-                    if (sectorBounds.x1 < pieceBoundsRect.x2 && sectorBounds.x2 > pieceBoundsRect.x1 &&
-                        sectorBounds.y1 < pieceBoundsRect.y2 && sectorBounds.y2 > pieceBoundsRect.y1) {
-                        
-                        // This part is correct: send only cloneable data to the worker.
-                        overlapping.push({
-                            name: piece.name,
-                            bounds: pieceBounds
-                        });
+                        // If the sector we are generating (sx, sy) is the exact target for this piece...
+                        if (sx === targetSX && sy === targetSY) {
+                            if (!piece.parsedData) {
+                                console.warn(`Set piece '${piece.name}' was matched to this sector but its image data is missing.`);
+                                continue; // Skip this piece if parsing failed
+                            }
+
+                            // ...calculate its final world bounds and add it directly. No overlap check needed.
+                            const halfW = Math.floor(piece.parsedData.width / 2);
+                            const halfH = Math.floor(piece.parsedData.height / 2);
+                            const centerX = (sx * SECTOR_SIZE) + piece.spawnLocalX;
+                            const centerY = (sy * SECTOR_SIZE) + piece.spawnLocalY;
+
+                            const pieceBounds = {
+                                x: centerX - halfW,
+                                y: centerY - halfH,
+                                width: piece.parsedData.width,
+                                height: piece.parsedData.height
+                            };
+
+                            piecesForSector.push({
+                                name: piece.name,
+                                bounds: pieceBounds,
+                                parsedData: piece.parsedData
+                            });
+                        }
+                    }
+                    // Case 2: Procedural piece that can span multiple sectors (needs overlap check)
+                    else if (piece.getBounds) {
+                        const pieceBounds = piece.getBounds();
+                        const sectorBounds = {
+                            x1: sx * SECTOR_SIZE, y1: sy * SECTOR_SIZE,
+                            x2: (sx + 1) * SECTOR_SIZE, y2: (sy + 1) * SECTOR_SIZE
+                        };
+                        const pieceBoundsRect = { x1: pieceBounds.x, y1: pieceBounds.y, x2: pieceBounds.x + pieceBounds.width, y2: pieceBounds.y + pieceBounds.height };
+
+                        // Check if this procedural piece overlaps with the current sector
+                        if (sectorBounds.x1 < pieceBoundsRect.x2 && sectorBounds.x2 > pieceBoundsRect.x1 &&
+                            sectorBounds.y1 < pieceBoundsRect.y2 && sectorBounds.y2 > pieceBoundsRect.y1) {
+                            
+                            piecesForSector.push({
+                                name: piece.name,
+                                bounds: pieceBounds
+                            });
+                        }
                     }
                 }
-                return overlapping;
+                return piecesForSector;
             }
+            // --- END OF REPLACEMENT ---
         };
 
         /**
@@ -2420,6 +2760,79 @@
         function despawnFloatingArrow() {
             floatingArrow.isVisible = false;
         }
+
+        // --- START OF REPLACEMENT ---
+        /**
+         * Renders the outline of all physics colliders on the screen for debugging.
+         * Now supports Polygon, Circle, and Chain shapes.
+         */
+        function renderColliderGeometry() {
+            ctx.lineWidth = 1;
+
+            for (let body = world.getBodyList(); body; body = body.getNext()) {
+                const bodyType = body.getType();
+                let color = 'rgba(200, 200, 200, 0.7)';
+
+                if (bodyType === 'dynamic') {
+                    color = 'rgba(255, 50, 50, 0.7)'; // Red for dynamic
+                } else if (bodyType === 'static') {
+                    color = 'rgba(50, 255, 50, 0.7)'; // Green for static
+                }
+                ctx.strokeStyle = color;
+
+                for (let fixture = body.getFixtureList(); fixture; fixture = fixture.getNext()) {
+                    const shape = fixture.getShape();
+                    const type = fixture.getType(); // Get the fixture type once
+                    
+                    ctx.beginPath();
+
+                    if (type === 'polygon') {
+                        const vertices = shape.m_vertices;
+                        if (vertices.length === 0) continue;
+
+                        let worldPoint = body.getWorldPoint(vertices[0]);
+                        ctx.moveTo(worldPoint.x * B2_SCALE - camera.x, worldPoint.y * B2_SCALE - camera.y);
+
+                        for (let i = 1; i < vertices.length; i++) {
+                            worldPoint = body.getWorldPoint(vertices[i]);
+                            ctx.lineTo(worldPoint.x * B2_SCALE - camera.x, worldPoint.y * B2_SCALE - camera.y);
+                        }
+                        
+                        ctx.closePath();
+
+                    } else if (type === 'circle') {
+                        const localCenter = shape.m_p;
+                        const radius = shape.m_radius;
+                        
+                        const worldCenter = body.getWorldPoint(localCenter);
+                        const screenX = worldCenter.x * B2_SCALE - camera.x;
+                        const screenY = worldCenter.y * B2_SCALE - camera.y;
+
+                        ctx.arc(screenX, screenY, radius * B2_SCALE, 0, 2 * Math.PI);
+                    
+                    // --- START OF MODIFICATION: ADDED LOGIC FOR CHAIN SHAPES ---
+                    } else if (type === 'chain') {
+                        const vertices = shape.m_vertices;
+                        if (vertices.length === 0) continue;
+
+                        // The drawing logic for a chain is identical to a polygon's outline
+                        let worldPoint = body.getWorldPoint(vertices[0]);
+                        ctx.moveTo(worldPoint.x * B2_SCALE - camera.x, worldPoint.y * B2_SCALE - camera.y);
+
+                        for (let i = 1; i < vertices.length; i++) {
+                            worldPoint = body.getWorldPoint(vertices[i]);
+                            ctx.lineTo(worldPoint.x * B2_SCALE - camera.x, worldPoint.y * B2_SCALE - camera.y);
+                        }
+                        // We created the chain as a closed loop, so we can close the path here
+                        ctx.closePath();
+                    // --- END OF MODIFICATION ---
+                    }
+                    
+                    ctx.stroke();
+                }
+            }
+        }
+        // --- END OF REPLACEMENT ---
 
         function renderFloatingArrow() {
             if (!floatingArrow.isVisible) return;
@@ -5000,6 +5413,7 @@
 
             if (debugMode) {
                 renderDebugUI();
+                renderColliderGeometry();
                 ctx.fillStyle = "white";
                 ctx.font = "8px monospace";
                 ctx.textAlign = "right";
@@ -5301,6 +5715,10 @@
             generationWorker.postMessage({ type: 'init', seed: WORLD_SEED });
 
             PerlinNoise.seed(WORLD_SEED);
+
+            updateLoadingStatus('Parsing Set Piece Blueprints...');
+            await yieldToBrowser();
+            await SetPieceLoader.loadAll();
             
             staticPixelBuffer = new Uint8ClampedArray(renderWidth * renderHeight * 4);
             isRenderCacheInvalid = true;
@@ -5510,31 +5928,59 @@
             world.step(1 / 60);
         }
 
+        // --- START OF REPLACEMENT ---
+        /**
+         * Generates a static physics body for a chunk's solid terrain using efficient pl.Chain shapes.
+         * This creates clean outlines instead of messy triangulated meshes.
+         * @param {object} chunk - The chunk object containing the terrain data.
+         * @returns {object} The newly created planck.js Body.
+         */
         function generateStaticBodyForChunk(chunk) {
-            const body=world.createBody({type:'static'});
-            const startX=chunk.cx*CHUNK_SIZE, startY=chunk.cy*CHUNK_SIZE;
-            const mask=new Uint8Array(CHUNK_SIZE*CHUNK_SIZE);
-            for(let y=0;y<CHUNK_SIZE;y++)for(let x=0;x<CHUNK_SIZE;x++){
-                const wX=startX+x, wY=startY+y;
-                mask[y*CHUNK_SIZE+x]=isSolidForPlayer(getGrid(wX,wY)) && getAuxData(etcChunkMap, wX, wY) !== 1 ? 1 : 0;
-            }
-            const islands=extractIslands(mask,CHUNK_SIZE,CHUNK_SIZE);
-            for(const island of islands){
-                const outline=marchingSquares(island,CHUNK_SIZE,CHUNK_SIZE); if(outline.length<3)continue;
-                const simplifiedPre=simplifyDouglasPeucker(outline,0.2); if(simplifiedPre.length<3)continue;
-                const simplified=removeCollinear(simplifiedPre,0.001); if(simplified.length<3)continue;
-                validatePolygon(simplified);
-                const flat=[];for(const p of simplified)flat.push(p.x,p.y);
-                const indices=earcut(flat);
-                for(let i=0;i<indices.length;i+=3){
-                    const p0=simplified[indices[i]],p1=simplified[indices[i+1]],p2=simplified[indices[i+2]];
-                    const ax=(startX+p0.x)/B2_SCALE,ay=(startY+p0.y)/B2_SCALE,bx=(startX+p1.x)/B2_SCALE,by=(startY+p1.y)/B2_SCALE,cx=(startX+p2.x)/B2_SCALE,cy=(startY+p2.y)/B2_SCALE;
-                    body.createFixture(pl.Polygon([pl.Vec2(ax,ay),pl.Vec2(bx,by),pl.Vec2(cx,cy)]));
+            const body = world.createBody({ type: 'static' });
+            const startX = chunk.cx * CHUNK_SIZE;
+            const startY = chunk.cy * CHUNK_SIZE;
+
+            // Step 1: Create a binary mask of solid terrain (same as before).
+            const mask = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE);
+            for (let y = 0; y < CHUNK_SIZE; y++) {
+                for (let x = 0; x < CHUNK_SIZE; x++) {
+                    const wX = startX + x;
+                    const wY = startY + y;
+                    mask[y * CHUNK_SIZE + x] = isSolidForPlayer(getGrid(wX, wY)) && getAuxData(etcChunkMap, wX, wY) !== 1 ? 1 : 0;
                 }
             }
+
+            // Step 2: Extract contiguous islands of solid pixels (same as before).
+            const islands = extractIslands(mask, CHUNK_SIZE, CHUNK_SIZE);
+
+            // Step 3: For each island, create a single, efficient Chain fixture.
+            for (const island of islands) {
+                // Find and simplify the outline (same as before).
+                const outline = marchingSquares(island, CHUNK_SIZE, CHUNK_SIZE);
+                if (outline.length < 3) continue;
+                const simplifiedPre = simplifyDouglasPeucker(outline, 0.2);
+                if (simplifiedPre.length < 3) continue;
+                const simplified = removeCollinear(simplifiedPre, 0.001);
+                if (simplified.length < 3) continue;
+
+                // --- NEW LOGIC: Create a pl.Chain instead of triangulating ---
+
+                // Convert the simplified local points to world-space physics coordinates.
+                const worldVertices = simplified.map(p => 
+                    pl.Vec2((startX + p.x) / B2_SCALE, (startY + p.y) / B2_SCALE)
+                );
+
+                // Create a Chain shape. The 'true' flag creates a closed loop, which is perfect for terrain.
+                const chainShape = pl.Chain(worldVertices, true);
+
+                // Create a single fixture for the entire island's outline.
+                body.createFixture(chainShape);
+            }
+
             body.setActive(false);
             return body;
         }
+        // --- END OF REPLACEMENT ---
         
         function renderPlayerStatsUI() {
             const barW = 75,

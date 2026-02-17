@@ -19,6 +19,7 @@ const MAT = {
     GROUND: 31, IRON: 32, RUSTED_IRON: 33, OBSIDIAN: 34,
     LAVA: 40, 
     STEAM: 50, SMOKE: 51, METHANE: 52, METHANE_BURNING: 53,
+    SEALANT: 98,
     // --- END OF NEW MATERIALS ---
 };
 
@@ -326,41 +327,76 @@ self.onmessage = (event) => {
     }
 
     if (type === 'generate-and-bake') {
+        if (setPieces && setPieces.length > 0) {
+            console.log(`[WORKER] Received generate-and-bake for sector [${sx}, ${sy}] with set pieces:`, setPieces);
+        }
+
         // This map will be populated with the newly generated terrain data
         const terrainMap = new Map();
         //console.log("Generate and bake", event.data)
         const startX = sx * SECTOR_SIZE;
         const startY = sy * SECTOR_SIZE;
 
-        // Main generation loop for every pixel in the sector
         for (let y = 0; y < SECTOR_SIZE; y++) {
             for (let x = 0; x < SECTOR_SIZE; x++) {
                 const worldX = startX + x;
                 const worldY = startY + y;
                 
-                let finalTerrainType = MAT.EMPTY;
-                let setPieceRendered = false;
+                let finalTerrainType = null; // Use null to mean "not yet determined"
 
-                // --- PRIORITY 1: Render Set Pieces ---
-                // Check if any set pieces overlap with this pixel.
+                // --- Set Piece Pass: Check for any set piece modifications first ---
                 if (setPieces && setPieces.length > 0) {
                     for (const piece of setPieces) {
-                        const generator = SetPieceGenerators[piece.name];
-                        if (generator) {
-                            const pieceMaterial = generator.generate(worldX, worldY, piece.bounds);
-                            // If the generator returns a material, use it and stop checking other pieces.
-                            if (pieceMaterial !== null) {
-                                finalTerrainType = pieceMaterial;
-                                setPieceRendered = true;
-                                break; 
+                        // Priority 1: Carve out space for rigid bodies defined in the set piece.
+                        // This takes precedence over everything else.
+                        if (piece.parsedData && piece.parsedData.rigidBodies) {
+                            for (const rbDef of piece.parsedData.rigidBodies) {
+                                const rbWorldX = piece.bounds.x + rbDef.x;
+                                const rbWorldY = piece.bounds.y + rbDef.y;
+                                // Check if the current pixel is inside this rigid body's rectangular area.
+                                if (worldX >= rbWorldX && worldX < rbWorldX + rbDef.width &&
+                                    worldY >= rbWorldY && worldY < rbWorldY + rbDef.height) {
+                                    finalTerrainType = MAT.EMPTY;
+                                    break; // Found our answer for this piece, stop checking its RBs.
+                                }
+                            }
+                        }
+                        // If we carved a space, we can stop checking other set pieces for this pixel.
+                        if (finalTerrainType !== null) break;
+
+                        // Priority 2: Stamp the static terrain from the set piece's image.
+                        if (piece.parsedData) {
+                            const localX = worldX - piece.bounds.x;
+                            const localY = worldY - piece.bounds.y;
+
+                            if (localX >= 0 && localX < piece.bounds.width && localY >= 0 && localY < piece.bounds.height) {
+                                const pixelIndex = localY * piece.bounds.width + localX;
+                                const pieceMaterial = piece.parsedData.pixels[pixelIndex];
+                                
+                                // A value of -1 means transparent. Any other value (including MAT.EMPTY) gets stamped.
+                                if (pieceMaterial !== -1) {
+                                    finalTerrainType = pieceMaterial;
+                                    break; // Found our answer, stop checking other pieces.
+                                } else {console.log("transparent pixel at" + worldX + "," + worldY)}
+                            }
+                        }
+                        // Priority 3: Handle procedural set pieces (like the Alchemist Station).
+                        else {
+                            const generator = SetPieceGenerators[piece.name];
+                            if (generator) {
+                                const pieceMaterial = generator.generate(worldX, worldY, piece.bounds);
+                                if (pieceMaterial !== null) {
+                                    finalTerrainType = pieceMaterial;
+                                    break; // Found our answer, stop checking other pieces.
+                                }
                             }
                         }
                     }
                 }
 
-                // --- PRIORITY 2: Generate Biome Terrain ---
-                // If no set piece rendered a pixel here, generate the underlying biome.
-                if (!setPieceRendered) {
+                // --- Biome Generation Pass (Fallback) ---
+                // If after checking all set pieces, the material is still undetermined, generate the biome.
+                if (finalTerrainType === null) {
                     switch (biomeInfo.name) {
                         case "Caves":
                             finalTerrainType = generateCavesPixel(worldX, worldY, biomeInfo.params);
@@ -368,7 +404,6 @@ self.onmessage = (event) => {
                         
                         case "OceanOfRock":
                         default:
-                            // The default biome for any area outside a defined region.
                             finalTerrainType = MAT.ROCK_WALL;
                             break;
                     }
