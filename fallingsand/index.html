@@ -423,15 +423,32 @@
                 return;
             }
 
-            const body = new RigidBody(x, y, def.width, def.height, MAT.WOOD, def.name); // Material is placeholder
+            const body = new RigidBody(x, y, def.width, def.height, MAT.WOOD, def.name);
             body.pixels = new Uint8Array(def.pixels);
-            body.rebuildFixtures();
 
-            // Add custom properties to the body's user data for identification
+            // --- NEW LOGIC: Sample the sprite and bake its colors ---
+            if (SpriteManager.sprites.has(definitionId)) {
+                const spriteImg = SpriteManager.sprites.get(definitionId);
+                
+                // Use a temporary canvas to sample the sprite's pixels
+                const tempCanvas = document.createElement('canvas');
+                tempCanvas.width = def.width;
+                tempCanvas.height = def.height;
+                const tempCtx = tempCanvas.getContext('2d');
+                
+                tempCtx.drawImage(spriteImg, 0, 0, def.width, def.height);
+                
+                // Get the raw RGBA data from the canvas
+                const imageData = tempCtx.getImageData(0, 0, def.width, def.height);
+                
+                // Store this raw color data in our new property
+                body.spritePixels = imageData.data; 
+            }
+
+            body.rebuildFixtures();
             const userData = body.body.getUserData();
             userData.isPickup = true;
             userData.definitionId = definitionId;
-
             rigidBodies.push(body);
         }
 
@@ -861,6 +878,7 @@
             'wooden_barrel': {
                 name: 'Wooden Barrel',
                 type: 'structure',
+                spritePath: 'assets/magic_tablet.png',
                 width: 16,
                 height: 16,
                 canContain: new Set([MAT.SAND, MAT.SOIL, MAT.GUNPOWDER, MAT.COAL, MAT.GLASS, MAT.COPPER, MAT.SILVER, MAT.GOLD, MAT.PLATINUM]),
@@ -1120,6 +1138,14 @@
             [MAT.GOLD]: { color: [220, 220, 180], intensity: 0.01, radius: 3 },
             [MAT.LAVA]: { color: [250, 180, 100], intensity: 1.0, radius: 16 },
         };
+
+        const GENERIC_SPRITES = [
+            { id: 'wooden_box_16x16', path: 'assets/wooden_box.png' },
+            { id: 'wooden_box_32x32', path: 'assets/wooden_box_large.png' },
+            { id: 'iron_door_27x33', path: 'assets/iron_door.png' },
+            // You can add more generic sprites here later
+            // { id: 'boulder_24x24', path: 'assets/boulder.png' },
+        ];
 
         const PLAYER_INTERACTION_RADIUS = 30; // Max distance for right-click actions
         let toolUseCooldown = 0; // To prevent spamming tools
@@ -1536,6 +1562,7 @@
                 this.moved = new Uint8Array(width * height);
                 this.materialType = material;
                 this.fixtureCount = 0;
+                this.spritePixels = null; 
                 
                 this.isDestroyed = false;
                 this.needsShapeUpdate = false;
@@ -1817,6 +1844,7 @@
             return islands;
         }
 
+        // --- REPLACEMENT for the checkForSplits function ---
         function checkForSplits(body) {
             const islands = findPixelIslands(body.pixels, body.width, body.height);
             if (islands.length <= 1) return null;
@@ -1835,6 +1863,7 @@
 
             const oldBody = body.body, oldAngle = oldBody.getAngle(), oldLinVel = oldBody.getLinearVelocity(), oldAngVel = oldBody.getAngularVelocity();
             const newBodies = [];
+            const hasSpriteData = body.spritePixels !== null;
 
             for (const island of validIslands) {
                 let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
@@ -1846,13 +1875,33 @@
                 const localOriginX = (minX+newWidth/2)-(body.width/2), localOriginY = (minY+newHeight/2)-(body.height/2);
                 const worldOrigin = oldBody.getWorldPoint(pl.Vec2(localOriginX/B2_SCALE, localOriginY/B2_SCALE));
                 const worldX = worldOrigin.x*B2_SCALE, worldY = worldOrigin.y*B2_SCALE;
+                
                 const newPixels = new Uint8Array(newWidth*newHeight).fill(MAT.EMPTY);
+                const newSpritePixels = hasSpriteData ? new Uint8ClampedArray(newWidth * newHeight * 4) : null;
+
                 for (const p of island) {
-                    const nx = p.x-minX, ny = p.y-minY;
-                    newPixels[ny*newWidth+nx] = body.pixels[p.y*body.width+p.x];
+                    const nx = p.x - minX, ny = p.y - minY;
+                    const newIdx = ny * newWidth + nx;
+                    const oldIdx = p.y * body.width + p.x;
+                    
+                    // Copy the material type
+                    newPixels[newIdx] = body.pixels[oldIdx];
+                    
+                    // If there's sprite data, copy the RGBA values for this pixel
+                    if (hasSpriteData) {
+                        const newSpriteIdx = newIdx * 4;
+                        const oldSpriteIdx = oldIdx * 4;
+                        newSpritePixels[newSpriteIdx]     = body.spritePixels[oldSpriteIdx];
+                        newSpritePixels[newSpriteIdx + 1] = body.spritePixels[oldSpriteIdx + 1];
+                        newSpritePixels[newSpriteIdx + 2] = body.spritePixels[oldSpriteIdx + 2];
+                        newSpritePixels[newSpriteIdx + 3] = body.spritePixels[oldSpriteIdx + 3];
+                    }
                 }
+                
                 const nb = new RigidBody(worldX, worldY, newWidth, newHeight, body.materialType, body.name);
                 nb.pixels = newPixels;
+                nb.spritePixels = newSpritePixels; // Assign the copied sprite data
+                
                 nb.rebuildFixtures();
                 nb.body.setAngle(oldAngle);
                 nb.body.setLinearVelocity(pl.Vec2(oldLinVel.x, oldLinVel.y));
@@ -1929,7 +1978,8 @@
                 for (let x = startX; x < endX; x++) {
                     // Check for a gas pixel that is directly above an empty pixel.
                     // This is the "leading edge" of a gas cloud that needs to be simulated.
-                    if ( GASES.has(getGrid(x, y)) && getGrid(x, y + 1) === MAT.EMPTY) {
+                    let type = getGrid(x, y);
+                    if ( GASES.has(type) && getGrid(x, y + 1) !== type) {
                         const chunkX = Math.floor(x / CHUNK_SIZE);
                         const chunkY = Math.floor(y / CHUNK_SIZE);
                         gasChunks.add(coordToKey(chunkX, chunkY));
@@ -2025,37 +2075,52 @@
             }
         };
 
-        // --- START OF REPLACEMENT ---
         /**
-         * Creates a simple, rectangular rigid body, first clearing the space for it in the world grid.
+         * Creates a simple, rectangular rigid body, clearing space for it and optionally texturing it with a sprite.
          * @param {number} worldX - The world X-coordinate for the top-left corner.
          * @param {number} worldY - The world Y-coordinate for the top-left corner.
          * @param {number} width - The width of the rectangle.
          * @param {number} height - The height of the rectangle.
-         * @param {number} material - The MAT id to fill the body with.
+         * @param {number} material - The MAT id to use for the body's physics properties.
+         * @param {string} [spriteId=null] - The ID of a pre-loaded sprite to bake onto the object.
          */
-        function createRigidBodyRectangle(worldX, worldY, width, height, material) {
-            // --- START OF MODIFICATION ---
-            // Step 1: Carve out the space in the static world grid before creating the body.
-            // This ensures the background terrain is removed.
+        function createRigidBodyRectangle(worldX, worldY, width, height, material, spriteId = null, name = null) {
+            // Step 1: Carve out the space in the static world grid. This behavior is preserved.
             for (let iy = worldY; iy < worldY + height; iy++) {
                 for (let ix = worldX; ix < worldX + width; ix++) {
-                    // Set the underlying grid pixel to EMPTY.
                     setGrid(ix, iy, MAT.EMPTY);
-                    // Ensure the chunks are activated so lighting and physics colliders update correctly.
                     activateChunkAt(ix, iy);
                 }
             }
-            // --- END OF MODIFICATION ---
 
-            // Step 2: Create the dynamic RigidBody object as before.
+            // Step 2: Convert top-left coordinates to the center coordinates required by the RigidBody constructor.
             const centerX = worldX + width / 2;
             const centerY = worldY + height / 2;
-            
-            const name = MATERIAL_NAME[material] || 'Block';
+            const _name = name || MATERIAL_NAME[material] || 'Block';
 
-            const body = new RigidBody(centerX, centerY, width, height, material, name);
+            // Step 3: Create the RigidBody instance.
+            const body = new RigidBody(centerX, centerY, width, height, material, _name);
+
+            // Step 4: Bake the sprite's colors into the body's pixel data if a spriteId is provided.
+            if (spriteId && SpriteManager.sprites.has(spriteId)) {
+                const spriteImg = SpriteManager.sprites.get(spriteId);
+                
+                // Use a temporary canvas to sample the sprite's pixels
+                const tempCanvas = document.createElement('canvas');
+                tempCanvas.width = width;
+                tempCanvas.height = height;
+                const tempCtx = tempCanvas.getContext('2d');
+                
+                tempCtx.drawImage(spriteImg, 0, 0, width, height);
+                
+                const imageData = tempCtx.getImageData(0, 0, width, height);
+                body.spritePixels = imageData.data;
+            }
+
+            // Step 5: Use the optimized fixture for a simple box instead of generating complex polygons.
             body._createSimpleBoxFixture();
+
+            // Step 6: Add the completed body to the simulation.
             rigidBodies.push(body);
         }
         // --- END OF REPLACEMENT ---
@@ -2228,6 +2293,49 @@
         };
         // --- END OF NEW CODE ---
 
+        // --- REPLACEMENT for the SpriteManager.loadAll function ---
+        const SpriteManager = {
+            sprites: new Map(),
+
+            async loadAll() {
+                const promises = [];
+                const toLoad = [];
+
+                // Gather sprites from OBJECT_DEFINITIONS
+                for (const key in OBJECT_DEFINITIONS) {
+                    const def = OBJECT_DEFINITIONS[key];
+                    if (def.spritePath) {
+                        toLoad.push({ id: key, path: def.spritePath });
+                    }
+                }
+
+                // Gather sprites from GENERIC_SPRITES
+                for (const sprite of GENERIC_SPRITES) {
+                    toLoad.push({ id: sprite.id, path: sprite.path });
+                }
+
+                // Create a loading promise for each unique sprite
+                for (const item of toLoad) {
+                    const promise = new Promise((resolve) => {
+                        const img = new Image();
+                        img.onload = () => {
+                            this.sprites.set(item.id, img);
+                            console.log(`Successfully loaded sprite: ${item.id}`);
+                            resolve();
+                        };
+                        img.onerror = () => {
+                            console.error(`Failed to load sprite: ${item.path}`);
+                            resolve(); // Resolve anyway to not block game loading
+                        };
+                        img.src = item.path;
+                    });
+                    promises.push(promise);
+                }
+
+                await Promise.all(promises);
+            }
+        };
+
         const SetPieceManager = {
             setPieces: [
                 {
@@ -2338,7 +2446,7 @@
                                 const worldY = piece.bounds.y + rbDef.y;
 
                                 // Call the helper function to create the rectangular rigid body in the world.
-                                createRigidBodyRectangle(worldX, worldY, rbDef.width, rbDef.height, rbDef.material);
+                                createRigidBodyRectangle(worldX, worldY, rbDef.width, rbDef.height, rbDef.material, 'iron_door_27x33', 'Iron door');
                             }
                         }
                     }
@@ -2776,7 +2884,7 @@
                 if (bodyType === 'dynamic') {
                     color = 'rgba(255, 50, 50, 0.7)'; // Red for dynamic
                 } else if (bodyType === 'static') {
-                    color = 'rgba(50, 255, 50, 0.7)'; // Green for static
+                    color = 'rgba(50, 50, 255, 0.7)'; // Blue for static
                 }
                 ctx.strokeStyle = color;
 
@@ -4062,7 +4170,7 @@
              const _get = (gx, gy) => isWorldSim ? getGrid(gx, gy) : (getIdx(gx, gy) !== -1 ? grid[getIdx(gx, gy)] : MAT.ROCK_WALL);
              const _set = (gx, gy, gtype) => {
                 if (isWorldSim) {
-                    setGrid(gx, gy, gtype, true);
+                    setGrid(gx, gy, gtype, false);
                     movedInFrame.add(coordToKey(gx, gy));
                 } else {
                     const gidx = getIdx(gx, gy);
@@ -4347,12 +4455,9 @@
         // --- RENDERING ---
         function setPixel(x,y,r,g,b,a=255){ const i=(y*renderWidth+x)*4; pixels[i]=r; pixels[i+1]=g; pixels[i+2]=b; pixels[i+3]=a; }
 
-        // --- START OF NEW FUNCTION ---
-        /**
-         * Renders all dynamic rigid bodies, applying a highlight effect to the one under the cursor.
-         */
+        // --- REPLACEMENT for the renderRigidBodies function ---
         function renderRigidBodies() {
-            const BRIGHTNESS_BOOST = 40; // How much lighter to make the hovered object
+            const BRIGHTNESS_BOOST = 40;
 
             for (const body of rigidBodies) {
                 if (!body.body || body.isDestroyed) continue;
@@ -4363,35 +4468,50 @@
                 ctx.rotate(angle);
 
                 const isHovered = (body === hoveredBody);
+                const hasSprite = body.spritePixels !== null;
 
                 for (let y = 0; y < body.height; y++) {
                     for (let x = 0; x < body.width; x++) {
-                        const type = body.pixels[y * body.width + x];
+                        const lIdx = y * body.width + x;
+                        const type = body.pixels[lIdx];
                         if (type === MAT.EMPTY) continue;
                         
-                        let r, g, b;
-                        // Get base color
-                        if (SHIMMERING_METALS.has(type)) { 
-                            [r, g, b] = metallicColor(x, y, COLORS[type]); 
-                        } else { 
-                            [r, g, b] = varyColor(...COLORS[type], x, y, type, 8); 
+                        let r, g, b, a = 255;
+
+                        if (hasSprite) {
+                            // --- RENDER FROM BAKED SPRITE DATA ---
+                            const spriteIdx = lIdx * 4;
+                            r = body.spritePixels[spriteIdx];
+                            g = body.spritePixels[spriteIdx + 1];
+                            b = body.spritePixels[spriteIdx + 2];
+                            a = body.spritePixels[spriteIdx + 3];
+
+                            // Don't render fully transparent pixels from the sprite
+                            if (a < 10) continue;
+
+                        } else {
+                            // --- FALLBACK TO MATERIAL COLOR RENDERING ---
+                            if (SHIMMERING_METALS.has(type)) { 
+                                [r, g, b] = metallicColor(x, y, COLORS[type]); 
+                            } else { 
+                                [r, g, b] = varyColor(...COLORS[type], x, y, type, 8); 
+                            }
                         }
 
-                        // If this is the hovered body, apply the brightness boost.
+                        // Apply hover effect regardless of render method
                         if (isHovered) {
                             r = Math.min(255, r + BRIGHTNESS_BOOST);
                             g = Math.min(255, g + BRIGHTNESS_BOOST);
                             b = Math.min(255, b + BRIGHTNESS_BOOST);
                         }
                         
-                        ctx.fillStyle = `rgb(${r|0},${g|0},${b|0})`;
+                        ctx.fillStyle = `rgba(${r|0},${g|0},${b|0},${a/255})`;
                         ctx.fillRect(x - body.width / 2, y - body.height / 2, 1, 1);
                     }
                 }
                 ctx.restore();
             }
         }
-        // --- END OF NEW FUNCTION ---
 
         function render() {
             firePixelsCoords = [];
@@ -4627,8 +4747,58 @@
             ctx.restore();
         }
 
-        // --- END OF NEW FUNCTION ---
-		function createWoodenBox(x,y,width=16,height=16){const box=new RigidBody(x,y,width,height,MAT.WOOD, "Wooden Box");rigidBodies.push(box);}
+        // --- NEW CODE: Add this powerful new function ---
+        /**
+         * Creates a dynamic rigid body with optional sprite texturing.
+         * @param {object} options - The configuration for the object.
+         * @param {number} options.x - Center X coordinate in world space.
+         * @param {number} options.y - Center Y coordinate in world space.
+         * @param {number} options.width - Width of the object.
+         * @param {number} options.height - Height of the object.
+         * @param {number} options.material - The base MAT id for the physics.
+         * @param {string} [options.name='Object'] - The display name for the object.
+         * @param {string} [options.spriteId=null] - The ID of the pre-loaded sprite to bake.
+         */
+        function createDynamicObject({ x, y, width, height, material, name = 'Object', spriteId = null }) {
+            const body = new RigidBody(x, y, width, height, material, name);
+
+            // Bake the sprite's colors into the body's pixel data if a spriteId is provided
+            if (spriteId && SpriteManager.sprites.has(spriteId)) {
+                const spriteImg = SpriteManager.sprites.get(spriteId);
+                
+                const tempCanvas = document.createElement('canvas');
+                tempCanvas.width = width;
+                tempCanvas.height = height;
+                const tempCtx = tempCanvas.getContext('2d');
+                
+                tempCtx.drawImage(spriteImg, 0, 0, width, height);
+                
+                const imageData = tempCtx.getImageData(0, 0, width, height);
+                body.spritePixels = imageData.data;
+            }
+
+            rigidBodies.push(body);
+            return body; // Return the new body in case you need to modify it further
+        }
+
+        function createWoodenBox(x, y, width = 16, height = 16) {
+            // Determine which sprite to use based on the box size
+            const spriteId = (width === 16 && height === 16) 
+                ? 'wooden_box_16x16' 
+                : (width === 32 && height === 32)
+                ? 'wooden_box_32x32'
+                : null; // No sprite for non-standard sizes
+
+            createDynamicObject({
+                x: x,
+                y: y,
+                width: width,
+                height: height,
+                material: MAT.WOOD,
+                name: "Wooden Box",
+                spriteId: spriteId 
+            });
+        }
         
         function updateRigidBodyInteractions() {
             const now = performance.now();
@@ -5715,6 +5885,10 @@
             generationWorker.postMessage({ type: 'init', seed: WORLD_SEED });
 
             PerlinNoise.seed(WORLD_SEED);
+
+            updateLoadingStatus('Loading Sprites...');
+            await yieldToBrowser();
+            await SpriteManager.loadAll();
 
             updateLoadingStatus('Parsing Set Piece Blueprints...');
             await yieldToBrowser();

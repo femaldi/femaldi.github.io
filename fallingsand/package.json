@@ -1,0 +1,44 @@
+{
+  "name": "my-sand-game",
+  "version": "1.0.0",
+  "description": "A falling sand platformer game.",
+  "main": "main.js", 
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder"
+  },
+  "keywords": [],
+  "author": "Facundo Emaldi",
+  "license": "ISC",
+  "devDependencies": {
+    "electron": "^28.1.0",
+    "electron-builder": "^24.9.1"
+  },
+  "build": {
+    "appId": "com.femaldi.fallingsandplatformer",
+    "productName": "Falling Sand Platformer",
+    "files": [
+      "index.html",
+      "generation.worker.js",
+      "main.js",
+      "preload.js",
+      "assets/",
+      "node_modules/**/*"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": "nsis",
+      "icon": "assets/favicon.ico"
+    },
+    "mac": {
+      "target": "dmg",
+      "icon": "assets/favicon.icns"
+    },
+    "linux": {
+      "target": "AppImage",
+      "icon": "assets/favicon.png"
+    }
+  }
+}
