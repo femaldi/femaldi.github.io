@@ -1197,6 +1197,17 @@
         let hudFPS = 0;
         let hudMaterial = '--';
         let hudTimer = 0;
+
+        // ADD these new variables:
+        let cacheCanvas = null;
+        let cacheCtx = null;
+        let cacheImageData = null; // To read back data for bloom/interactions
+        let cachePixels = null;
+
+        // Keep these ones:
+        let isRenderCacheInvalid = true; // Still useful for forcing a full redraw
+        let lastCameraX = -1;
+        let lastCameraY = -1;
         
         // --- NEW: TILEABLE BACKGROUND ---
         let backgroundPattern = null;
@@ -2635,6 +2646,7 @@
                 // Important: Remove it from storage after loading to prevent stale data if it's saved again later
                 localStorage.removeItem(storageKey); 
                 console.log(`Sector [${sx}, ${sy}] loaded from storage.`);
+                isRenderCacheInvalid = true;
                 return true;
             } catch (e) {
                 console.error(`Failed to load or parse sector [${sx}, ${sy}] from storage.`, e);
@@ -4146,7 +4158,7 @@
 
             // --- Phase 3: Movement (if no reaction occurred) ---
             if (_getAux(x, y + 1) === 1) { 
-                tryMoveLiquidSide(x, y, type, Math.random() < 0.5 ? -1 : 1, 20, 1, idx, moved, grid, w, h, getIdx, setter);
+                tryMoveLiquidSide(x, y, type, Math.random() < 0.5 ? -1 : 1, 10, 1, idx, moved, grid, w, h, getIdx, setter);
                 return;
             }
             const belowType = _get(x, y + 1);
@@ -4162,7 +4174,7 @@
             if (LIQUID_DENSITY[type] > LIQUID_DENSITY[belowType]) { 
                 _set(x, y, belowType); _set(x, y + 1, type); if(!isWorldSim && idx!==-1) moved[idx] = 1; return;
             }
-            tryMoveLiquidSide(x, y, type, Math.random() < 0.5 ? -1 : 1, 20, 1, idx, moved, grid, w, h, getIdx, setter);
+            tryMoveLiquidSide(x, y, type, Math.random() < 0.5 ? -1 : 1, 10, 1, idx, moved, grid, w, h, getIdx, setter);
         }
 
         function updateGas(x, y, type, idx, moved, grid, w, h, getIdx, setter) {
@@ -4514,81 +4526,131 @@
         }
 
         function render() {
+            // Reset per-frame data
             firePixelsCoords = [];
 
             const startX = Math.floor(camera.x);
             const startY = Math.floor(camera.y);
 
-            // --- NEW: Optimized Background Rendering ---
-            const bgData = backgroundTileData.data;
-            const bgWidth = backgroundTileData.width;
-            const bgHeight = backgroundTileData.height;
+            const deltaX = startX - lastCameraX;
+            const deltaY = startY - lastCameraY;
 
-            // Pass 1: Manually draw background AND world materials in one loop
-            for (let screenY = 0; screenY < viewHeight; screenY++) {
-                for (let screenX = 0; screenX < viewWidth; screenX++) {
-                    const worldX = screenX + startX;
-                    const worldY = screenY + startY;
-                    const destI = (screenY * renderWidth + screenX) * 4;
+            // --- 1. PREPARE THE MAIN CANVAS ---
+            if (isRenderCacheInvalid) {
+                // If the entire cache is invalid, we don't need to do any clever shifting.
+                // We'll just redraw everything later.
+            } else {
+                // The cache is valid. Start by drawing the entire (potentially outdated) cache
+                // to the main visible canvas. Then, shift it to match camera movement.
+                ctx.globalCompositeOperation = 'copy';
+                ctx.drawImage(cacheCanvas, -deltaX, -deltaY);
+                ctx.globalCompositeOperation = 'source-over';
+            }
 
-                    // --- Step 1: Calculate and draw the background pixel ---
-                    // Use modulo to wrap coordinates for the repeating tile
-                    const bgX = (worldX % bgWidth + bgWidth) % bgWidth; 
-                    const bgY = (worldY % bgHeight + bgHeight) % bgHeight;
-                    const bgI = (bgY * bgWidth + bgX) * 4;
+            // --- 2. IDENTIFY AND REDRAW DIRTY REGIONS ---
+            const dirtyRects = [];
+            if (isRenderCacheInvalid) {
+                dirtyRects.push({ x: 0, y: 0, w: renderWidth, h: renderHeight });
+            } else {
+                // Add rects for newly exposed areas due to camera movement
+                if (deltaX > 0) dirtyRects.push({ x: renderWidth - deltaX, y: 0, w: deltaX, h: renderHeight });
+                if (deltaX < 0) dirtyRects.push({ x: 0, y: 0, w: -deltaX, h: renderHeight });
+                if (deltaY > 0) dirtyRects.push({ x: 0, y: renderHeight - deltaY, w: renderWidth, h: deltaY });
+                if (deltaY < 0) dirtyRects.push({ x: 0, y: 0, w: renderWidth, h: -deltaY });
 
-                    pixels[destI]     = bgData[bgI];
-                    pixels[destI + 1] = bgData[bgI + 1];
-                    pixels[destI + 2] = bgData[bgI + 2];
-                    pixels[destI + 3] = 255;
-
-                    // --- Step 2: Draw the world material on top (if it exists) ---
-                    const type = getGrid(worldX, worldY);
-                    if (type === MAT.EMPTY || type === MAT.RIGID_BODY_STUB) continue;
-                    
-                    const lightLevel = getAuxData(lightChunkMap, worldX, worldY);
-
-                    if (lightLevel === 0 && !ALWAYS_VISIBLE_MATERIALS.has(type)) {
-                        pixels[destI] = 0; pixels[destI + 1] = 0; pixels[destI + 2] = 0;
-                        continue;
-                    }
-                    
-                    let r, g, b;
-                    [r, g, b] = COLORS[type];
-
-                    // Color variations (fire, shimmer, etc.) - no changes here
-                    if (type === MAT.FIRE) { r = 255; g = 80 + Math.random() * 80; b = 0; firePixelsCoords.push({ x: screenX, y: screenY }); } 
-                    else if (type === MAT.OIL_BURNING || type === MAT.COAL_BURNING) { firePixelsCoords.push({ x: screenX, y: screenY });[r, g, b] = varyColor(...COLORS[type], worldX, worldY, type, 4); } 
-                    else if (LIQUIDS.has(type)) { [r, g, b] = varyColor(...COLORS[type], worldX, worldY, type, 4); } 
-                    else { if (SHIMMERING_METALS.has(type)) { [r, g, b] = metallicColor(worldX, worldY, COLORS[type]); } else { [r, g, b] = varyColor(...COLORS[type], worldX, worldY, type, 16); } }
-                    
-                    if (SHIMMERING_METALS.has(type)) { const h = hashCell(worldX, worldY, Math.floor(frameCount / 4)); if (h > 254) { const br = 35; r = Math.min(255, r + br); g = Math.min(255, g + br); b = Math.min(255, b + br); } }
-                    
-                    // Lighting
-                    if (!ALWAYS_VISIBLE_MATERIALS.has(type)) { const br = lightLevel / MAX_LIGHT_LEVEL; r = (r * br) | 0; g = (g * br) | 0; b = (b * br) | 0; }
-                    
-                    // Blend or draw opaque
-                    if (isFluid(type)) {
-                        blendPixel(pixels, destI, r | 0, g | 0, b | 0, fluidAlpha(type));
-                    } else {
-                        pixels[destI] = r | 0; pixels[destI + 1] = g | 0; pixels[destI + 2] = b | 0; pixels[destI + 3] = 255;
+                // Add rects for active simulation chunks
+                for (const key of activeChunks) {
+                    const chunk = chunkMap.get(key);
+                    if (chunk) {
+                        dirtyRects.push({
+                            x: chunk.cx * CHUNK_SIZE - startX,
+                            y: chunk.cy * CHUNK_SIZE - startY,
+                            w: CHUNK_SIZE,
+                            h: CHUNK_SIZE
+                        });
                     }
                 }
             }
 
-            // --- The rest of the function remains the same ---
-            ctx.putImageData(imageData, 0, 0);
-            renderBloom();
+            // This is our main buffer for drawing new pixels for this frame
+            const currentFrameImageData = ctx.getImageData(0, 0, renderWidth, renderHeight);
+            const currentFramePixels = currentFrameImageData.data;
 
-            renderRigidBodies();
+            const bgData = backgroundTileData.data;
+            const bgWidth = backgroundTileData.width;
+            const bgHeight = backgroundTileData.height;
+
+            // Loop through only the identified dirty rectangles
+            for (const rect of dirtyRects) {
+                const rStartX = Math.max(0, Math.floor(rect.x));
+                const rStartY = Math.max(0, Math.floor(rect.y));
+                const rEndX = Math.min(renderWidth, Math.ceil(rect.x + rect.w));
+                const rEndY = Math.min(renderHeight, Math.ceil(rect.y + rect.h));
+
+                for (let screenY = rStartY; screenY < rEndY; screenY++) {
+                    for (let screenX = rStartX; screenX < rEndX; screenX++) {
+                        const worldX = screenX + startX;
+                        const worldY = screenY + startY;
+                        const destI = (screenY * renderWidth + screenX) * 4;
+
+                        // --- Start: Core Pixel Logic (Identical to before) ---
+                        const bgX = (worldX % bgWidth + bgWidth) % bgWidth;
+                        const bgY = (worldY % bgHeight + bgHeight) % bgHeight;
+                        const bgI = (bgY * bgWidth + bgX) * 4;
+                        currentFramePixels[destI] = bgData[bgI];
+                        currentFramePixels[destI + 1] = bgData[bgI + 1];
+                        currentFramePixels[destI + 2] = bgData[bgI + 2];
+                        currentFramePixels[destI + 3] = 255;
+
+                        const type = getGrid(worldX, worldY);
+                        if (type === MAT.EMPTY || type === MAT.RIGID_BODY_STUB) continue;
+                        
+                        const lightLevel = getAuxData(lightChunkMap, worldX, worldY);
+                        if (lightLevel === 0 && !ALWAYS_VISIBLE_MATERIALS.has(type)) {
+                            currentFramePixels[destI] = 0; currentFramePixels[destI + 1] = 0; currentFramePixels[destI + 2] = 0;
+                            continue;
+                        }
+                        
+                        let r, g, b;
+                        [r, g, b] = COLORS[type];
+                        if (type === MAT.FIRE) { r = 255; g = 80 + Math.random() * 80; b = 0; firePixelsCoords.push({ x: screenX, y: screenY }); } 
+                        else if (type === MAT.OIL_BURNING || type === MAT.COAL_BURNING) { firePixelsCoords.push({ x: screenX, y: screenY });[r, g, b] = varyColor(...COLORS[type], worldX, worldY, type, 4); } 
+                        else if (LIQUIDS.has(type)) { [r, g, b] = varyColor(...COLORS[type], worldX, worldY, type, 4); } 
+                        else { if (SHIMMERING_METALS.has(type)) { [r, g, b] = metallicColor(worldX, worldY, COLORS[type]); } else { [r, g, b] = varyColor(...COLORS[type], worldX, worldY, type, 16); } }
+                        
+                        if (SHIMMERING_METALS.has(type)) { const h = hashCell(worldX, worldY, Math.floor(frameCount / 4)); if (h > 254) { const br = 35; r = Math.min(255, r + br); g = Math.min(255, g + br); b = Math.min(255, b + br); } }
+                        if (!ALWAYS_VISIBLE_MATERIALS.has(type)) { const br = lightLevel / MAX_LIGHT_LEVEL; r = (r * br) | 0; g = (g * br) | 0; b = (b * br) | 0; }
+                        
+                        if (isFluid(type)) {
+                            blendPixel(currentFramePixels, destI, r | 0, g | 0, b | 0, fluidAlpha(type));
+                        } else {
+                            currentFramePixels[destI] = r | 0; currentFramePixels[destI + 1] = g | 0; currentFramePixels[destI + 2] = b | 0; currentFramePixels[destI + 3] = 255;
+                        }
+                        // --- End: Core Pixel Logic ---
+                    }
+                }
+            }
             
-            // Player and Particles
+            // Put the final, combined image data (with shifted old parts and newly drawn dirty parts) onto the main canvas.
+            ctx.putImageData(currentFrameImageData, 0, 0);
+
+            // --- 3. UPDATE THE CACHE FOR THE NEXT FRAME ---
+            // The main canvas now holds the definitive image for this frame. Copy it to our cache canvas.
+            cacheCtx.globalCompositeOperation = 'copy';
+            cacheCtx.drawImage(canvas, 0, 0);
+            cacheCtx.globalCompositeOperation = 'source-over';
+
+            // --- 4. RENDER DYNAMIC ELEMENTS ON TOP ---
+            // This part remains the same.
+            renderBloom(); 
+            renderRigidBodies();
+
+            let wandScreenX, wandScreenY; // Define here
             if (player.isSpawning) {
                 renderSpawnAnimation();
-                // Set wand position to a default during spawn
                 wandScreenX = Math.round(player.x - camera.x + 4);
                 wandScreenY = Math.round(player.y - camera.y + 9);
-                renderNpcs({bob:0, frameIdx:0});
+                renderNpcs({ bob: 0, frameIdx: 0 });
             } else {
                 const aim = computePlayerAim();
                 const anim = getPlayerAnimFrame();
@@ -4635,6 +4697,10 @@
                 drawActiveChunkOutlines();
                 renderStationGeometryDebug();
             } 
+
+            lastCameraX = startX;
+            lastCameraY = startY;
+            isRenderCacheInvalid = false;
         }
         
         // This group of functions can remain as-is
@@ -4972,24 +5038,29 @@
             // --- PASS 1: Accumulate bloom intensity into the grid ---
             bloomGrid.fill(0); // Clear the grid for the new frame.
             
-            const camX = Math.floor(camera.x);
-            const camY = Math.floor(camera.y);
+            const currentFramePixels = cacheCtx.getImageData(0, 0, renderWidth, renderHeight).data;
 
-            // Iterate all VISIBLE pixels on the main screen
+            // Iterate all VISIBLE pixels on the screen
             for (let y = 0; y < viewHeight; y++) {
                 for (let x = 0; x < viewWidth; x++) {
-                    const type = getGrid(x + camX, y + camY);
-                    const bloomConfig = BLOOM_MATERIALS[type];
-                    
-                    if (bloomConfig) {
+                    // We need to figure out the material type from the rendered color. This is tricky.
+                    // A simpler, and still effective way, is to just check the pixel's brightness.
+                    const idx = (y * renderWidth + x) * 4;
+                    const r = currentFramePixels[idx];
+                    const g = currentFramePixels[idx+1];
+
+                    // A simple heuristic for "glowing": high red and green components.
+                    if (r > 200 && g > 60) {
                         // Find the corresponding cell in our low-resolution grid
                         const bx = Math.floor(x / bloomResolution);
                         const by = Math.floor(y / bloomResolution);
                         const bloomIdx = by * bloomWidth + bx;
 
-                        // Add this pixel's intensity to the grid cell, but cap it at the max value.
-                        const currentIntensity = bloomGrid[bloomIdx];
-                        bloomGrid[bloomIdx] = Math.min(MAX_COMPOUND_INTENSITY, currentIntensity + bloomConfig.intensity);
+                        // Add intensity based on the pixel's brightness.
+                        const brightness = (r + g) / 510; // Normalize to ~0-1
+                        const intensity = brightness * 0.9; // Adjust multiplier as needed
+                        
+                        bloomGrid[bloomIdx] = Math.min(MAX_COMPOUND_INTENSITY, bloomGrid[bloomIdx] + intensity);
                     }
                 }
             }
@@ -5885,6 +5956,17 @@
             generationWorker.postMessage({ type: 'init', seed: WORLD_SEED });
 
             PerlinNoise.seed(WORLD_SEED);
+
+            cacheCanvas = document.createElement('canvas');
+            cacheCanvas.width = renderWidth;
+            cacheCanvas.height = renderHeight;
+            cacheCtx = cacheCanvas.getContext('2d', { willReadFrequently: true }); // Important for performance
+            cacheImageData = cacheCtx.createImageData(renderWidth, renderHeight);
+            cachePixels = cacheImageData.data;
+
+            isRenderCacheInvalid = true;
+            lastCameraX = -1;
+            lastCameraY = -1;
 
             updateLoadingStatus('Loading Sprites...');
             await yieldToBrowser();
