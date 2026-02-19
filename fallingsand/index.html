@@ -5897,16 +5897,16 @@
                         target: target
                     });
 
-                    const areas = [station.cauldrons.left, station.cauldrons.right, station.sampler];
+                    const areas = [station.cauldrons.left, station.cauldrons.right];
                     const filterSprite = SpriteManager.sprites.get('filter_shape');
                     for (const area of areas) {
                         createShapeDissolveEffect({
                             x: area.cx,
-                            y: area.cy - 32,
+                            y: area.cy,
                             shapeImage: filterSprite,
                             color: [200, 200, 200],
                             shapeSize: 64,
-                            particleCount: 1000
+                            particleCount: 3000
                         });
                     }
                 }
@@ -5919,11 +5919,11 @@
                     
                     createShapeDissolveEffect({
                         x: source.cx,
-                        y: source.cy - 32,
+                        y: source.cy,
                         shapeImage: heatSprite,
                         color: [200, 150, 80],
                         shapeSize: 64,
-                        particleCount: 1000
+                        particleCount: 3000
                     });
 
                     forEachInDownwardSemicircle(source, (x, y) => {
