@@ -477,7 +477,7 @@
          * @param {number} [options.holdDuration=30] - Frames the shape stays intact and blinks.
          * @param {number} [options.wispDuration=80] - Frames the particles drift as wisps.
          */
-        function createShapeDissolveEffect({ x, y, shapeImage, particleCount = 200, shapeSize = 48, color = [255, 80, 80], appearDuration = 15, holdDuration = 30, wispDuration = 80 }) {
+        function createShapeDissolveEffect({ x, y, shapeImage, particleCount = 200, shapeSize = 48, color = [255, 80, 80], appearDuration = 15, holdDuration = 30, wispDuration = 80, bloomIntensity = 0.1 }) {
             const targetPoints = getCoordinatesFromImage(shapeImage);
             if (targetPoints.length === 0) return;
 
@@ -504,6 +504,7 @@
 
                 // State Machine & Shape Properties
                 p.isShapeParticle = true;
+                p.bloomIntensity = bloomIntensity;
                 
                 // --- NEW "APPEAR" LOGIC ---
                 p.phase = 'waiting'; // New initial state. The particle is invisible.
@@ -5071,6 +5072,20 @@
             cacheCtx.drawImage(canvas, 0, 0);
             cacheCtx.globalCompositeOperation = 'source-over';
 
+            for (const p of magicParticlePool) {
+                // We only care about active shape particles that are currently visible
+                if (p.active && p.isShapeParticle && p.phase !== 'waiting') {
+                    const screenX = Math.round(p.x - camera.x);
+                    const screenY = Math.round(p.y - camera.y);
+
+                    // Make sure the particle is on-screen before adding it
+                    if (screenX >= 0 && screenX < renderWidth && screenY >= 0 && screenY < renderHeight) {
+                        // Add an object with a direct 'intensity' property.
+                        glowingPixelsCoords.push({ x: screenX, y: screenY, intensity: p.bloomIntensity });
+                    }
+                }
+            }
+
             // --- 4. RENDER DYNAMIC ELEMENTS ON TOP ---
             // This part remains the same.
             renderBloom(); 
@@ -5510,16 +5525,29 @@
             bloomGrid.fill(0); // Clear the grid for the new frame.
 
             for (const p of glowingPixelsCoords) {
-                const bloomData = BLOOM_MATERIALS[p.type];
+                let intensity = 0;
+                // Check if this entry came from the grid (has a 'type')
+                if (p.type) {
+                    const bloomData = BLOOM_MATERIALS[p.type];
+                    if (bloomData) {
+                        intensity = bloomData.intensity;
+                    }
+                } 
+                // Check if this entry came from a particle (has an 'intensity')
+                else if (p.intensity) {
+                    intensity = p.intensity;
+                }
+
+                if (intensity <= 0) continue; // Skip if no bloom
                 
                 // Find the corresponding cell in our low-resolution grid
                 const bx = Math.floor(p.x / bloomResolution);
                 const by = Math.floor(p.y / bloomResolution);
                 const bloomIdx = by * bloomWidth + bx;
 
-                // Add the material's specific intensity to the grid cell
+                // Add the intensity to the grid cell
                 if (bloomGrid[bloomIdx] < MAX_COMPOUND_INTENSITY) {
-                    bloomGrid[bloomIdx] = Math.min(MAX_COMPOUND_INTENSITY, bloomGrid[bloomIdx] + bloomData.intensity);
+                    bloomGrid[bloomIdx] = Math.min(MAX_COMPOUND_INTENSITY, bloomGrid[bloomIdx] + intensity);
                 }
             }
 
@@ -5728,7 +5756,7 @@
         function updateMagicParticles() {
             // --- Tweakable constants for the wisp/dissolve effect ---
             const WISP_DRAG = 0.98; // Closer to 1 = less drag. 0.98 is a good starting point.
-            const WISP_WIND_STRENGTH = 0.08; // How much the "wind" affects the particles.
+            const WISP_WIND_STRENGTH = 0.04; // How much the "wind" affects the particles.
             const WISP_NOISE_SCALE = 0.05; // How "large" the wind swirls are. Lower = larger swirls.
             const WISP_TIME_SCALE = 0.01; // How fast the wind pattern changes over time.
 
@@ -5784,6 +5812,7 @@
                     p.active = false;
                     // CRITICAL: Reset all custom flags when the particle is returned to the pool
                     p.isShapeParticle = false; 
+                    p.bloomIntensity = 0;
                 }
             }
         }
@@ -5921,9 +5950,10 @@
                         x: source.cx,
                         y: source.cy,
                         shapeImage: heatSprite,
-                        color: [200, 150, 80],
+                        color: [255, 200, 180],
                         shapeSize: 64,
-                        particleCount: 3000
+                        particleCount: 3000,
+                        bloomIntensity: 5.0
                     });
 
                     forEachInDownwardSemicircle(source, (x, y) => {
