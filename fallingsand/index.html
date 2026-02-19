@@ -276,8 +276,18 @@
         const chunkMap = new Map();       // Main material grid
         const lightChunkMap = new Map();    // Lighting data
         const etcChunkMap = new Map();      // For ignition timers, rigid body stubs, etc.
-        const activeChunks = new Set();     // A set of active chunk KEYs for the current frame
-        const nextActiveChunks = new Set(); // A set of chunk KEYs to activate for the *next* frame
+        
+        const activeSolidChunks = new Set();
+        const nextActiveSolidChunks = new Set();
+        let pendingSolidChunks = [];
+
+        const activeLiquidChunks = new Set();
+        const nextActiveLiquidChunks = new Set();
+        let pendingLiquidChunks = [];
+
+        const activeGasChunks = new Set();
+        const nextActiveGasChunks = new Set();
+        let pendingGasChunks = [];
 
         let _lastChunk = null;
         let _lastChunkCX = -99999;
@@ -870,7 +880,7 @@
                              const wy = mouse.worldY + dy;
                              if (softMaterials.has(getGrid(wx, wy))) {
                                  setGrid(wx, wy, MAT.EMPTY);
-                                 activateChunkAt(wx, wy);
+                                 activateChunkAt(wx, wy,MAT.EMPTY);
                              }
                         }
                     }
@@ -1137,7 +1147,7 @@
             [MAT.COPPER]: { color: [220, 200, 200], intensity: 0.01, radius: 3 },
             [MAT.SILVER]: { color: [200, 200, 220], intensity: 0.01, radius: 3 },
             [MAT.GOLD]: { color: [220, 220, 180], intensity: 0.01, radius: 3 },
-            [MAT.LAVA]: { color: [250, 180, 100], intensity: 1.0, radius: 16 },
+            [MAT.LAVA]: { color: [250, 180, 100], intensity: 10.0, radius: 32 },
         };
 
         const GENERIC_SPRITES = [
@@ -1155,9 +1165,7 @@
         let bloomCanvas;
         let bloomCtx;
         let bloomGrid; 
-        // --- End of new variables ---
 
-        let pendingActiveChunks = []; // An array to hold active chunks that were deferred from the previous frame.
         
         // REMOVED old grid definitions
         let currentMaterial = MAT.SAND;
@@ -1167,6 +1175,8 @@
         let playerFacingRight = true;
 		let projectiles = [];
         let alchemyJobs = [];
+        let glowingPixelsCoords = [];
+        let persistentGlowingChunks = new Set();
 
         let tSimMs = 0, tRenderMs = 0, tOtherMs = 0, tOtherMs2 = 0, tOtherMs3 = 0;
         const movedInFrame = new Set();
@@ -1382,9 +1392,9 @@
 
             if (updateChunkComplex)
             {
-                activateChunkAt(x, y);
+                activateChunkAt(x, y, type);
             } else {
-                ensureChunkIsActive(x, y);
+                ensureChunkIsActive(x, y, type);
             }
         }
 
@@ -1957,16 +1967,20 @@
                 for (let x = startX; x < endX; x++) {
                     const type = getGrid(x, y);
                     if (type !== MAT.EMPTY && !STATIC_MATERIALS.has(type)) {
-                        activateChunkAt(x, y);
+                        activateChunkAt(x, y, type);
                     }
                 }
             }
         }
 
-        // --- START OF MODIFICATION (Renamed function) ---
-        function findAndActivateLiquidSurfaces() {
-        // --- END OF MODIFICATION ---
-            const surfaceChunks = new Set();
+        /**
+         * Periodically scans the visible screen area for any materials with a bloom effect
+         * and updates a persistent list of their chunks.
+         */
+        function findAndActivateGlowingChunks() {
+            // This is a full refresh, so clear the old list.
+            persistentGlowingChunks.clear(); 
+            
             const startX = Math.floor(camera.x);
             const startY = Math.floor(camera.y);
             const endX = startX + viewWidth;
@@ -1975,18 +1989,187 @@
             for (let y = startY; y < endY; y++) {
                 for (let x = startX; x < endX; x++) {
                     const type = getGrid(x, y);
+
+                    if (BLOOM_MATERIALS[type]) {
+                        const chunkX = Math.floor(x / CHUNK_SIZE);
+                        const chunkY = Math.floor(y / CHUNK_SIZE);
+                        // Add the chunk to our persistent list.
+                        persistentGlowingChunks.add(coordToKey(chunkX, chunkY));
+                    }
+                }
+            }
+        }
+
+        /**
+         * Checks if a material can be displaced by a given liquid.
+         * @param {number} neighborType - The material ID of the adjacent pixel.
+         * @param {number} liquidType - The material ID of the moving liquid.
+         * @returns {boolean} True if the liquid can move into the neighbor's space.
+         */
+        function canBeDisplacedByLiquid(neighborType, liquidType) {
+            // Case 1: The space is empty.
+            if (neighborType === MAT.EMPTY) return true;
+
+            // Case 2: The neighbor is a gas. Liquids always displace gases.
+            if (GASES.has(neighborType)) return true;
+
+            // Case 3: The neighbor is another liquid.
+            if (LIQUIDS.has(neighborType)) {
+                // A liquid can only displace another liquid if it is denser.
+                // This correctly handles oil floating on water, lava on water, etc.
+                return LIQUID_DENSITY[liquidType] > LIQUID_DENSITY[neighborType];
+            }
+
+            // Any other material (solids, walls, etc.) is considered an unmovable barrier for this check.
+            return false;
+        }
+
+        /**
+         * Scans the visible screen area for any liquid pixels that are on an "active outline,"
+         * meaning they are adjacent to any material they can flow into or displace.
+         */
+        function findAndActivateLiquidOutlines() {
+            const outlineChunks = new Set();
+            const startX = Math.floor(camera.x);
+            const startY = Math.floor(camera.y);
+            const endX = startX + viewWidth;
+            const endY = startY + viewHeight;
+
+            for (let y = startY; y < endY; y++) {
+                for (let x = startX; x < endX; x++) {
+                    const type = getGrid(x, y);
+
+                    // We only care about liquid pixels.
                     if (isLiquid(type)) {
-                        const aboveType = getGrid(x, y - 1);
-                        if (aboveType === MAT.EMPTY) {
-                            const chunkX = Math.floor(x / CHUNK_SIZE);
-                            const chunkY = Math.floor(y / CHUNK_SIZE);
-                            surfaceChunks.add(coordToKey(chunkX, chunkY));
+                        // Check all 4 direct neighbors.
+                        const neighbors = [
+                            getGrid(x, y - 1), // Above
+                            getGrid(x, y + 1), // Below
+                            getGrid(x - 1, y), // Left
+                            getGrid(x + 1, y)  // Right
+                        ];
+
+                        // Use our helper to see if there's any potential for movement.
+                        for (const neighborType of neighbors) {
+                            if (canBeDisplacedByLiquid(neighborType, type)) {
+                                // This liquid pixel is on an active outline.
+                                // Activate its chunk and stop checking its other neighbors.
+                                const chunkX = Math.floor(x / CHUNK_SIZE);
+                                const chunkY = Math.floor(y / CHUNK_SIZE);
+                                outlineChunks.add(coordToKey(chunkX, chunkY));
+                                break; 
+                            }
                         }
                     }
                 }
             }
-            for (const key of surfaceChunks) {
-                nextActiveChunks.add(key);
+
+            // Add all the identified chunks to the activation set for the next frame.
+            for (const key of outlineChunks) {
+                nextActiveLiquidChunks.add(key);
+            }
+        }
+
+        /**
+         * Scans the visible screen area for any burning materials and ensures their chunks
+         * are active for the next simulation frame.
+         */
+        function findAndActivateFireChunks() {
+            const fireChunks = new Set();
+            const startX = Math.floor(camera.x);
+            const startY = Math.floor(camera.y);
+            const endX = startX + viewWidth;
+            const endY = startY + viewHeight;
+
+            for (let y = startY; y < endY; y++) {
+                for (let x = startX; x < endX; x++) {
+                    const type = getGrid(x, y);
+
+                    // If the pixel is any kind of fire, its chunk must be active.
+                    if (BURNING_MATERIALS.has(type)) {
+                        const chunkX = Math.floor(x / CHUNK_SIZE);
+                        const chunkY = Math.floor(y / CHUNK_SIZE);
+                        fireChunks.add(coordToKey(chunkX, chunkY));
+                    }
+                }
+            }
+
+            // Add all the identified chunks to the activation set for the next frame.
+            // Fire belongs in the "solid" simulation pass (stepNonLiquid).
+            for (const key of fireChunks) {
+                nextActiveSolidChunks.add(key);
+            }
+        }
+
+        /**
+         * Checks if a material can be displaced by a given gas.
+         * @param {number} neighborType - The material ID of the adjacent pixel.
+         * @param {number} gasType - The material ID of the moving gas.
+         * @returns {boolean} True if the gas can move into the neighbor's space.
+         */
+        function canBeDisplacedByGas(neighborType, gasType) {
+            // Case 1: The space is empty.
+            if (neighborType === MAT.EMPTY) return true;
+
+            // Case 2: The neighbor is another gas.
+            if (GASES.has(neighborType)) {
+                // A gas can only displace another gas if it is lighter (lower density value).
+                return GAS_DENSITY[gasType] < GAS_DENSITY[neighborType];
+            }
+            
+            // Case 3: The neighbor is a liquid. Lighter gases can bubble up through liquids.
+            // (We can assume all our gases are lighter than all our liquids for simplicity here)
+            if (LIQUIDS.has(neighborType)) {
+                return true;
+            }
+
+            // Any other material (solids, walls) is considered an unmovable barrier.
+            return false;
+        }
+
+        /**
+         * Scans the visible screen area for any gas pixels that are on an "active outline,"
+         * meaning they are adjacent to any material they can rise into or displace.
+         */
+        function findAndActivateGasOutlines() {
+            const outlineChunks = new Set();
+            const startX = Math.floor(camera.x);
+            const startY = Math.floor(camera.y);
+            const endX = startX + viewWidth;
+            const endY = startY + viewHeight;
+
+            for (let y = startY; y < endY; y++) {
+                for (let x = startX; x < endX; x++) {
+                    const type = getGrid(x, y);
+
+                    // We only care about gas pixels.
+                    if (GASES.has(type)) {
+                        // Check all 4 direct neighbors.
+                        const neighbors = [
+                            getGrid(x, y - 1), // Above
+                            getGrid(x, y + 1), // Below
+                            getGrid(x - 1, y), // Left
+                            getGrid(x + 1, y)  // Right
+                        ];
+
+                        // Use our helper to see if there's any potential for movement.
+                        for (const neighborType of neighbors) {
+                            if (canBeDisplacedByGas(neighborType, type)) {
+                                // This gas pixel is on an active outline.
+                                // Activate its chunk and stop checking its other neighbors.
+                                const chunkX = Math.floor(x / CHUNK_SIZE);
+                                const chunkY = Math.floor(y / CHUNK_SIZE);
+                                outlineChunks.add(coordToKey(chunkX, chunkY));
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Add all the identified chunks to the activation set for the next frame.
+            for (const key of outlineChunks) {
+                nextActiveGasChunks.add(key);
             }
         }
 
@@ -2018,20 +2201,50 @@
                 nextActiveChunks.add(key);
             }
         }
-        // --- END OF NEW FUNCTION ---
-
-        function ensureChunkIsActive(worldX, worldY) {
-            const chunkX = Math.floor(worldX / CHUNK_SIZE);
-            const chunkY = Math.floor(worldY / CHUNK_SIZE);
-            nextActiveChunks.add(coordToKey(chunkX, chunkY));
+        
+        function getActivationSetForMaterial(type) {
+            if (LIQUIDS.has(type)) return nextActiveLiquidChunks;
+            if (GASES.has(type)) return nextActiveGasChunks;
+            if (type !== MAT.EMPTY && !STATIC_MATERIALS.has(type)) return nextActiveSolidChunks;
+            return null; // For static materials or empty space
         }
 
-        function activateChunkAt(worldX, worldY) {
-            const chunkX = Math.floor(worldX / CHUNK_SIZE);
-            const chunkY = Math.floor(worldY / CHUNK_SIZE);
-            for (let cy = chunkY - 1; cy <= chunkY + 1; cy++) {
-                for (let cx = chunkX - 1; cx <= chunkX + 1; cx++) {
-                    nextActiveChunks.add(coordToKey(cx, cy)); // USE NUMERIC KEY
+        function ensureChunkIsActive(worldX, worldY, type) {
+            const targetSet = getActivationSetForMaterial(type);
+            if (targetSet) {
+                const chunkX = Math.floor(worldX / CHUNK_SIZE);
+                const chunkY = Math.floor(worldY / CHUNK_SIZE);
+                targetSet.add(coordToKey(chunkX, chunkY));
+            }
+        }
+
+        function activateChunkAt(worldX, worldY, type) {
+            const targetSet = getActivationSetForMaterial(type);
+
+            // Special case: If we are carving space (placing MAT.EMPTY),
+            // the surrounding chunks might now have space for *any* type to flow in.
+            // So, we must activate them for all simulation types.
+            if (type === MAT.EMPTY) {
+                const chunkX = Math.floor(worldX / CHUNK_SIZE);
+                const chunkY = Math.floor(worldY / CHUNK_SIZE);
+                for (let cy = chunkY - 1; cy <= chunkY + 1; cy++) {
+                    for (let cx = chunkX - 1; cx <= chunkX + 1; cx++) {
+                        const key = coordToKey(cx, cy);
+                        nextActiveSolidChunks.add(key);
+                        nextActiveLiquidChunks.add(key);
+                        nextActiveGasChunks.add(key);
+                    }
+                }
+                return;
+            }
+            
+            if (targetSet) {
+                const chunkX = Math.floor(worldX / CHUNK_SIZE);
+                const chunkY = Math.floor(worldY / CHUNK_SIZE);
+                for (let cy = chunkY - 1; cy <= chunkY + 1; cy++) {
+                    for (let cx = chunkX - 1; cx <= chunkX + 1; cx++) {
+                        targetSet.add(coordToKey(cx, cy));
+                    }
                 }
             }
         }
@@ -2117,7 +2330,7 @@
             for (let iy = worldY; iy < worldY + height; iy++) {
                 for (let ix = worldX; ix < worldX + width; ix++) {
                     setGrid(ix, iy, MAT.EMPTY);
-                    activateChunkAt(ix, iy);
+                    activateChunkAt(ix, iy, MAT.EMPTY);
                 }
             }
 
@@ -3305,6 +3518,13 @@
             MAT.METHANE, // Methane is fuel, so fire should spread into it
             MAT.METHANE_BURNING // It's already fire
         ]);
+        const BURNING_MATERIALS = new Set([
+            MAT.FIRE,
+            MAT.OIL_BURNING,
+            MAT.COAL_BURNING,
+            MAT.GUNPOWDER_IGNITED,
+            MAT.METHANE_BURNING
+        ]); // NEW SET
 
         function tryIgniteAt(x, y, probability = 1.0) {
             const type = getGrid(x, y);
@@ -3341,7 +3561,7 @@
                     if (dx*dx + dy*dy <= r*r) {
                         const px = x + dx, py = y + dy;
                         setGrid(px, py, currentMaterial);
-                        activateChunkAt(px, py);
+                        activateChunkAt(px, py, currentMaterial);
                     }
                 }
             }
@@ -3650,61 +3870,60 @@
             return LIQUIDS.has(type);
         }
         
-        // --- START OF REPLACEMENT ---
         function runWorldSimulationWithChunks() {
-            movedInFrame.clear(); // Clear the set once per frame
+            movedInFrame.clear();
             const scanDir = (frameCount % 2 === 0);
 
-            // Iterate over the active CHUNKS, not individual pixels
-            for (const key of activeChunks) {
+            // --- PASS 1: SOLIDS (only on chunks with dynamic solids) ---
+            Profiler.start('Sim:NonLiquid');
+            for (const key of activeSolidChunks) {
                 const chunk = chunkMap.get(key);
                 if (!chunk) continue;
-
                 const startX = chunk.cx * CHUNK_SIZE;
                 const startY = chunk.cy * CHUNK_SIZE;
-                
-                // By processing the entire chunk at once, we maximize cache hits
-                // and reduce the overhead of chunk lookups dramatically.
-                _lastChunk = chunk;
-                _lastChunkCX = chunk.cx;
-                _lastChunkCY = chunk.cy;
+                _lastChunk = chunk; _lastChunkCX = chunk.cx; _lastChunkCY = chunk.cy;
 
-                // PASS 1: solids, gas, fire (bottom-up)
-                Profiler.start('Sim:NonLiquid');
                 for (let ly = CHUNK_SIZE - 1; ly >= 0; ly--) {
-                    for (let lx = (scanDir ? 0 : CHUNK_SIZE - 1);
-                        (scanDir ? lx < CHUNK_SIZE : lx >= 0);
-                        lx += (scanDir ? 1 : -1)) {
-                        
+                    for (let lx = (scanDir ? 0 : CHUNK_SIZE - 1); (scanDir ? lx < CHUNK_SIZE : lx >= 0); lx += (scanDir ? 1 : -1)) {
                         stepNonLiquid(startX + lx, startY + ly);
                     }
                 }
-                Profiler.stop('Sim:NonLiquid');
+            }
+            Profiler.stop('Sim:NonLiquid');
 
-                // PASS 2: liquids (bottom-up)
-                Profiler.start('Sim:Liquid');
+            // --- PASS 2: LIQUIDS (only on chunks with liquids) ---
+            Profiler.start('Sim:Liquid');
+            for (const key of activeLiquidChunks) {
+                const chunk = chunkMap.get(key);
+                if (!chunk) continue;
+                const startX = chunk.cx * CHUNK_SIZE;
+                const startY = chunk.cy * CHUNK_SIZE;
+                 _lastChunk = chunk; _lastChunkCX = chunk.cx; _lastChunkCY = chunk.cy;
+                
                 for (let ly = CHUNK_SIZE - 1; ly >= 0; ly--) {
-                    for (let lx = (scanDir ? 0 : CHUNK_SIZE - 1);
-                        (scanDir ? lx < CHUNK_SIZE : lx >= 0);
-                        lx += (scanDir ? 1 : -1)) {
-                            
+                    for (let lx = (scanDir ? 0 : CHUNK_SIZE - 1); (scanDir ? lx < CHUNK_SIZE : lx >= 0); lx += (scanDir ? 1 : -1)) {
                         stepLiquid(startX + lx, startY + ly);
                     }
                 }
-                Profiler.stop('Sim:Liquid');
+            }
+            Profiler.stop('Sim:Liquid');
 
-                // --- ADD PASS 3 for GASES (top-down) ---
-                Profiler.start('Sim:Gas');
+            // --- PASS 3: GASES (only on chunks with gases) ---
+            Profiler.start('Sim:Gas');
+            for (const key of activeGasChunks) {
+                const chunk = chunkMap.get(key);
+                if (!chunk) continue;
+                const startX = chunk.cx * CHUNK_SIZE;
+                const startY = chunk.cy * CHUNK_SIZE;
+                 _lastChunk = chunk; _lastChunkCX = chunk.cx; _lastChunkCY = chunk.cy;
+
                 for (let ly = 0; ly < CHUNK_SIZE; ly++) {
-                    for (let lx = (scanDir ? 0 : CHUNK_SIZE - 1);
-                        (scanDir ? lx < CHUNK_SIZE : lx >= 0);
-                        lx += (scanDir ? 1 : -1)) {
-                            
+                    for (let lx = (scanDir ? 0 : CHUNK_SIZE - 1); (scanDir ? lx < CHUNK_SIZE : lx >= 0); lx += (scanDir ? 1 : -1)) {
                         stepGas(startX + lx, startY + ly);
                     }
                 }
-                Profiler.stop('Sim:Gas');
             }
+            Profiler.stop('Sim:Gas');
         }
 
         // This function is now ONLY for small inventory grids
@@ -3821,7 +4040,7 @@
                     }
                     
                     // Any modification requires the chunk to be activated for the next simulation step.
-                    ensureChunkIsActive(ex, ey);
+                    ensureChunkIsActive(ex, ey, type);
                 }
             }
 
@@ -3959,7 +4178,7 @@
             }
             if (Math.random() < 0.02 && _get(x, y - 1) === MAT.EMPTY) _set(x, y - 1, MAT.FIRE);
             if (Math.random() < 0.003) _set(x, y, Math.random() < 0.15 ? MAT.SMOKE : MAT.EMPTY);
-            if (isWorldSim && getGrid(x, y) === MAT.COAL_BURNING) activateChunkAt(x, y);
+            if (isWorldSim && getGrid(x, y) === MAT.COAL_BURNING) activateChunkAt(x, y, getGrid(x, y));
         }
 
         function updateBurningOil(x, y, idx, moved, grid, w, h, getIdx, setter) {
@@ -3984,7 +4203,7 @@
             }
             if (Math.random() < 0.05 && _get(x, y - 1) === MAT.EMPTY) _set(x, y - 1, MAT.FIRE);
             if (Math.random() < 0.008) _set(x, y, Math.random() < 0.15 ? MAT.SMOKE : MAT.EMPTY);
-            if (isWorldSim && getGrid(x, y) === MAT.OIL_BURNING) activateChunkAt(x, y);
+            if (isWorldSim && getGrid(x, y) === MAT.OIL_BURNING) activateChunkAt(x, y, getGrid(x, y));
         }
 
         function updateBurningMethane(x, y, type, idx, moved, grid, w, h, getIdx, setter) {
@@ -4182,7 +4401,7 @@
                     const nType = _get(nx, ny);
 
                     // New logic: Small chance to melt adjacent obsidian back into lava
-                    if (isWorldSim && nType === MAT.OBSIDIAN) ensureChunkIsActive(x, y);
+                    if (isWorldSim && nType === MAT.OBSIDIAN) ensureChunkIsActive(x, y, _get(x, y));
                     if (nType === MAT.OBSIDIAN && Math.random() < 0.005) { // 1% chance per neighbor per frame
                         _set(nx, ny, MAT.LAVA);
                         
@@ -4584,6 +4803,7 @@
         function render() {
             // Reset per-frame data
             firePixelsCoords = [];
+            glowingPixelsCoords = [];
 
             const startX = Math.floor(camera.x);
             const startY = Math.floor(camera.y);
@@ -4614,8 +4834,18 @@
                 if (deltaY > 0) dirtyRects.push({ x: 0, y: renderHeight - deltaY, w: renderWidth, h: deltaY });
                 if (deltaY < 0) dirtyRects.push({ x: 0, y: 0, w: renderWidth, h: -deltaY });
 
+                // --- START OF MODIFICATION ---
+                // Combine all active chunk sets into one for rendering.
+                // A Set automatically handles duplicates.
+                const allRenderActiveChunks = new Set([
+                    ...activeSolidChunks, 
+                    ...activeLiquidChunks, 
+                    ...activeGasChunks,
+                    ...persistentGlowingChunks // Add our static glowing chunks here
+                ]);
+
                 // Add rects for active simulation chunks
-                for (const key of activeChunks) {
+                for (const key of allRenderActiveChunks) {
                     const chunk = chunkMap.get(key);
                     if (chunk) {
                         dirtyRects.push({
@@ -4626,6 +4856,7 @@
                         });
                     }
                 }
+                // --- END OF MODIFICATION ---
             }
 
             // This is our main buffer for drawing new pixels for this frame
@@ -4659,6 +4890,11 @@
                         currentFramePixels[destI + 3] = 255;
 
                         const type = getGrid(worldX, worldY);
+
+                        if (BLOOM_MATERIALS[type]) {
+                            glowingPixelsCoords.push({ x: screenX, y: screenY, type: type });
+                        }
+
                         if (type === MAT.EMPTY || type === MAT.RIGID_BODY_STUB) continue;
                         
                         const lightLevel = getAuxData(lightChunkMap, worldX, worldY);
@@ -5089,35 +5325,22 @@
             const blurPasses = 3;
             const bloomWidth = bloomCanvas.width;
             const bloomHeight = bloomCanvas.height;
-            const MAX_COMPOUND_INTENSITY = 1.5; // This is the limit you requested!
+            const MAX_COMPOUND_INTENSITY = 1.5;
 
-            // --- PASS 1: Accumulate bloom intensity into the grid ---
+            // --- PASS 1: Accumulate bloom intensity from our pre-compiled list ---
             bloomGrid.fill(0); // Clear the grid for the new frame.
-            
-            const currentFramePixels = cacheCtx.getImageData(0, 0, renderWidth, renderHeight).data;
 
-            // Iterate all VISIBLE pixels on the screen
-            for (let y = 0; y < viewHeight; y++) {
-                for (let x = 0; x < viewWidth; x++) {
-                    // We need to figure out the material type from the rendered color. This is tricky.
-                    // A simpler, and still effective way, is to just check the pixel's brightness.
-                    const idx = (y * renderWidth + x) * 4;
-                    const r = currentFramePixels[idx];
-                    const g = currentFramePixels[idx+1];
+            for (const p of glowingPixelsCoords) {
+                const bloomData = BLOOM_MATERIALS[p.type];
+                
+                // Find the corresponding cell in our low-resolution grid
+                const bx = Math.floor(p.x / bloomResolution);
+                const by = Math.floor(p.y / bloomResolution);
+                const bloomIdx = by * bloomWidth + bx;
 
-                    // A simple heuristic for "glowing": high red and green components.
-                    if (r > 200 && g > 60) {
-                        // Find the corresponding cell in our low-resolution grid
-                        const bx = Math.floor(x / bloomResolution);
-                        const by = Math.floor(y / bloomResolution);
-                        const bloomIdx = by * bloomWidth + bx;
-
-                        // Add intensity based on the pixel's brightness.
-                        const brightness = (r + g) / 510; // Normalize to ~0-1
-                        const intensity = brightness * 0.9; // Adjust multiplier as needed
-                        
-                        bloomGrid[bloomIdx] = Math.min(MAX_COMPOUND_INTENSITY, bloomGrid[bloomIdx] + intensity);
-                    }
+                // Add the material's specific intensity to the grid cell
+                if (bloomGrid[bloomIdx] < MAX_COMPOUND_INTENSITY) {
+                    bloomGrid[bloomIdx] = Math.min(MAX_COMPOUND_INTENSITY, bloomGrid[bloomIdx] + bloomData.intensity);
                 }
             }
 
@@ -5125,25 +5348,25 @@
             bloomCtx.clearRect(0, 0, bloomWidth, bloomHeight);
             bloomCtx.globalCompositeOperation = 'source-over';
             
-            // Now, iterate the small bloom grid (much faster than the whole screen)
             for (let by = 0; by < bloomHeight; by++) {
                 for (let bx = 0; bx < bloomWidth; bx++) {
                     const intensity = bloomGrid[by * bloomWidth + bx];
                     if (intensity > 0) {
-                        // We use a generic bright color. The intensity is what matters.
+                        // We use a generic bright color; the intensity is what creates the effect.
                         bloomCtx.fillStyle = `rgba(255, 220, 180, ${intensity})`;
                         bloomCtx.fillRect(bx, by, 1, 1);
                     }
                 }
             }
 
-            // --- The rest of the function (blurring and drawing) is unchanged ---
+            // --- PASS 3: Blur the canvas and draw it additively onto the main screen ---
             bloomCtx.globalCompositeOperation = 'copy';
             for (let i = 0; i < blurPasses; i++) {
                 bloomCtx.filter = `blur(${1 << i}px)`;
                 bloomCtx.drawImage(bloomCanvas, 0, 0);
             }
             bloomCtx.filter = 'none';
+
             ctx.save();
             ctx.globalCompositeOperation = 'lighter';
             ctx.globalAlpha = 1.0;
@@ -5406,7 +5629,7 @@
                     const spawnType = getGrid(spawnX, spawnY);
                     if (spawnType === MAT.EMPTY) {
                         setGrid(spawnX, spawnY, matInfo.type);
-                        activateChunkAt(spawnX, spawnY);
+                        activateChunkAt(spawnX, spawnY, matInfo.type);
                     } else {
                         job.manifest.unshift(matInfo);
                     }
@@ -5431,7 +5654,7 @@
                                 type: filterMat
                             });
                             setGrid(x, y, MAT.EMPTY);
-                            activateChunkAt(x, y);
+                            activateChunkAt(x, y, MAT.EMPTY);
                         }
                     });
                     if (manifest.length === 0) return;
@@ -5472,7 +5695,7 @@
                                 changed = false;
                                 break;
                         }
-                        if (changed) activateChunkAt(x, y);
+                        if (changed) activateChunkAt(x, y, getGrid(x, y));
                     });
                 }
             },
@@ -5486,7 +5709,7 @@
                             const type = getGrid(x, y);
                             if (type !== MAT.ADAMANTIUM && type !== MAT.RUNE_WALL) {
                                 setGrid(x, y, MAT.EMPTY);
-                                activateChunkAt(x, y);
+                                activateChunkAt(x, y, MAT.EMPTY);
                             }
                         });
                     }
@@ -5544,47 +5767,58 @@
         }
         function createCauldron(cx,rimY,radius,thickness,material,edgeMaterial){const r2=radius*radius,orInner=radius-1,orInner2=orInner*orInner,ir=radius-thickness,ir2=ir*ir;for(let dy=0;dy<=radius;dy++)for(let dx=-radius;dx<=radius;dx++){const d2=dx*dx+dy*dy;if(d2<=r2)setGrid(cx+dx,rimY+dy,d2>orInner2?edgeMaterial:material);}for(let dy=0;dy<ir;dy++)for(let dx=-ir;dx<=ir;dx++)if(dx*dx+dy*dy<=ir2)setGrid(cx+dx,rimY+dy,MAT.EMPTY);}
 
-        function prioritizeAndLimitActiveChunks() {
-            const allChunksToConsider = new Set([...pendingActiveChunks, ...nextActiveChunks]);
-            nextActiveChunks.clear();
+        /**
+         * Generic helper to prioritize and limit a list of chunks.
+         */
+        function prioritizeChunkList(pending, next, active, limit, camBounds, playerChunk) {
+            const allChunks = new Set([...pending, ...next]);
+            next.clear();
 
             const priorityChunks = new Set();
             const otherChunks = [];
-            const camChunkX1 = Math.floor(camera.x / CHUNK_SIZE), camChunkX2 = Math.floor((camera.x + viewWidth) / CHUNK_SIZE);
-            const camChunkY1 = Math.floor(camera.y / CHUNK_SIZE), camChunkY2 = Math.floor((camera.y + viewHeight) / CHUNK_SIZE);
 
-            for (const key of allChunksToConsider) {
+            for (const key of allChunks) {
                 const chunk = chunkMap.get(key);
-                if (!chunk) continue; // Should not happen, but a good safeguard
+                if (!chunk) continue;
 
-                const cx = chunk.cx;
-                const cy = chunk.cy;
-                if (cx >= camChunkX1 && cx <= camChunkX2 && cy >= camChunkY1 && cy <= camChunkY2) {
+                if (chunk.cx >= camBounds.x1 && chunk.cx <= camBounds.x2 && chunk.cy >= camBounds.y1 && chunk.cy <= camBounds.y2) {
                     priorityChunks.add(key);
                 } else {
                     otherChunks.push(key);
                 }
             }
-            const pChunkX = Math.floor(player.x / CHUNK_SIZE), pChunkY = Math.floor(player.y / CHUNK_SIZE);
+
             otherChunks.sort((a, b) => {
                 const chunkA = chunkMap.get(a);
                 const chunkB = chunkMap.get(b);
                 if (!chunkA || !chunkB) return 0;
-                
-                const distA = (chunkA.cx - pChunkX) ** 2 + (chunkA.cy - pChunkY) ** 2;
-                const distB = (chunkB.cx - pChunkX) ** 2 + (chunkB.cy - pChunkY) ** 2;
+                const distA = (chunkA.cx - playerChunk.x) ** 2 + (chunkA.cy - playerChunk.y) ** 2;
+                const distB = (chunkB.cx - playerChunk.x) ** 2 + (chunkB.cy - playerChunk.y) ** 2;
                 return distA - distB;
             });
-            const processingOrder = [...priorityChunks, ...otherChunks];
 
-            // --- START OF FIX ---
-            // The bug was here. It should slice to MAX_CHUNKS_PER_FRAME, not add to it.
-            const chunksToProcess = processingOrder.slice(0, MAX_CHUNKS_PER_FRAME);
-            pendingActiveChunks = processingOrder.slice(MAX_CHUNKS_PER_FRAME);
-            // --- END OF FIX ---
-            
-            activeChunks.clear();
-            for (const key of chunksToProcess) activeChunks.add(key);
+            const processingOrder = [...priorityChunks, ...otherChunks];
+            const chunksToProcess = processingOrder.slice(0, limit);
+            const newPending = processingOrder.slice(limit);
+
+            active.clear();
+            for (const key of chunksToProcess) active.add(key);
+            return newPending;
+        }
+
+        function prioritizeAndLimitActiveChunks() {
+            // This limit is now PER-TYPE, giving more total simulation bandwidth but preventing one type from starving others.
+            const limitPerType = Math.floor(MAX_CHUNKS_PER_FRAME / 3) + 20;
+
+            const camBounds = {
+                x1: Math.floor(camera.x / CHUNK_SIZE), x2: Math.floor((camera.x + viewWidth) / CHUNK_SIZE),
+                y1: Math.floor(camera.y / CHUNK_SIZE), y2: Math.floor((camera.y + viewHeight) / CHUNK_SIZE)
+            };
+            const playerChunk = { x: Math.floor(player.x / CHUNK_SIZE), y: Math.floor(player.y / CHUNK_SIZE) };
+
+            pendingSolidChunks = prioritizeChunkList(pendingSolidChunks, nextActiveSolidChunks, activeSolidChunks, limitPerType, camBounds, playerChunk);
+            pendingLiquidChunks = prioritizeChunkList(pendingLiquidChunks, nextActiveLiquidChunks, activeLiquidChunks, MAX_CHUNKS_PER_FRAME, camBounds, playerChunk); // Give liquids full priority
+            pendingGasChunks = prioritizeChunkList(pendingGasChunks, nextActiveGasChunks, activeGasChunks, limitPerType, camBounds, playerChunk);
         }
 
         // --- GAME LOOP ---
@@ -5613,10 +5847,14 @@
 
             Profiler.start('UpdateLogic');
             const t0 = performance.now();
+            
             if (frameCount % VISIBLE_LIQUID_SCAN_INTERVAL === 0) {
-                findAndActivateLiquidSurfaces(); // Call renamed function
-                findAndActivateGasClouds();      // Call new function
+                findAndActivateLiquidOutlines(); 
+                findAndActivateGasOutlines();
+                findAndActivateFireChunks();
+                findAndActivateGlowingChunks();
             }
+
             prioritizeAndLimitActiveChunks();
             
             // --- UPDATE LOGIC ---
@@ -5688,7 +5926,7 @@
 
             if (isPouring) pourFromContainer();
             if (isStoring) storeMaterial(mouse.worldX, mouse.worldY);
-            if (isDrawing || isPouring || isStoring) activateChunkAt(mouse.worldX, mouse.worldY);
+            if (isDrawing || isPouring || isStoring) activateChunkAt(mouse.worldX, mouse.worldY, MAT.EMPTY);
 
             
 
@@ -5733,16 +5971,12 @@
                 renderDebugUI();
                 renderColliderGeometry();
                 
-                // --- ADD THIS NEW PROFILER DISPLAY ---
-                ctx.fillStyle = "rgba(0,0,0,0.7)";
-                ctx.fillRect(renderWidth - 160, 0, 160, 150); // Background box
-
                 ctx.fillStyle = "white";
                 ctx.font = "8px monospace";
                 ctx.textAlign = "right";
                 ctx.textBaseline = "top";
 
-                let yOffset = 4;
+                let yOffset = 25;
                 const results = Profiler.getResults();
                 for (const result of results) {
                     ctx.fillText(result, renderWidth - 6, yOffset);
@@ -5811,76 +6045,83 @@
         }
 
         function renderDebugUI() {
-            // Calculate derived stats
+            // --- 1. Calculate derived stats ---
             const activeSectors = Array.from(sectorGrid.values()).filter(s => s.state === 'ready').length;
             const getHitRatio = debugStats.getCalls > 0 ? (debugStats.getHits / debugStats.getCalls * 100).toFixed(1) : "N/A";
             const setHitRatio = debugStats.setCalls > 0 ? (debugStats.setHits / debugStats.setCalls * 100).toFixed(1) : "N/A";
-            const getMisses = debugStats.getCalls - debugStats.getHits;
-            const setMisses = debugStats.setCalls - debugStats.setHits;
+            const activeParticles = magicParticlePool.filter(p => p.active).length;
 
-            // UI positioning and styling
+            // --- 2. UI positioning and styling ---
             const startX = 10;
-            let startY = 50; // Position below the player stats
+            let startY = 50; // Position below the player stats UI
             const lineHeight = 10;
-            const indent = 10;
+            const sectionSpacing = 5;
+            const boxWidth = 200;
+            const boxHeight = 130;
             
+            // --- 3. Draw background box ---
+            ctx.fillStyle = "rgba(0,0,0,0.6)";
+            ctx.fillRect(startX - 4, startY - 4, boxWidth, boxHeight);
+
+            // --- 4. Setup text rendering ---
             ctx.font = "8px monospace";
             ctx.textAlign = "left";
             ctx.textBaseline = "top";
             
-            // Draw a semi-transparent background for readability
-            ctx.fillStyle = "rgba(0,0,0,0.6)";
-            ctx.fillRect(startX - 4, startY - 4, 180, 88);
+            // Helper for aligned text
+            const drawStat = (label, value) => {
+                ctx.fillStyle = "white";
+                ctx.fillText(`${label.padEnd(12, ' ')}: ${String(value).padStart(8, ' ')}`, startX, startY);
+                startY += lineHeight;
+            };
+            const drawHeader = (text) => {
+                ctx.fillStyle = '#aaa';
+                ctx.fillText(text, startX, startY);
+                startY += lineHeight;
+            };
+            
+            // --- 5. Display stats ---
+            drawHeader("== Chunks (Active/Pending) ==");
+            drawStat("Solids", `${activeSolidChunks.size}/${pendingSolidChunks.length}`);
+            drawStat("Liquids", `${activeLiquidChunks.size}/${pendingLiquidChunks.length}`);
+            drawStat("Gases", `${activeGasChunks.size}/${pendingGasChunks.length}`);
+            startY += sectionSpacing;
 
-            // Set text color for the stats
-            ctx.fillStyle = "white";
+            drawHeader("== World ==");
+            drawStat("Sectors", `${activeSectors}/${MAX_READY_SECTORS}`);
+            drawStat("Bodies", rigidBodies.length);
+            drawStat("Particles", `${activeParticles}/${MAX_MAGIC_PARTICLES}`);
+            startY += sectionSpacing;
 
-            // Display stats
-            ctx.fillText(`Active Chunks: ${activeChunks.size}`, startX, startY);
-            startY += lineHeight;
-            ctx.fillText(`Ready Sectors: ${activeSectors} / ${MAX_READY_SECTORS}`, startX, startY);
-            startY += (lineHeight * 1.5); // Add extra space
-
-            ctx.fillText(`setGrid Calls: ${debugStats.setCalls}`, startX, startY);
-            startY += lineHeight;
-            ctx.fillText(`- Hits: ${debugStats.setHits} / Miss: ${setMisses} (${setHitRatio}%)`, startX + indent, startY);
-            startY += (lineHeight * 1.5);
-
-            ctx.fillText(`getGrid Calls: ${debugStats.getCalls}`, startX, startY);
-            startY += lineHeight;
-            ctx.fillText(`- Hits: ${debugStats.getHits} / Miss: ${getMisses} (${getHitRatio}%)`, startX + indent, startY);
+            drawHeader("== Cache Hits ==");
+            drawStat("getGrid", `${getHitRatio}%`);
+            drawStat("setGrid", `${setHitRatio}%`);
         }
 
-        // --- START OF NEW FUNCTION ---
-        /**
-         * Draws a red border on the screen around all currently active simulation chunks.
-         */
         function drawActiveChunkOutlines() {
             ctx.lineWidth = 1;
 
-            // Draw processed chunks in GREEN
-            ctx.strokeStyle = 'rgba(0, 255, 0, 0.7)';
-            for (const key of activeChunks) {
-                const chunk = chunkMap.get(key);
-                if (!chunk) continue;
-
-                const screenX = chunk.cx * CHUNK_SIZE - camera.x;
-                const screenY = chunk.cy * CHUNK_SIZE - camera.y;
-                ctx.strokeRect(screenX, screenY, CHUNK_SIZE, CHUNK_SIZE);
+            // Draw solid chunks in YELLOW
+            ctx.strokeStyle = 'rgba(255, 255, 0, 0.7)';
+            for (const key of activeSolidChunks) {
+                const chunk = chunkMap.get(key); if (!chunk) continue;
+                ctx.strokeRect(chunk.cx * CHUNK_SIZE - camera.x, chunk.cy * CHUNK_SIZE - camera.y, CHUNK_SIZE, CHUNK_SIZE);
             }
 
-            // Draw deferred (pending) chunks in RED
-            ctx.strokeStyle = 'rgba(255, 0, 0, 0.7)';
-            for (const key of pendingActiveChunks) {
-                const chunk = chunkMap.get(key);
-                if (!chunk) continue;
-
-                const screenX = chunk.cx * CHUNK_SIZE - camera.x;
-                const screenY = chunk.cy * CHUNK_SIZE - camera.y;
-                ctx.strokeRect(screenX, screenY, CHUNK_SIZE, CHUNK_SIZE);
+            // Draw liquid chunks in BLUE
+            ctx.strokeStyle = 'rgba(0, 150, 255, 0.7)';
+            for (const key of activeLiquidChunks) {
+                const chunk = chunkMap.get(key); if (!chunk) continue;
+                ctx.strokeRect(chunk.cx * CHUNK_SIZE - camera.x, chunk.cy * CHUNK_SIZE - camera.y, CHUNK_SIZE, CHUNK_SIZE);
+            }
+            
+            // Draw gas chunks in LIGHT GRAY
+            ctx.strokeStyle = 'rgba(200, 200, 200, 0.6)';
+            for (const key of activeGasChunks) {
+                const chunk = chunkMap.get(key); if (!chunk) continue;
+                ctx.strokeRect(chunk.cx * CHUNK_SIZE - camera.x, chunk.cy * CHUNK_SIZE - camera.y, CHUNK_SIZE, CHUNK_SIZE);
             }
         }
-        // --- END OF NEW FUNCTION ---
 
         function createTrigger(options){
             const trigger={id:nextTriggerId++,name: options.name || null,x:options.x,y:options.y,width:options.width,height:options.height,onEnter:options.onEnter||function(){},onLeave:options.onLeave||function(){},onInteract:options.onInteract||function(){},isActive:false,associatedData:options.associatedData, isVolatile: options.isVolatile || false, isDestroyed: false};
