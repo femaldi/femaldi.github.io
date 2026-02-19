@@ -488,7 +488,7 @@ function generateCavesPixel(x, y, params) {
         emptyThreshold: 0.49, 
         // A pixel is ore if noise is BELOW this (and it's not empty space).
         // This value MUST be lower than emptyThreshold.
-        oreThreshold: 0.30
+        oreThreshold: 0.31
     };
 
     // 2. CALCULATE CAVE NOISE (Unchanged)
