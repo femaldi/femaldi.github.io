@@ -263,6 +263,7 @@
         let rigidBodies = [];
         let staticWorldBodies = []; // To hold temporary terrain colliders
         let activeStaticChunks = new Set();
+        let lightingDirtyChunks = new Set();
         let bodiesToDestroy = [];   // NEW: A "kill list" for entire b2Bodies
         let tempVec1 = null;
         let tempVec2 = null;
@@ -1322,7 +1323,6 @@
             return _lastChunk.data[ly * CHUNK_SIZE + lx];
         }
 
-        // --- START OF REPLACEMENT ---
         function setGrid(x, y, type, updateChunkComplex = false) {
             debugStats.setCalls++;
             const cx = Math.floor(x / CHUNK_SIZE);
@@ -1353,6 +1353,23 @@
 
             const oldType = chunk.data[lIdx];
             if (type === oldType) return;
+
+            // --- START OF NEW LIGHTING LOGIC ---
+            const wasLightBlocking = WALL_TYPES.has(oldType);
+            const isLightBlocking = WALL_TYPES.has(type);
+            
+            // If the light-blocking state of this pixel changes, this chunk and its
+            // neighbors will need a lighting update.
+            if (wasLightBlocking !== isLightBlocking) {
+                const key = coordToKey(cx, cy);
+                lightingDirtyChunks.add(key);
+                // Also add neighbors, as the light change will propagate into them.
+                lightingDirtyChunks.add(coordToKey(cx - 1, cy));
+                lightingDirtyChunks.add(coordToKey(cx + 1, cy));
+                lightingDirtyChunks.add(coordToKey(cx, cy - 1));
+                lightingDirtyChunks.add(coordToKey(cx, cy + 1));
+            }
+            // --- END OF NEW LIGHTING LOGIC ---
 
             const wasSolid = isSolidForPlayer(oldType);
             const isSolid = isSolidForPlayer(type);
@@ -2344,6 +2361,39 @@
                 }
 
                 await Promise.all(promises);
+            }
+        };
+
+        // --- ADD THIS NEW PROFILER OBJECT ---
+
+        const Profiler = {
+            timings: new Map(),
+            startTimes: new Map(),
+
+            start(name) {
+                this.startTimes.set(name, performance.now());
+            },
+
+            stop(name) {
+                const startTime = this.startTimes.get(name);
+                if (startTime) {
+                    const duration = performance.now() - startTime;
+                    const currentTotal = this.timings.get(name) || 0;
+                    this.timings.set(name, currentTotal + duration);
+                    this.startTimes.delete(name);
+                }
+            },
+
+            reset() {
+                this.timings.clear();
+                this.startTimes.clear();
+            },
+
+            getResults() {
+                // Return a sorted array of results for display
+                return Array.from(this.timings.entries())
+                    .sort((a, b) => b[1] - a[1]) // Sort descending by time
+                    .map(([name, time]) => `${name}: ${time.toFixed(2)}ms`);
             }
         };
 
@@ -3620,6 +3670,7 @@
                 _lastChunkCY = chunk.cy;
 
                 // PASS 1: solids, gas, fire (bottom-up)
+                Profiler.start('Sim:NonLiquid');
                 for (let ly = CHUNK_SIZE - 1; ly >= 0; ly--) {
                     for (let lx = (scanDir ? 0 : CHUNK_SIZE - 1);
                         (scanDir ? lx < CHUNK_SIZE : lx >= 0);
@@ -3628,8 +3679,10 @@
                         stepNonLiquid(startX + lx, startY + ly);
                     }
                 }
+                Profiler.stop('Sim:NonLiquid');
 
                 // PASS 2: liquids (bottom-up)
+                Profiler.start('Sim:Liquid');
                 for (let ly = CHUNK_SIZE - 1; ly >= 0; ly--) {
                     for (let lx = (scanDir ? 0 : CHUNK_SIZE - 1);
                         (scanDir ? lx < CHUNK_SIZE : lx >= 0);
@@ -3638,8 +3691,10 @@
                         stepLiquid(startX + lx, startY + ly);
                     }
                 }
+                Profiler.stop('Sim:Liquid');
 
                 // --- ADD PASS 3 for GASES (top-down) ---
+                Profiler.start('Sim:Gas');
                 for (let ly = 0; ly < CHUNK_SIZE; ly++) {
                     for (let lx = (scanDir ? 0 : CHUNK_SIZE - 1);
                         (scanDir ? lx < CHUNK_SIZE : lx >= 0);
@@ -3648,6 +3703,7 @@
                         stepGas(startX + lx, startY + ly);
                     }
                 }
+                Profiler.stop('Sim:Gas');
             }
         }
 
@@ -5533,6 +5589,8 @@
 
         // --- GAME LOOP ---
         async function gameLoop(now = performance.now()) {
+            Profiler.reset(); // Reset timers at the start of each frame
+            Profiler.start('FrameTotal');
             debugStats.getCalls = 0;
             debugStats.getHits = 0;
             debugStats.setCalls = 0;
@@ -5546,10 +5604,14 @@
                 lastFpsTime = now;
             }
 
+            Profiler.start('UpdateSectors');
             checkGenerationQueue() 
 
             await updateSectors(); // Await the async function
             manageSectorMemory();  // Check if we need to unload a sector
+            Profiler.stop('UpdateSectors');
+
+            Profiler.start('UpdateLogic');
             const t0 = performance.now();
             if (frameCount % VISIBLE_LIQUID_SCAN_INTERVAL === 0) {
                 findAndActivateLiquidSurfaces(); // Call renamed function
@@ -5602,12 +5664,19 @@
             updateInteractions();
             updateMessageSystem();
 
-            const lightingQueue = [...activeChunks];
-            const processedChunks = new Set(activeChunks);
+            Profiler.stop('UpdateLogic');
+
+            Profiler.start('Lighting');
+            // The lightingQueue now starts ONLY with chunks where terrain was added or removed.
+            const lightingQueue = [...lightingDirtyChunks];
+            const processedChunks = new Set(lightingDirtyChunks); // Prevent re-processing initial chunks.
+            lightingDirtyChunks.clear(); // Clear the global set for the next frame.
+
             let head = 0;
             while (head < lightingQueue.length) {
                 const chunkToUpdate = lightingQueue[head++];
                 const newNeighbors = updateLocalLightingAndFindNeighbors(chunkToUpdate);
+                
                 for (const neighbor of newNeighbors) {
                     if (!processedChunks.has(neighbor)) {
                         processedChunks.add(neighbor);
@@ -5615,14 +5684,18 @@
                     }
                 }
             }
+            Profiler.stop('Lighting');
 
             if (isPouring) pourFromContainer();
             if (isStoring) storeMaterial(mouse.worldX, mouse.worldY);
             if (isDrawing || isPouring || isStoring) activateChunkAt(mouse.worldX, mouse.worldY);
 
+            
+
             tOtherMs3 = performance.now() - t0 - tOtherMs2;
 
             const t1 = performance.now();
+            Profiler.start('Simulation');
             // --- SIMULATIONS ---
             for (let i = 0; i < SIMULATION_STEPS_PER_FRAME; i++) {
                 runWorldSimulationWithChunks();
@@ -5633,6 +5706,7 @@
                     runSimulationOnSmallGrid(movedFlask, flaskGrid, flaskWidth, flaskHeight, flaskSetter);
                 }
             }
+            Profiler.stop('Simulation');
             tSimMs = performance.now() - t1;
 
             updateCamera();
@@ -5641,7 +5715,9 @@
 
             const t2 = performance.now();
             // --- RENDER LOGIC ---
+            Profiler.start('Render');
             render();
+            Profiler.stop('Render');
             
             drawHUD();
             tRenderMs = performance.now() - t2;
@@ -5653,17 +5729,30 @@
             tOtherMs = performance.now() - t0 - tSimMs - tRenderMs;
 
             if (debugMode) {
+                Profiler.start('Debug');
                 renderDebugUI();
                 renderColliderGeometry();
+                
+                // --- ADD THIS NEW PROFILER DISPLAY ---
+                ctx.fillStyle = "rgba(0,0,0,0.7)";
+                ctx.fillRect(renderWidth - 160, 0, 160, 150); // Background box
+
                 ctx.fillStyle = "white";
                 ctx.font = "8px monospace";
                 ctx.textAlign = "right";
-                ctx.fillText(`sim: ${tSimMs.toFixed(2)}ms`, renderWidth - 6, renderHeight - 10);
-                ctx.fillText(`render: ${tRenderMs.toFixed(2)}ms`, renderWidth - 6, renderHeight - 20);
-                ctx.fillText(`other: ${tOtherMs.toFixed(2)}ms`, renderWidth - 6, renderHeight - 30);
-                ctx.fillText(`coords: ${player.x.toFixed(0)} ${player.y.toFixed(0)}`, renderWidth - 6, renderHeight - 40);
-                ctx.textAlign = "left";
+                ctx.textBaseline = "top";
+
+                let yOffset = 4;
+                const results = Profiler.getResults();
+                for (const result of results) {
+                    ctx.fillText(result, renderWidth - 6, yOffset);
+                    yOffset += 10;
+                }
+
+                Profiler.stop('Debug');
             }
+
+            Profiler.stop('FrameTotal');
         }
         
         function cleanupDestroyedBodies(){
