@@ -463,17 +463,93 @@
             rigidBodies.push(body);
         }
 
+        /**
+         * Spawns particles that form a shape by appearing from the center outwards,
+         * hold with a blinking effect, then dissolve as wisps.
+         * @param {object} options - Configuration for the effect.
+         * @param {number} options.x - Center X coordinate in world space.
+         * @param {number} options.y - Center Y coordinate in world space.
+         * @param {HTMLImageElement} options.shapeImage - The pre-loaded image defining the target shape.
+         * @param {number} [options.particleCount=200] - The number of particles to use for the effect.
+         * @param {number} [options.shapeSize=48] - The final size of the shape in world pixels.
+         * @param {Array<number>} [options.color=[255, 80, 80]] - The base RGB color.
+         * @param {number} [options.appearDuration=15] - Max frames for particles to appear.
+         * @param {number} [options.holdDuration=30] - Frames the shape stays intact and blinks.
+         * @param {number} [options.wispDuration=80] - Frames the particles drift as wisps.
+         */
+        function createShapeDissolveEffect({ x, y, shapeImage, particleCount = 200, shapeSize = 48, color = [255, 80, 80], appearDuration = 15, holdDuration = 30, wispDuration = 80 }) {
+            const targetPoints = getCoordinatesFromImage(shapeImage);
+            if (targetPoints.length === 0) return;
+
+            const scale = shapeSize / shapeImage.width;
+            
+            // First, find the maximum distance from the center to normalize the spawn delay.
+            let maxDistance = 0;
+            for (const point of targetPoints) {
+                maxDistance = Math.max(maxDistance, Math.hypot(point.x, point.y));
+            }
+
+            let spawnedCount = 0;
+            for (let i = 0; i < MAX_MAGIC_PARTICLES && spawnedCount < particleCount; i++) {
+                const p = magicParticlePool[i];
+                if (p.active) continue;
+
+                // Base Particle Setup
+                p.active = true;
+                p.gravity = 0;
+                p.lifespan = appearDuration + holdDuration + wispDuration;
+                p.initialLifespan = p.lifespan;
+                p.vx = 0;
+                p.vy = 0;
+
+                // State Machine & Shape Properties
+                p.isShapeParticle = true;
+                
+                // --- NEW "APPEAR" LOGIC ---
+                p.phase = 'waiting'; // New initial state. The particle is invisible.
+                const targetPoint = targetPoints[Math.floor(Math.random() * targetPoints.length)];
+                const distance = Math.hypot(targetPoint.x, targetPoint.y);
+                
+                // The particle's spawn is delayed based on its distance from the center.
+                p.spawnDelay = (distance / maxDistance) * appearDuration;
+                
+                // Set final position immediately. Visibility is controlled by the state machine.
+                p.x = x + targetPoint.x * scale;
+                p.y = y + targetPoint.y * scale;
+                p.holdTime = holdDuration;
+                p.totalAppearTime = appearDuration;
+
+                const v = 50;
+                p.color = [
+                    Math.max(0, Math.min(255, color[0] + (Math.random() - 0.5) * v)),
+                    Math.max(0, Math.min(255, color[1] + (Math.random() - 0.5) * v)),
+                    Math.max(0, Math.min(255, color[2] + (Math.random() - 0.5) * v))
+                ];
+                spawnedCount++;
+            }
+        }
+
+
         function pickupObject(body) {
             if (body.isDestroyed) return;
 
             const userData = body.body.getUserData();
+            const ringSprite = SpriteManager.sprites.get('pickup_shape');
 
             // Handle new dynamic upgrades which have an onPickup function attached directly
             if (userData.onPickup) {
                 userData.onPickup(player);
                 body.isDestroyed = true; // Mark for cleanup
                 // Add a small visual effect for feedback
-                spawnMagicParticles(25, body.body.getPosition().x * B2_SCALE, body.body.getPosition().y * B2_SCALE, [200, 180, 255]);
+                const pos = body.body.getPosition();
+                createShapeDissolveEffect({
+                    x: pos.x * B2_SCALE,
+                    y: pos.y * B2_SCALE - 64,
+                    shapeImage: ringSprite,
+                    color: [255, 220, 100],
+                    shapeSize: 128,
+                    particleCount: 3000
+                });
 
                 switch (userData.upgradeType) {
                     case 'increase_tool_slots':
@@ -522,6 +598,15 @@
 
             if (pickedUp) {
                 body.isDestroyed = true; // Mark for cleanup
+                const pos = body.body.getPosition();
+                createShapeDissolveEffect({
+                    x: pos.x * B2_SCALE,
+                    y: pos.y * B2_SCALE - 64,
+                    shapeImage: ringSprite,
+                    color: [255, 220, 100],
+                    shapeSize: 128,
+                    particleCount: 3000
+                });
             }
         }
         
@@ -1154,6 +1239,9 @@
             { id: 'wooden_box_16x16', path: 'assets/wooden_box.png' },
             { id: 'wooden_box_32x32', path: 'assets/wooden_box_large.png' },
             { id: 'iron_door_27x33', path: 'assets/iron_door.png' },
+            { id: 'pickup_shape', path: 'assets/pickup_shape.png' },
+            { id: 'filter_shape', path: 'assets/filter_shape.png' },
+            { id: 'heat_shape', path: 'assets/heat_shape.png' },
             // You can add more generic sprites here later
             // { id: 'boulder_24x24', path: 'assets/boulder.png' },
         ];
@@ -1254,6 +1342,50 @@
             if (type === MAT.METHANE) return 40;
             if (LIQUIDS.has(type)) return 140;
             return 255;
+        }
+
+        /**
+         * Parses a loaded image and returns an array of coordinates for pixels that define a shape.
+         * The coordinates are relative to the center of the image.
+         * This function treats both transparent pixels AND white pixels as empty space.
+         * @param {HTMLImageElement} img - The pre-loaded image object.
+         * @returns {Array<{x: number, y: number}>} An array of coordinate points.
+         */
+        function getCoordinatesFromImage(img) {
+            if (!img) return [];
+
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = img.width;
+            tempCanvas.height = img.height;
+            const tempCtx = tempCanvas.getContext('2d');
+            tempCtx.drawImage(img, 0, 0);
+
+            const imageData = tempCtx.getImageData(0, 0, img.width, img.height);
+            const data = imageData.data;
+            const coordinates = [];
+            const centerX = img.width / 2;
+            const centerY = img.height / 2;
+            const whiteThreshold = 250; // Use a threshold to account for near-white JPEG artifacts
+
+            for (let i = 0; i < data.length; i += 4) {
+                const r = data[i];
+                const g = data[i + 1];
+                const b = data[i + 2];
+                const alpha = data[i + 3];
+
+                // --- THIS IS THE NEW, ROBUST LOGIC ---
+                // A pixel is considered part of the shape if it's visible (alpha > 50)
+                // AND it's not white (at least one color channel is below the threshold).
+                const isShapePixel = alpha > 50 && (r < whiteThreshold || g < whiteThreshold || b < whiteThreshold);
+
+                if (isShapePixel) {
+                    const pixelIndex = i / 4;
+                    const x = pixelIndex % img.width;
+                    const y = Math.floor(pixelIndex / img.width);
+                    coordinates.push({ x: x - centerX, y: y - centerY });
+                }
+            }
+            return coordinates;
         }
 
         function isFluid(type) {
@@ -3251,9 +3383,16 @@
             if (player.spawnAnimationProgress > 16) {
                 player.isSpawning = false;
                 createPlayerBody(); // Create the physics body now
-                // Optional: create a small particle burst on completion
-                spawnMagicParticles(30, player.x + player.width / 2, player.y + player.height / 2, [200, 180, 255]);
-
+                const ringSprite = SpriteManager.sprites.get('pickup_shape');
+                createShapeDissolveEffect({
+                    x: player.x + player.width / 2,
+                    y: player.y + player.height / 2 - 64,
+                    shapeImage: ringSprite,
+                    color: [255, 220, 100],
+                    shapeSize: 128,
+                    particleCount: 3000
+                });
+                
                 const alchemist = npcs.find(npc => npc.name === 'Ylialkemisti');
                 if (alchemist) {
                     spawnFloatingArrow(alchemist.x + alchemist.width / 2 - 2, alchemist.y - 24);
@@ -4954,7 +5093,47 @@
 
 
             for (const p of pouredParticles) { const [r, g, b] = COLORS[p.type]; ctx.fillStyle = `rgb(${r},${g},${b})`; ctx.fillRect(Math.round(p.x - camera.x), Math.round(p.y - camera.y), 1, 1); }
-            for (let i = 0; i < MAX_MAGIC_PARTICLES; i++) { const p = magicParticlePool[i]; if (p.active) { ctx.fillStyle = `rgb(${p.color[0]},${p.color[1]},${p.color[2]})`; ctx.fillRect(Math.round(p.x - camera.x), Math.round(p.y - camera.y), 1, 1); } }
+            
+            for (let i = 0; i < MAX_MAGIC_PARTICLES; i++) {
+                const p = magicParticlePool[i];
+                if (!p.active) continue;
+
+                let alpha = 1.0;
+                let visible = true;
+
+                if (p.isShapeParticle) {
+                    // Check the particle's current phase to determine how it should be rendered.
+                    switch(p.phase) {
+                        case 'waiting':
+                            // Don't draw particles that haven't appeared yet.
+                            visible = false;
+                            break;
+                        
+                        case 'hold':
+                            // Apply the blinking effect.
+                            const blinkSpeed = 0.35;
+                            const minAlpha = 0.4;
+                            // The particle's own position desynchronizes the blink across the shape.
+                            alpha = minAlpha + (1 - minAlpha) * (Math.sin(frameCount * blinkSpeed + p.x * 0.1 + p.y * 0.1) * 0.5 + 0.5);
+                            break;
+                            
+                        case 'wisp':
+                            // Apply the final fade-out effect.
+                            const wispDuration = p.initialLifespan - p.holdTime - p.totalAppearTime;
+                            const timeInWisp = wispDuration - p.lifespan;
+                            const fadeStartRatio = 0.5;
+                            if (timeInWisp > wispDuration * fadeStartRatio) {
+                               alpha = Math.max(0, 1.0 - (timeInWisp - wispDuration * fadeStartRatio) / (wispDuration * (1.0 - fadeStartRatio)));
+                            }
+                            break;
+                    }
+                }
+                
+                if (visible) {
+                    ctx.fillStyle = `rgba(${p.color[0]},${p.color[1]},${p.color[2]}, ${alpha})`;
+                    ctx.fillRect(Math.round(p.x - camera.x), Math.round(p.y - camera.y), 1, 1);
+                }
+            }
 
             if (player.canInteract && player.currentInteractable) {
                 const interactable = player.currentInteractable.target;
@@ -5547,14 +5726,65 @@
         }
 
         function updateMagicParticles() {
+            // --- Tweakable constants for the wisp/dissolve effect ---
+            const WISP_DRAG = 0.98; // Closer to 1 = less drag. 0.98 is a good starting point.
+            const WISP_WIND_STRENGTH = 0.08; // How much the "wind" affects the particles.
+            const WISP_NOISE_SCALE = 0.05; // How "large" the wind swirls are. Lower = larger swirls.
+            const WISP_TIME_SCALE = 0.01; // How fast the wind pattern changes over time.
+
             for (let i = 0; i < MAX_MAGIC_PARTICLES; i++) {
                 const p = magicParticlePool[i];
                 if (!p.active) continue;
+
+                // --- START: Particle State Machine ---
+
+                // --- NEW SHAPE PARTICLE STATE MACHINE ---
+                if (p.isShapeParticle) {
+                    switch (p.phase) {
+                        case 'waiting':
+                            // The particle is invisible during this phase.
+                            p.spawnDelay--;
+                            if (p.spawnDelay <= 0) {
+                                // Time to appear and start holding/blinking.
+                                p.phase = 'hold';
+                            }
+                            break;
+
+                        case 'hold':
+                            p.holdTime--;
+                            if (p.holdTime <= 0) {
+                                p.phase = 'wisp';
+                                // Give it a small kick to start the wisp motion.
+                                p.vx = (Math.random() - 0.5) * 0.5;
+                                p.vy = (Math.random() - 0.5) * 0.5;
+                            }
+                            break;
+                        
+                        case 'wisp':
+                            // This logic remains the same.
+                            const noiseAngle = PerlinNoise.noise(p.x * WISP_NOISE_SCALE, p.y * WISP_NOISE_SCALE, frameCount * WISP_TIME_SCALE) * Math.PI * 4;
+                            p.vx += Math.cos(noiseAngle) * WISP_WIND_STRENGTH;
+                            p.vy += Math.sin(noiseAngle) * WISP_WIND_STRENGTH;
+                            p.vx *= WISP_DRAG;
+                            p.vy *= WISP_DRAG;
+                            break;
+                    }
+                } 
+
+                // --- Universal Updates (apply to all active particles) ---
                 p.x += p.vx;
                 p.y += p.vy;
-                if (p.gravity) p.vy += p.gravity;
+                if (p.gravity) {
+                    p.vy += p.gravity;
+                }
+                
                 p.lifespan--;
-                if (p.lifespan <= 0) p.active = false;
+
+                if (p.lifespan <= 0) {
+                    p.active = false;
+                    // CRITICAL: Reset all custom flags when the particle is returned to the pool
+                    p.isShapeParticle = false; 
+                }
             }
         }
         
@@ -5641,13 +5871,16 @@
                 name: "Filter Material",
                 execute: function(station) {
                     const filterMat = getDominantMaterialInSemicircle(station.sampler);
+
                     if (filterMat === null) {
                         console.log("filterMat empty");
                         return;
                     }
+
                     const source = station.cauldrons.left,
                         target = station.cauldrons.right,
                         manifest = [];
+
                     forEachInDownwardSemicircle(source, (x, y) => {
                         if (getGrid(x, y) === filterMat) {
                             manifest.push({
@@ -5657,18 +5890,42 @@
                             activateChunkAt(x, y, MAT.EMPTY);
                         }
                     });
+
                     if (manifest.length === 0) return;
                     alchemyJobs.push({
                         manifest: manifest,
                         target: target
                     });
+
+                    const areas = [station.cauldrons.left, station.cauldrons.right, station.sampler];
+                    const filterSprite = SpriteManager.sprites.get('filter_shape');
+                    for (const area of areas) {
+                        createShapeDissolveEffect({
+                            x: area.cx,
+                            y: area.cy - 32,
+                            shapeImage: filterSprite,
+                            color: [200, 200, 200],
+                            shapeSize: 64,
+                            particleCount: 1000
+                        });
+                    }
                 }
             },
             'heat_material': {
                 name: "Heat Material",
                 execute: function(station) {
                     const source = station.cauldrons.left;
-                    spawnMagicParticles(50, source.cx, source.cy + source.r * 0.5, [255, 100, 0]);
+                    const heatSprite = SpriteManager.sprites.get('heat_shape');
+                    
+                    createShapeDissolveEffect({
+                        x: source.cx,
+                        y: source.cy - 32,
+                        shapeImage: heatSprite,
+                        color: [200, 150, 80],
+                        shapeSize: 64,
+                        particleCount: 1000
+                    });
+
                     forEachInDownwardSemicircle(source, (x, y) => {
                         let changed = true;
                         switch (getGrid(x, y)) {
