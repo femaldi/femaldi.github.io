@@ -1225,15 +1225,16 @@
 
         // --- Add these new variables ---
         const BLOOM_MATERIALS = {
-            [MAT.FIRE]: { color: [255, 150, 50], intensity: 0.9, radius: 12 },
-            [MAT.OIL_BURNING]: { color: [255, 165, 0], intensity: 0.8, radius: 10 },
-            [MAT.COAL_BURNING]: { color: [255, 140, 20], intensity: 0.7, radius: 8 },
-            [MAT.GUNPOWDER_IGNITED]: { color: [200, 100, 100], intensity: 0.5, radius: 4 },
-            [MAT.RUNE_WALL]: { color: [200, 180, 255], intensity: 0.3, radius: 6 },
-            [MAT.COPPER]: { color: [220, 200, 200], intensity: 0.01, radius: 3 },
-            [MAT.SILVER]: { color: [200, 200, 220], intensity: 0.01, radius: 3 },
-            [MAT.GOLD]: { color: [220, 220, 180], intensity: 0.01, radius: 3 },
-            [MAT.LAVA]: { color: [250, 180, 100], intensity: 10.0, radius: 32 },
+            [MAT.FIRE]: { color: [255, 50, 50], intensity: 0.9, radius: 12 },
+            [MAT.OIL_BURNING]: { color: [255, 10, 0], intensity: 0.8, radius: 10 },
+            [MAT.COAL_BURNING]: { color: [255, 10, 0], intensity: 0.7, radius: 8 },
+            [MAT.GUNPOWDER_IGNITED]: { color: [200, 10, 0], intensity: 0.5, radius: 4 },
+            [MAT.RUNE_WALL]: { color: [200, 200, 50], intensity: 0.3, radius: 6 },
+            [MAT.COPPER]: { color: [220, 200, 200], intensity: 0.1, radius: 3 },
+            [MAT.SILVER]: { color: [200, 200, 220], intensity: 0.1, radius: 3 },
+            [MAT.GOLD]: { color: [220, 220, 180], intensity: 0.1, radius: 3 },
+            [MAT.LAVA]: { color: [255, 10, 0], intensity: 1.0, radius: 16 },
+            [MAT.ACID]: { color: [0, 255, 0], intensity: 1.0, radius: 8 },
         };
 
         const GENERIC_SPRITES = [
@@ -5031,10 +5032,6 @@
 
                         const type = getGrid(worldX, worldY);
 
-                        if (BLOOM_MATERIALS[type]) {
-                            glowingPixelsCoords.push({ x: screenX, y: screenY, type: type });
-                        }
-
                         if (type === MAT.EMPTY || type === MAT.RIGID_BODY_STUB) continue;
                         
                         const lightLevel = getAuxData(lightChunkMap, worldX, worldY);
@@ -5045,6 +5042,12 @@
                         
                         let r, g, b;
                         [r, g, b] = COLORS[type];
+
+                        if (BLOOM_MATERIALS[type]) {
+                            const bloomMaterial = BLOOM_MATERIALS[type];
+                            glowingPixelsCoords.push({ x: screenX, y: screenY, type: type, r: bloomMaterial.color[0], g: bloomMaterial.color[1], b: bloomMaterial.color[2] });
+                        }
+
                         if (type === MAT.FIRE) { r = 255; g = 80 + Math.random() * 80; b = 0; firePixelsCoords.push({ x: screenX, y: screenY }); } 
                         else if (type === MAT.OIL_BURNING || type === MAT.COAL_BURNING) { firePixelsCoords.push({ x: screenX, y: screenY });[r, g, b] = varyColor(...COLORS[type], worldX, worldY, type, 4); } 
                         else if (LIQUIDS.has(type)) { [r, g, b] = varyColor(...COLORS[type], worldX, worldY, type, 4); } 
@@ -5073,15 +5076,20 @@
             cacheCtx.globalCompositeOperation = 'source-over';
 
             for (const p of magicParticlePool) {
-                // We only care about active shape particles that are currently visible
                 if (p.active && p.isShapeParticle && p.phase !== 'waiting') {
                     const screenX = Math.round(p.x - camera.x);
                     const screenY = Math.round(p.y - camera.y);
 
-                    // Make sure the particle is on-screen before adding it
                     if (screenX >= 0 && screenX < renderWidth && screenY >= 0 && screenY < renderHeight) {
-                        // Add an object with a direct 'intensity' property.
-                        glowingPixelsCoords.push({ x: screenX, y: screenY, intensity: p.bloomIntensity });
+                        // Add the particle's color channels to the object.
+                        glowingPixelsCoords.push({ 
+                            x: screenX, 
+                            y: screenY, 
+                            intensity: p.bloomIntensity, 
+                            r: p.color[0], 
+                            g: p.color[1], 
+                            b: p.color[2] 
+                        });
                     }
                 }
             }
@@ -5520,49 +5528,56 @@
             const bloomWidth = bloomCanvas.width;
             const bloomHeight = bloomCanvas.height;
             const MAX_COMPOUND_INTENSITY = 1.5;
+            const BLOOM_BRIGHTNESS_MULTIPLIER = 200; // Tweakable: how bright the final bloom is
 
-            // --- PASS 1: Accumulate bloom intensity from our pre-compiled list ---
-            bloomGrid.fill(0); // Clear the grid for the new frame.
+            // --- PASS 1: Accumulate bloom intensity into the R, G, and B grids ---
+            bloomGrid.r.fill(0);
+            bloomGrid.g.fill(0);
+            bloomGrid.b.fill(0);
 
             for (const p of glowingPixelsCoords) {
                 let intensity = 0;
-                // Check if this entry came from the grid (has a 'type')
-                if (p.type) {
-                    const bloomData = BLOOM_MATERIALS[p.type];
-                    if (bloomData) {
-                        intensity = bloomData.intensity;
-                    }
-                } 
-                // Check if this entry came from a particle (has an 'intensity')
-                else if (p.intensity) {
+                // Normalize color from 0-255 to 0-1 range for multiplication
+                const normR = p.r / 255;
+                const normG = p.g / 255;
+                const normB = p.b / 255;
+
+                if (p.type) { // From grid material
+                    intensity = BLOOM_MATERIALS[p.type]?.intensity || 0;
+                } else if (p.intensity) { // From particle
                     intensity = p.intensity;
                 }
-
-                if (intensity <= 0) continue; // Skip if no bloom
+                if (intensity <= 0) continue;
                 
-                // Find the corresponding cell in our low-resolution grid
                 const bx = Math.floor(p.x / bloomResolution);
                 const by = Math.floor(p.y / bloomResolution);
                 const bloomIdx = by * bloomWidth + bx;
 
-                // Add the intensity to the grid cell
-                if (bloomGrid[bloomIdx] < MAX_COMPOUND_INTENSITY) {
-                    bloomGrid[bloomIdx] = Math.min(MAX_COMPOUND_INTENSITY, bloomGrid[bloomIdx] + intensity);
-                }
+                // Add intensity to each channel, weighted by the source color
+                bloomGrid.r[bloomIdx] = Math.min(MAX_COMPOUND_INTENSITY, bloomGrid.r[bloomIdx] + intensity * normR);
+                bloomGrid.g[bloomIdx] = Math.min(MAX_COMPOUND_INTENSITY, bloomGrid.g[bloomIdx] + intensity * normG);
+                bloomGrid.b[bloomIdx] = Math.min(MAX_COMPOUND_INTENSITY, bloomGrid.b[bloomIdx] + intensity * normB);
             }
 
-            // --- PASS 2: Render the accumulated grid to the bloom canvas ---
+            // --- PASS 2: Render the accumulated color grids to the bloom canvas ---
             bloomCtx.clearRect(0, 0, bloomWidth, bloomHeight);
             bloomCtx.globalCompositeOperation = 'source-over';
-            
-            for (let by = 0; by < bloomHeight; by++) {
-                for (let bx = 0; bx < bloomWidth; bx++) {
-                    const intensity = bloomGrid[by * bloomWidth + bx];
-                    if (intensity > 0) {
-                        // We use a generic bright color; the intensity is what creates the effect.
-                        bloomCtx.fillStyle = `rgba(255, 220, 180, ${intensity})`;
-                        bloomCtx.fillRect(bx, by, 1, 1);
-                    }
+
+            for (let i = 0; i < bloomGrid.r.length; i++) {
+                const rInt = bloomGrid.r[i];
+                const gInt = bloomGrid.g[i];
+                const bInt = bloomGrid.b[i];
+
+                if (rInt > 0 || gInt > 0 || bInt > 0) {
+                    const bx = i % bloomWidth;
+                    const by = Math.floor(i / bloomWidth);
+                    // Convert intensity back to a 0-255 color value for drawing
+                    const r = Math.min(255, rInt * BLOOM_BRIGHTNESS_MULTIPLIER);
+                    const g = Math.min(255, gInt * BLOOM_BRIGHTNESS_MULTIPLIER);
+                    const b = Math.min(255, bInt * BLOOM_BRIGHTNESS_MULTIPLIER);
+
+                    bloomCtx.fillStyle = `rgb(${r|0}, ${g|0}, ${b|0})`;
+                    bloomCtx.fillRect(bx, by, 1, 1);
                 }
             }
 
@@ -6603,7 +6618,12 @@
             bloomCanvas.width = renderWidth / bloomResolution;
             bloomCanvas.height = renderHeight / bloomResolution;
             bloomCtx = bloomCanvas.getContext('2d');
-            bloomGrid = new Float32Array(bloomCanvas.width * bloomCanvas.height);
+            
+            bloomGrid = {
+                r: new Float32Array(bloomCanvas.width * bloomCanvas.height),
+                g: new Float32Array(bloomCanvas.width * bloomCanvas.height),
+                b: new Float32Array(bloomCanvas.width * bloomCanvas.height)
+            };
 
             updateLoadingStatus('Carving Background Strata...');
             await yieldToBrowser();
