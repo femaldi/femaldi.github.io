@@ -447,74 +447,87 @@ self.onmessage = (event) => {
 };
 
 /**
- * Generates a single terrain pixel for the Caves biome, now including thick, noisy barriers.
+ * Generates a single terrain pixel for the Caves biome, including ore veins
+ * that form in the "heart" of the cave walls using the same noise field.
  * @param {number} x - The global world X coordinate.
  * @param {number} y - The global world Y coordinate.
  * @param {object} params - Biome-specific parameters, like the layer and biome bounds.
- * @returns {number} The material ID (e.g., MAT.EMPTY or a wall type).
+ * @returns {number} The material ID (e.g., MAT.EMPTY, a wall type, or a metal type).
  */
 function generateCavesPixel(x, y, params) {
     const { layer, bounds } = params;
     const layerMaterial = getLayerMaterial(layer);
 
-    // --- 1. Define Barrier Parameters ---
+    // --- Biome Barrier/Ceiling generation remains the same ---
     const BARRIER_THICKNESS = 100;
     const CEILING_NOISE_FREQUENCY = 0.01;
-    const CEILING_NOISE_AMPLITUDE = 25; // How much the ceiling height varies
-
-    // --- 2. Check for and Generate Vertical Side Walls ---
+    const CEILING_NOISE_AMPLITUDE = 25;
     const biomeStartX = bounds.x1 * SECTOR_SIZE;
-    // We add 1 to x2 because the bounds are inclusive sector indices
-    const biomeEndX = (bounds.x2 + 1) * SECTOR_SIZE; 
-    
+    const biomeEndX = (bounds.x2 + 1) * SECTOR_SIZE;
     if (x < biomeStartX + BARRIER_THICKNESS || x > biomeEndX - BARRIER_THICKNESS) {
         return layerMaterial;
     }
-
-    // --- 3. Check for and Generate Horizontal Layer Ceilings ---
     if (layer > 0) {
         const sectorsPerLayer = 5;
         const layerTopY = (bounds.y1 * SECTOR_SIZE) + (layer * sectorsPerLayer * SECTOR_SIZE);
-        
-        // Use Perlin noise to make the ceiling uneven
         const noiseOffset = PerlinNoise.noise(x * CEILING_NOISE_FREQUENCY, 42.5) * CEILING_NOISE_AMPLITUDE;
         const ceilingEffectiveY = layerTopY + noiseOffset;
-
         if (y > ceilingEffectiveY && y < ceilingEffectiveY + BARRIER_THICKNESS) {
             return layerMaterial;
         }
     }
 
-    // --- 4. If not a barrier, generate the cave interior using fractal noise ---
-    const config = {
-        baseFrequency: 0.006,
-        octaves: 2,
-        lacunarity: 2.0,
-        persistence: 0.5,
-        warpFrequency: 0.005,
-        warpStrength: 40.0,
-        threshold: 0.49
+    // --- Combined Cave and Ore Generation ---
+
+    // 1. CAVE GENERATION PARAMETERS (Unchanged)
+    const caveConfig = {
+        baseFrequency: 0.006, octaves: 2, lacunarity: 2.0, persistence: 0.5,
+        warpFrequency: 0.005, warpStrength: 40.0,
+        // --- NEW THRESHOLDS ---
+        // A pixel is empty space if noise is above this.
+        emptyThreshold: 0.49, 
+        // A pixel is ore if noise is BELOW this (and it's not empty space).
+        // This value MUST be lower than emptyThreshold.
+        oreThreshold: 0.30
     };
 
-    const qx = PerlinNoise.noise(x * config.warpFrequency, y * config.warpFrequency, 100.5);
-    const qy = PerlinNoise.noise(x * config.warpFrequency, y * config.warpFrequency, 100.5);
-    const warpedX = x + (qx * config.warpStrength);
-    const warpedY = y + (qy * config.warpStrength);
+    // 2. CALCULATE CAVE NOISE (Unchanged)
+    const qx = PerlinNoise.noise(x * caveConfig.warpFrequency, y * caveConfig.warpFrequency, 100.5);
+    const qy = PerlinNoise.noise(x * caveConfig.warpFrequency, y * caveConfig.warpFrequency, 100.5);
+    const warpedX = x + (qx * caveConfig.warpStrength);
+    const warpedY = y + (qy * caveConfig.warpStrength);
 
-    let totalNoise = 0;
-    let frequency = config.baseFrequency;
-    let amplitude = 1.0;
-    let maxAmplitude = 0;
-
-    for (let i = 0; i < config.octaves; i++) {
+    let totalNoise = 0, frequency = caveConfig.baseFrequency, amplitude = 1.0, maxAmplitude = 0;
+    for (let i = 0; i < caveConfig.octaves; i++) {
         totalNoise += PerlinNoise.noise(warpedX * frequency, warpedY * frequency, 0) * amplitude;
         maxAmplitude += amplitude;
-        amplitude *= config.persistence;
-        frequency *= config.lacunarity;
+        amplitude *= caveConfig.persistence;
+        frequency *= caveConfig.lacunarity;
     }
-
+    // Noise values range from -1 to 1. We'll use this range directly.
     const normalizedNoise = (totalNoise / maxAmplitude + 1) / 2;
 
-    // Use the determined layer material if the pixel is solid
-    return (normalizedNoise > config.threshold) ? MAT.EMPTY : layerMaterial;
+    // --- 3. APPLY THRESHOLDS ---
+    // The noise field can be visualized as a heightmap.
+    // High values are "peaks" which we carve out as empty space.
+    // Low values are "valleys" or the deep core of the rock, where ore forms.
+    // Mid-range values are regular rock walls.
+
+    if (normalizedNoise > caveConfig.emptyThreshold) {
+        // High noise value -> This is empty cave space.
+        return MAT.EMPTY;
+    } else if (normalizedNoise < caveConfig.oreThreshold) {
+        // Very low noise value -> This is the heart of the rock, place ore.
+        switch (layer) {
+            case 0: return MAT.COPPER;
+            case 1: return MAT.SILVER;
+            case 2: return MAT.GOLD;
+            case 3:
+            case 4: return MAT.PLATINUM;
+            default: return layerMaterial; // Fallback
+        }
+    } else {
+        // Mid-range noise value -> This is a standard wall.
+        return layerMaterial;
+    }
 }
