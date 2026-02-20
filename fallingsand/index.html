@@ -932,7 +932,7 @@
         let lastColliderUpdateTime = 0;
         const COLLIDER_UPDATE_INTERVAL = 100;
 
-                const OBJECT_DEFINITIONS = {
+        const OBJECT_DEFINITIONS = {
             'stone_pick': {
                 name: 'Stone Pick',
                 type: 'tool', // 'tool', 'structure', or 'upgrade'
@@ -997,6 +997,42 @@
                     1,1,0,1,1,1,1,1,1,1,1,1,1,0,1,1,
                     1,1,0,0,1,1,1,1,1,1,1,1,0,0,1,1,
                 ].map(p => p === 1 ? MAT.WOOD : MAT.EMPTY)
+            },
+            'firestarter': {
+                name: 'Firestarter',
+                type: 'tool',
+                width: 16,
+                height: 16,
+                pixels: [ /* Pixel art for a barrel with an opening */
+                    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+                    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+                    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+                    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+                    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+                    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+                    1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+                    1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+                    1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+                    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+                    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+                    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+                    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+                    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+                    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+                    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+                ].map(p => p === 1 ? MAT.WOOD : MAT.EMPTY),
+                onUse: (player, mouse) => {
+                    // Spawn 6-8 fire particles in a small radius at the cursor
+                    const fireCount = 16 + Math.floor(Math.random() * 8);
+                    for (let i = 0; i < fireCount; i++) {
+                        const sx = mouse.worldX + Math.floor((Math.random() - 0.5) * 6);
+                        const sy = mouse.worldY + Math.floor((Math.random() - 0.5) * 6);
+                        const type = getGrid(sx, sy);
+                        if (isFlammable(type) || type === MAT.EMPTY) {
+                            setGrid(sx, sy, MAT.FIRE, true);
+                        }
+                    }
+                }
             }
         };
 
@@ -1013,6 +1049,7 @@
             { name: "Structure Bag Expansion", type: 'tablet', cost: { [MAT.GOLD]: 10 }, data: { upgradeType: 'increase_structure_slots' } },
             { name: "Wooden Barrel", type: 'structure', cost: { [MAT.COPPER]: 20 }, data: { definitionId: 'wooden_barrel' } },
             { name: "Stone Pick", type: 'tool', cost: { [MAT.COPPER]: 5 }, data: { definitionId: 'stone_pick' } },
+            { name: "Firestarter", type: 'tool', cost: { [MAT.COPPER]: 20 }, data: { definitionId: 'firestarter' } },
             { name: "25 Gunpowder", type: 'material', cost: { [MAT.COPPER]: 5 }, data: { material: MAT.GUNPOWDER, amount: 25 } },
             { name: "25 Oil", type: 'material', cost: { [MAT.COPPER]: 10 }, data: { material: MAT.OIL, amount: 25 } },
             { name: "50 Sand", type: 'material', cost: { [MAT.COPPER]: 1 }, data: { material: MAT.SAND, amount: 50 } },
@@ -1277,7 +1314,7 @@
         const VISIBLE_LIQUID_SCAN_INTERVAL = 5; // Update lighting every 30 frames
 
         // --- Magic Particle System ---
-        const MAX_MAGIC_PARTICLES = 5000;
+        const MAX_MAGIC_PARTICLES = 50000;
         const magicParticlePool = [];
         for (let i = 0; i < MAX_MAGIC_PARTICLES; i++) {
             magicParticlePool.push({ x: 0, y: 0, vx: 0, vy: 0, lifespan: 0, color: [0,0,0], gravity: 0, active: false });
@@ -3823,6 +3860,37 @@
                 }
             }
         }
+
+        // In index.html, near other update functions
+
+        // --- START OF NEW CODE ---
+        function updateActiveToolEffects() {
+            if (player.isSpawning || activeContainer !== 'tool' || player.toolPocket.length === 0) {
+                return;
+            }
+
+            const toolName = player.toolPocket[player.toolIndex];
+
+            // Specific effect for the Firestarter
+            if (toolName === 'Firestarter' && frameCount % 16 === 0) { // Emit particles every 4 frames
+                const aim = computePlayerAim();
+
+                // Calculate the world position of the player's hand
+                const handLocalX = aim.facingRight ? 8 : -1;
+                const handLocalY = 9; // Base y-offset of hand from player origin
+                const handWorldX = player.x + handLocalX;
+                const handWorldY = player.y + handLocalY;
+
+                // Project from the hand to find the tip of the tool
+                const toolLength = 8; // Approx. length in pixels from hand to tool tip
+                const tipWorldX = handWorldX + Math.cos(aim.aimAngle) * toolLength;
+                const tipWorldY = handWorldY + Math.sin(aim.aimAngle) * toolLength;
+
+                // Spawn a single, non-gravity particle
+                spawnMagicParticles(1, tipWorldX, tipWorldY, [255, 120, 0], 0);
+            }
+        }
+        // --- END OF NEW CODE ---
         
         function updatePlayer() {
             if (player.isSpawning) return;
@@ -5745,14 +5813,14 @@
             }
         }
 
-        function spawnMagicParticles(count, x, y, mainColor) {
+        function spawnMagicParticles(count, x, y, mainColor, variance = 1.0) {
             let spawnedCount = 0;
             for (let i = 0; i < MAX_MAGIC_PARTICLES; i++) {
                 const p = magicParticlePool[i];
                 if (!p.active) {
                     p.active = true;
-                    p.x = x + (Math.random() - 0.5) * 20;
-                    p.y = y + (Math.random() - 0.5) * 10;
+                    p.x = x + (Math.random() - 0.5) * 20 * variance;
+                    p.y = y + (Math.random() - 0.5) * 10 * variance;
                     p.gravity = 0;
                     const colorVariance = 60,
                         r = Math.max(0, Math.min(255, mainColor[0] + (Math.random() - 0.5) * colorVariance)),
@@ -6202,6 +6270,7 @@
             updateMagicParticles();
             updateMagicEmitters();
             updateInteractions();
+            updateActiveToolEffects();
             updateMessageSystem();
 
             Profiler.stop('UpdateLogic');
