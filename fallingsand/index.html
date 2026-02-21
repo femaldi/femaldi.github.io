@@ -1779,6 +1779,8 @@
                 this.materialType = material;
                 this.fixtureCount = 0;
                 this.spritePixels = null; 
+                this.renderCacheCanvas = null;
+                this.pixelStateHash = -1;
                 
                 this.isDestroyed = false;
                 this.needsShapeUpdate = false;
@@ -1856,6 +1858,15 @@
             }
 
             rebuildFixtures() {
+                // 1. Save the body's current state (type and velocity).
+                const oldType = this.body.getType();
+                const oldLinVel = this.body.getLinearVelocity();
+                const oldAngVel = this.body.getAngularVelocity();
+
+                // 2. Temporarily make the body kinematic. It won't be affected by gravity
+                //    or other forces during the moment it has no fixtures.
+                this.body.setType('kinematic');
+
                 let f = this.body.getFixtureList();
                 while (f) {
                     const next = f.getNext();
@@ -1864,6 +1875,14 @@
                 }
                 this._createFixturesFromPixels();
                 this.needsShapeUpdate = false;
+
+                // 3. Restore the body to its original state.
+                this.body.setType(oldType);
+                this.body.setLinearVelocity(oldLinVel);
+                this.body.setAngularVelocity(oldAngVel);
+
+                // 4. Wake the body up to ensure the physics engine re-evaluates it immediately.
+                this.body.setAwake(true);
             }
 
             getBinaryMask() {
@@ -2494,6 +2513,99 @@
             }
         };
 
+        // --- START OF NEW/CORRECTED FUNCTION ---
+        /**
+         * Creates a multi-body physics scale with a central pivot and two pans.
+         * This version creates bodies directly with Planck.js to avoid RigidBody class timing issues.
+         */
+        function createPhysicsScale(worldX, worldY) {
+            // --- 1. Define Scale Geometry (in pixels) ---
+            const beamWidth = 120;
+            const beamHeight = 6;
+            const panWidth = 30;
+            const panHeight = 10;
+            const pivotOffsetY = -14; // Y-offset from the base to the pivot point
+
+            // --- 2. Create the Physics Bodies directly ---
+
+            // A. The static pivot anchor (invisible)
+            const pivotBody = world.createBody({
+                type: 'static',
+                position: pl.Vec2(worldX / B2_SCALE, (worldY + pivotOffsetY) / B2_SCALE),
+            });
+
+            // B. The main beam
+            const beamBody = world.createDynamicBody({
+                position: pl.Vec2(worldX / B2_SCALE, (worldY + pivotOffsetY - (beamHeight / 2)) / B2_SCALE),
+            });
+            beamBody.createFixture(pl.Box(beamWidth / 2 / B2_SCALE, beamHeight / 2 / B2_SCALE), {
+                density: (MATERIAL_DENSITY[MAT.IRON] || 7.8) * 5, // High density for stability
+                friction: 0.5,
+            });
+            
+            // C. The left and right pans
+            const leftPanBody = world.createDynamicBody({
+                position: pl.Vec2((worldX - beamWidth / 2) / B2_SCALE, (worldY + pivotOffsetY + 20) / B2_SCALE),
+            });
+            leftPanBody.createFixture(pl.Box(panWidth / 2 / B2_SCALE, panHeight / 2 / B2_SCALE), {
+                density: MATERIAL_DENSITY[MAT.IRON] || 7.8,
+                friction: 0.8, // Higher friction to hold items better
+            });
+
+            const rightPanBody = world.createDynamicBody({
+                position: pl.Vec2((worldX + beamWidth / 2) / B2_SCALE, (worldY + pivotOffsetY + 20) / B2_SCALE),
+            });
+            rightPanBody.createFixture(pl.Box(panWidth / 2 / B2_SCALE, panHeight / 2 / B2_SCALE), {
+                density: MATERIAL_DENSITY[MAT.IRON] || 7.8,
+                friction: 0.8,
+            });
+
+            // --- 3. Create and Attach RigidBody instances for rendering ---
+            // We create "dummy" RigidBody objects that are linked to the bodies we just made.
+            // This allows our existing rendering loop to draw them.
+            
+            const createDummyRigidBody = (body, width, height, name) => {
+                const rb = new RigidBody(0, 0, width, height, MAT.IRON, name);
+                // Immediately destroy the body created by the RigidBody constructor
+                world.destroyBody(rb.body);
+                // And replace it with the one we made manually
+                rb.body = body;
+                body.setUserData(rb); // Link the physics body back to the renderable object
+                rigidBodies.push(rb);
+            };
+
+            createDummyRigidBody(beamBody, beamWidth, beamHeight, "Scale Beam");
+            createDummyRigidBody(leftPanBody, panWidth, panHeight, "Scale Pan");
+            createDummyRigidBody(rightPanBody, panWidth, panHeight, "Scale Pan");
+
+            // --- 4. Define and Create the Joints ---
+            
+            // A. Revolute Joint: Connects the Beam to the static Pivot anchor
+            world.createJoint(pl.RevoluteJoint({
+                bodyA: pivotBody,
+                bodyB: beamBody,
+                localAnchorA: pl.Vec2(0, 0),
+                localAnchorB: pl.Vec2(0, 0),
+            }));
+
+            // B. Revolute Joint: Connects the Left Pan to the Beam
+            world.createJoint(pl.RevoluteJoint({
+                bodyA: beamBody,
+                bodyB: leftPanBody,
+                localAnchorA: pl.Vec2(-beamWidth / 2 / B2_SCALE, 0),
+                localAnchorB: pl.Vec2(0, -panHeight / 2 / B2_SCALE),
+            }));
+
+            // C. Revolute Joint: Connects the Right Pan to the Beam
+            world.createJoint(pl.RevoluteJoint({
+                bodyA: beamBody,
+                bodyB: rightPanBody,
+                localAnchorA: pl.Vec2(beamWidth / 2 / B2_SCALE, 0),
+                localAnchorB: pl.Vec2(0, -panHeight / 2 / B2_SCALE),
+            }));
+        }
+        // --- END OF NEW/CORRECTED FUNCTION ---
+
         /**
          * Creates a simple, rectangular rigid body, clearing space for it and optionally texturing it with a sprite.
          * @param {number} worldX - The world X-coordinate for the top-left corner.
@@ -2901,6 +3013,25 @@
                                 createRigidBodyRectangle(worldX, worldY, rbDef.width, rbDef.height, rbDef.material, 'iron_door_27x33', 'Iron door');
                             }
                         }
+                    }
+                },
+                {
+                    name: "PhysicsScale",
+                    imagePath: 'assets/scale_base.png',
+                    spawnLocalX: 256, // X-coordinate within the target sector
+                    spawnLocalY: 256, // Y-coordinate within the target sector
+                    targetSectorOffsetX: -2, // Spawn 2 sectors to the left of the player's start
+                    targetSectorOffsetY: 0,  // Spawn in the same horizontal layer
+                    postGenerationHook: function(piece) {
+                        // The hook's job is to calculate the final world coordinates and call our creation function.
+                        if (!piece.parsedData) return;
+                        
+                        // The set piece image stamps the static base. Now we build the physics parts on top.
+                        // We use the image center as the reference point for the scale's base.
+                        const worldX = piece.bounds.x + (piece.parsedData.width / 2);
+                        const worldY = piece.bounds.y + piece.parsedData.height; // Place at the bottom of the image bounds
+
+                        createPhysicsScale(worldX, worldY);
                     }
                 },
             ],
@@ -5220,58 +5351,114 @@
 
         // --- REPLACEMENT for the renderRigidBodies function ---
         function renderRigidBodies() {
-            const BRIGHTNESS_BOOST = 40;
+            ctx.imageSmoothingEnabled = false; 
+            ctx.globalCompositeOperation = 'source-over';
+            ctx.globalAlpha = 1.0;
 
             for (const body of rigidBodies) {
                 if (!body.body || body.isDestroyed) continue;
 
-                const pos = body.body.getPosition(), angle = body.body.getAngle();
-                ctx.save();
-                ctx.translate(pos.x * B2_SCALE - camera.x, pos.y * B2_SCALE - camera.y);
-                ctx.rotate(angle);
-
-                const isHovered = (body === hoveredBody);
                 const hasSprite = body.spritePixels !== null;
+                let needsCacheUpdate = !body.renderCacheCanvas;
 
-                for (let y = 0; y < body.height; y++) {
-                    for (let x = 0; x < body.width; x++) {
-                        const lIdx = y * body.width + x;
-                        const type = body.pixels[lIdx];
-                        if (type === MAT.EMPTY) continue;
+                // --- START OF FIX: Perform dirty-checking for ALL bodies ---
+
+                // Calculate a simple, fast hash of the current simulation pixel state.
+                let currentHash = 0;
+                for (let i = 0; i < body.pixels.length; i++) {
+                    // Use a simple rolling hash to better differentiate states
+                    currentHash = (currentHash * 31 + body.pixels[i]) | 0;
+                }
+
+                // If the hash is different from last frame, the body's pixels have changed.
+                if (currentHash !== body.pixelStateHash) {
+                    needsCacheUpdate = true;
+                    body.pixelStateHash = currentHash; // Store the new hash for the next frame
+                }
+
+                // --- END OF FIX ---
+
+                // Check if the body needs dynamic updates for shimmering effects.
+                if (!hasSprite && body.renderCacheCanvas && body.isShimmering === undefined) {
+                    body.isShimmering = false;
+                    for (const p of body.pixels) {
+                        if (SHIMMERING_METALS.has(p)) {
+                            body.isShimmering = true;
+                            break;
+                        }
+                    }
+                }
+                
+                // Force a cache update if the body is marked as shimmering.
+                if (body.isShimmering) {
+                    needsCacheUpdate = true;
+                }
+
+                // If the cache needs to be built (first time) or rebuilt (dirty/shimmering)...
+                if (needsCacheUpdate) {
+                    if (!body.renderCacheCanvas) {
+                        const tempCanvas = document.createElement('canvas');
+                        tempCanvas.width = body.width;
+                        tempCanvas.height = body.height;
+                        body.renderCacheCanvas = tempCanvas;
+                    }
+
+                    const tempCtx = body.renderCacheCanvas.getContext('2d');
+                    const imageData = tempCtx.createImageData(body.width, body.height);
+                    const cachePixels = imageData.data;
+
+                    for (let i = 0; i < body.pixels.length; i++) {
+                        const destIdx = i * 4;
+                        const type = body.pixels[i];
+                        const x = i % body.width;
+                        const y = Math.floor(i / body.width);
                         
                         let r, g, b, a = 255;
 
-                        if (hasSprite) {
-                            // --- RENDER FROM BAKED SPRITE DATA ---
-                            const spriteIdx = lIdx * 4;
-                            r = body.spritePixels[spriteIdx];
-                            g = body.spritePixels[spriteIdx + 1];
-                            b = body.spritePixels[spriteIdx + 2];
-                            a = body.spritePixels[spriteIdx + 3];
-
-                            // Don't render fully transparent pixels from the sprite
-                            if (a < 10) continue;
-
-                        } else {
-                            // --- FALLBACK TO MATERIAL COLOR RENDERING ---
-                            if (SHIMMERING_METALS.has(type)) { 
-                                [r, g, b] = metallicColor(x, y, COLORS[type]); 
-                            } else { 
-                                [r, g, b] = varyColor(...COLORS[type], x, y, type, 8); 
+                        // Only render if the simulation pixel is not empty
+                        if (type !== MAT.EMPTY) {
+                            if (hasSprite) {
+                                const sourceIdx = i * 4;
+                                r = body.spritePixels[sourceIdx + 0];
+                                g = body.spritePixels[sourceIdx + 1];
+                                b = body.spritePixels[sourceIdx + 2];
+                                a = body.spritePixels[sourceIdx + 3];
+                            } else {
+                                const color = COLORS[type] || [255, 0, 255];
+                                if (SHIMMERING_METALS.has(type)) {
+                                    [r, g, b] = metallicColor(x, y, color);
+                                } else {
+                                    [r, g, b] = varyColor(...color, x, y, type, 8);
+                                }
                             }
-                        }
-
-                        // Apply hover effect regardless of render method
-                        if (isHovered) {
-                            r = Math.min(255, r + BRIGHTNESS_BOOST);
-                            g = Math.min(255, g + BRIGHTNESS_BOOST);
-                            b = Math.min(255, b + BRIGHTNESS_BOOST);
+                        } else {
+                            a = 0; // Empty pixel
                         }
                         
-                        ctx.fillStyle = `rgba(${r|0},${g|0},${b|0},${a/255})`;
-                        ctx.fillRect(x - body.width / 2, y - body.height / 2, 1, 1);
+                        if (a > 10) { // Use a small threshold to avoid rendering near-invisible sprite pixels
+                            cachePixels[destIdx + 0] = r;
+                            cachePixels[destIdx + 1] = g;
+                            cachePixels[destIdx + 2] = b;
+                            cachePixels[destIdx + 3] = a;
+                        }
                     }
+                    tempCtx.putImageData(imageData, 0, 0);
                 }
+
+                const pos = body.body.getPosition(), angle = body.body.getAngle();
+                ctx.save();
+                const screenX = Math.round(pos.x * B2_SCALE - camera.x);
+                const screenY = Math.round(pos.y * B2_SCALE - camera.y);
+                ctx.translate(screenX, screenY);
+                ctx.rotate(angle);
+
+                ctx.drawImage(body.renderCacheCanvas, -body.width / 2, -body.height / 2);
+
+                if (body === hoveredBody) {
+                    ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
+                    ctx.fillRect(-body.width / 2, -body.height / 2, body.width, body.height);
+                }
+
                 ctx.restore();
             }
         }
@@ -5573,7 +5760,30 @@
 		function blendPixel(pixels,destI,r,g,b,a){if(a>=255){pixels[destI]=r;pixels[destI+1]=g;pixels[destI+2]=b;pixels[destI+3]=255;return;}if(a<=0)return;const invA=255-a;pixels[destI]=((r*a+pixels[destI]*invA)/255)|0;pixels[destI+1]=((g*a+pixels[destI+1]*invA)/255)|0;pixels[destI+2]=((b*a+pixels[destI+2]*invA)/255)|0;pixels[destI+3]=255;}
         function getWorldTypeAtScreen(screenX,screenY){ const worldX=(screenX+camera.x)|0, worldY=(screenY+camera.y)|0; return getGrid(worldX, worldY); }
 		function playerAlphaAtScreen(screenX,screenY){const t=getWorldTypeAtScreen(screenX,screenY);if(!isFluid(t))return 1;const a=fluidAlpha(t)/255,minAlpha=0.20,strength=0.85,out=1-a*strength;return out<minAlpha?minAlpha:out;}
-		function drawPlayerPx(screenX,screenY,r,g,b){const a=playerAlphaAtScreen(screenX,screenY);if(a>=0.999){ctx.fillStyle=`rgb(${r|0},${g|0},${b|0})`;ctx.fillRect(screenX,screenY,1,1);return;}ctx.save();ctx.globalAlpha=a;ctx.fillStyle=`rgb(${r|0},${g|0},${b|0})`;ctx.fillRect(screenX,screenY,1,1);ctx.restore();}
+		
+        function drawPlayerPx(screenX,screenY,r,g,b){
+            // --- START OF FIX ---
+            const a = playerAlphaAtScreen(screenX,screenY);
+
+            // Always save the state before making any changes.
+            ctx.save();
+            
+            // Only change globalAlpha if the pixel needs to be transparent.
+            // If it's opaque, we'll just use the default alpha of 1.0.
+            if (a < 0.999) {
+                ctx.globalAlpha = a;
+            }
+            
+            // Draw the pixel.
+            ctx.fillStyle = `rgb(${r|0},${g|0},${b|0})`;
+            ctx.fillRect(screenX,screenY,1,1);
+            
+            // Always restore the state to what it was before this function was called.
+            // This guarantees no transparency "leaks".
+            ctx.restore();
+            // --- END OF FIX ---
+        }
+
 		const PLAYER_SPRITE_SCALE=1.0;
 
 		function computePlayerAim(){
