@@ -3158,9 +3158,9 @@
 
                     for (let cy = minCY; cy <= maxCY; cy++) {
                         for (let cx = minCX; cx <= maxCX; cx++) {
-                            // Add the chunk's key to the set that will be processed in the next frame.
-                            // We use nextActiveSolidChunks because sand is a "solid" in the grid simulation.
-                            nextActiveSolidChunks.add(coordToKey(cx, cy));
+                            const key = coordToKey(cx, cy);
+                            nextActiveSolidChunks.add(key);
+                            nextActiveLiquidChunks.add(key);
                         }
                     }
 
@@ -3175,7 +3175,7 @@
                     for (let y = minY; y < maxY; y++) {
                         for (let x = minX; x < maxX; x++) {
                             const material = getGrid(x, y);
-                            if (MATERIAL_DENSITY[material] && ! STATIC_MATERIALS.has(material)) {
+                            if (MATERIALS_TO_WEIGH[material] && ! STATIC_MATERIALS.has(material)) {
                                 //console.log("found something", material);
                                 // Check the pixel BELOW the current one to see if it's supported.
                                 const supportPoint = pl.Vec2((x + 0.5) / B2_SCALE, (y + 1.5) / B2_SCALE);
@@ -3190,7 +3190,7 @@
                                 }
 
                                 if (isSupported) {
-                                    const pixelMass = MATERIAL_DENSITY[material] * 0.1;
+                                    const pixelMass = MATERIALS_TO_WEIGH[material] * 0.1;
                                     //console.log("isSupported", pixelMass);
                                     // The pixel at (x, y) is supported by the scale. Add its weight.
                                     totalMass += pixelMass;
@@ -3254,7 +3254,7 @@
                             const material = getGrid(x, y);
 
                             // We only care about displacing weighable materials.
-                            if (MATERIAL_DENSITY[material]) {
+                            if (MATERIALS_TO_WEIGH[material]) {
                                 const point = pl.Vec2((x + 0.5) / B2_SCALE, (y + 0.5) / B2_SCALE);
                                 
                                 let isOverlapping = false;
