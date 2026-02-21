@@ -2513,98 +2513,197 @@
             }
         };
 
-        // --- START OF NEW/CORRECTED FUNCTION ---
-        /**
-         * Creates a multi-body physics scale with a central pivot and two pans.
-         * This version creates bodies directly with Planck.js to avoid RigidBody class timing issues.
-         */
         function createPhysicsScale(worldX, worldY) {
-            // --- 1. Define Scale Geometry (in pixels) ---
-            const beamWidth = 120;
+            // --- 1. Define Scale Geometry (all parts) ---
+            const beamWidth = 200;
             const beamHeight = 6;
-            const panWidth = 30;
-            const panHeight = 10;
-            const pivotOffsetY = -14; // Y-offset from the base to the pivot point
+            const panWidth = 6;
+            const panHeight = 60;
+            const pivotOffsetY = -103;
+            const bucketWidth = 40;
+            const bucketHeight = 20;
+            const wallThickness = 4;
+            const bucketOffsetX = beamWidth * 0.35;
 
-            // --- 2. Create the Physics Bodies directly ---
-
-            // A. The static pivot anchor (invisible)
+            // --- 2. Create the Primary Physics Bodies ---
             const pivotBody = world.createBody({
                 type: 'static',
                 position: pl.Vec2(worldX / B2_SCALE, (worldY + pivotOffsetY) / B2_SCALE),
             });
 
-            // B. The main beam
             const beamBody = world.createDynamicBody({
                 position: pl.Vec2(worldX / B2_SCALE, (worldY + pivotOffsetY - (beamHeight / 2)) / B2_SCALE),
             });
             beamBody.createFixture(pl.Box(beamWidth / 2 / B2_SCALE, beamHeight / 2 / B2_SCALE), {
-                density: (MATERIAL_DENSITY[MAT.IRON] || 7.8) * 5, // High density for stability
-                friction: 0.5,
+                density: (MATERIAL_DENSITY[MAT.IRON] || 7.8) * 5,
+                friction: 2.0,
             });
-            
-            // C. The left and right pans
+
+            // --- RE-INTEGRATED PANS ---
+            const leftPanX = worldX - beamWidth / 2 + panWidth / 2;
+            const leftPanY = worldY + pivotOffsetY + 20 - beamWidth / 2;
+            const rightPanX = worldX + beamWidth / 2 - panWidth / 2;
+            const rightPanY = worldY + pivotOffsetY + 20 - beamWidth / 2;
+
             const leftPanBody = world.createDynamicBody({
-                position: pl.Vec2((worldX - beamWidth / 2) / B2_SCALE, (worldY + pivotOffsetY + 20) / B2_SCALE),
+                position: pl.Vec2(leftPanX / B2_SCALE, leftPanY / B2_SCALE),
             });
             leftPanBody.createFixture(pl.Box(panWidth / 2 / B2_SCALE, panHeight / 2 / B2_SCALE), {
                 density: MATERIAL_DENSITY[MAT.IRON] || 7.8,
-                friction: 0.8, // Higher friction to hold items better
+                friction: 2.0,
             });
 
             const rightPanBody = world.createDynamicBody({
-                position: pl.Vec2((worldX + beamWidth / 2) / B2_SCALE, (worldY + pivotOffsetY + 20) / B2_SCALE),
+                position: pl.Vec2(rightPanX / B2_SCALE, rightPanY / B2_SCALE),
             });
             rightPanBody.createFixture(pl.Box(panWidth / 2 / B2_SCALE, panHeight / 2 / B2_SCALE), {
                 density: MATERIAL_DENSITY[MAT.IRON] || 7.8,
-                friction: 0.8,
+                friction: 2.0,
             });
+            // --- END RE-INTEGRATED PANS ---
 
             // --- 3. Create and Attach RigidBody instances for rendering ---
-            // We create "dummy" RigidBody objects that are linked to the bodies we just made.
-            // This allows our existing rendering loop to draw them.
-            
             const createDummyRigidBody = (body, width, height, name) => {
                 const rb = new RigidBody(0, 0, width, height, MAT.IRON, name);
-                // Immediately destroy the body created by the RigidBody constructor
                 world.destroyBody(rb.body);
-                // And replace it with the one we made manually
                 rb.body = body;
-                body.setUserData(rb); // Link the physics body back to the renderable object
+                body.setUserData(rb);
                 rigidBodies.push(rb);
             };
-
             createDummyRigidBody(beamBody, beamWidth, beamHeight, "Scale Beam");
+            
+            // --- RE-INTEGRATED PANS ---
             createDummyRigidBody(leftPanBody, panWidth, panHeight, "Scale Pan");
             createDummyRigidBody(rightPanBody, panWidth, panHeight, "Scale Pan");
+            // --- END RE-INTEGRATED PANS ---
 
-            // --- 4. Define and Create the Joints ---
+            // --- 4. Create the Buckets using the new helper function ---
+            const beamTopY = (worldY + pivotOffsetY - beamHeight);
+            const bucketCenterY = beamTopY - (bucketHeight / 2);
+
+            const leftBucket = createRectangularBucket({
+                worldX: worldX - bucketOffsetX,
+                worldY: bucketCenterY,
+                width: bucketWidth, height: bucketHeight, thickness: wallThickness,
+                material: MAT.IRON, name: "Scale Bucket"
+            });
+
+            const rightBucket = createRectangularBucket({
+                worldX: worldX + bucketOffsetX,
+                worldY: bucketCenterY,
+                width: bucketWidth, height: bucketHeight, thickness: wallThickness,
+                material: MAT.IRON, name: "Scale Bucket"
+            });
             
-            // A. Revolute Joint: Connects the Beam to the static Pivot anchor
+            // --- 5. Define and Create all the Joints ---
+            
+            // A. Revolute Joint for the central pivot
             world.createJoint(pl.RevoluteJoint({
-                bodyA: pivotBody,
-                bodyB: beamBody,
-                localAnchorA: pl.Vec2(0, 0),
-                localAnchorB: pl.Vec2(0, 0),
+                bodyA: pivotBody, bodyB: beamBody,
+                localAnchorA: pl.Vec2(0, 0), localAnchorB: pl.Vec2(0, 0),
+                enableMotor: true, motorSpeed: 0.0, maxMotorTorque: 2.0,
             }));
 
-            // B. Revolute Joint: Connects the Left Pan to the Beam
+            // B. Weld Joints: Firmly attach the buckets to the beam
+            world.createJoint(pl.WeldJoint({
+                bodyA: beamBody, bodyB: leftBucket.body,
+                localAnchorA: pl.Vec2(-bucketOffsetX / B2_SCALE, (-beamHeight / 2 + 2) / B2_SCALE),
+                localAnchorB: pl.Vec2(0, bucketHeight / 2 / B2_SCALE),
+            }));
+
+            world.createJoint(pl.WeldJoint({
+                bodyA: beamBody, bodyB: rightBucket.body,
+                localAnchorA: pl.Vec2(bucketOffsetX / B2_SCALE, (-beamHeight / 2 + 2) / B2_SCALE),
+                localAnchorB: pl.Vec2(0, bucketHeight / 2 / B2_SCALE),
+            }));
+
+            // --- RE-INTEGRATED PANS ---
+            // C. Revolute Joints: Attach the swinging pans to the ends of the beam
             world.createJoint(pl.RevoluteJoint({
                 bodyA: beamBody,
                 bodyB: leftPanBody,
-                localAnchorA: pl.Vec2(-beamWidth / 2 / B2_SCALE, 0),
+                localAnchorA: pl.Vec2(((-beamWidth / 2) + (panWidth / 2)) / B2_SCALE, 0),
                 localAnchorB: pl.Vec2(0, -panHeight / 2 / B2_SCALE),
+                enableMotor: true,
+                motorSpeed: 0.0,
+                maxMotorTorque: 2.0,
             }));
 
-            // C. Revolute Joint: Connects the Right Pan to the Beam
             world.createJoint(pl.RevoluteJoint({
                 bodyA: beamBody,
                 bodyB: rightPanBody,
-                localAnchorA: pl.Vec2(beamWidth / 2 / B2_SCALE, 0),
+                localAnchorA: pl.Vec2((beamWidth / 2 - (panWidth / 2)) / B2_SCALE, 0),
                 localAnchorB: pl.Vec2(0, -panHeight / 2 / B2_SCALE),
+                enableMotor: true,
+                motorSpeed: 0.0,
+                maxMotorTorque: 2.0,
             }));
+            // --- END RE-INTEGRATED PANS ---
         }
-        // --- END OF NEW/CORRECTED FUNCTION ---
+
+        // --- START OF NEW HELPER FUNCTION ---
+        /**
+         * Creates a complete, hollow, U-shaped RigidBody with both physics and visuals.
+         * @param {object} options - Configuration object.
+         * @returns {RigidBody} The created RigidBody instance.
+         */
+        function createRectangularBucket({ worldX, worldY, width, height, thickness, material, name }) {
+            // --- Part 1: Create the Physics Body with 3 Fixtures ---
+            const body = world.createDynamicBody({
+                position: pl.Vec2(worldX / B2_SCALE, worldY / B2_SCALE),
+            });
+
+            const fixtureDef = {
+                density: MATERIAL_DENSITY[material] || 7.8,
+                friction: 0.8,
+            };
+
+            // A. Bottom fixture
+            body.createFixture(pl.Box(
+                width / 2 / B2_SCALE,
+                thickness / 2 / B2_SCALE,
+                pl.Vec2(0, (height - thickness) / 2 / B2_SCALE) // Position at bottom
+            ), fixtureDef);
+            
+            // B. Left wall fixture
+            body.createFixture(pl.Box(
+                thickness / 2 / B2_SCALE,
+                height / 2 / B2_SCALE,
+                pl.Vec2(-(width - thickness) / 2 / B2_SCALE, 0) // Position at left
+            ), fixtureDef);
+
+            // C. Right wall fixture
+            body.createFixture(pl.Box(
+                thickness / 2 / B2_SCALE,
+                height / 2 / B2_SCALE,
+                pl.Vec2((width - thickness) / 2 / B2_SCALE, 0) // Position at right
+            ), fixtureDef);
+
+            // --- Part 2: Create the corresponding RigidBody for Rendering ---
+            const rb = new RigidBody(worldX, worldY, width, height, material, name);
+            
+            // Link the renderable object to our custom physics body
+            world.destroyBody(rb.body);
+            rb.body = body;
+            body.setUserData(rb);
+
+            // --- Part 3: Manually create the hollow pixel art ---
+            rb.pixels.fill(MAT.EMPTY); // Start with a hollow interior
+            for (let y = 0; y < height; y++) {
+                for (let x = 0; x < width; x++) {
+                    // Check if the pixel is part of the bottom, left, or right wall
+                    if (y >= height - thickness || x < thickness || x >= width - thickness) {
+                        rb.pixels[y * width + x] = material;
+                    }
+                }
+            }
+
+            // Add the completed bucket to the main simulation array
+            rigidBodies.push(rb);
+
+            return rb; // Return the full RigidBody object
+        }
+        // --- END OF NEW HELPER FUNCTION ---
 
         /**
          * Creates a simple, rectangular rigid body, clearing space for it and optionally texturing it with a sprite.
@@ -3020,7 +3119,7 @@
                     imagePath: 'assets/scale_base.png',
                     spawnLocalX: 256, // X-coordinate within the target sector
                     spawnLocalY: 256, // Y-coordinate within the target sector
-                    targetSectorOffsetX: -2, // Spawn 2 sectors to the left of the player's start
+                    targetSectorOffsetX: -1, // Spawn 2 sectors to the left of the player's start
                     targetSectorOffsetY: 0,  // Spawn in the same horizontal layer
                     postGenerationHook: function(piece) {
                         // The hook's job is to calculate the final world coordinates and call our creation function.
@@ -3806,7 +3905,7 @@
             player.body = world.createBody({type:'dynamic', position:pl.Vec2(player.x/B2_SCALE,player.y/B2_SCALE), fixedRotation:true, linearDamping:PLAYER_DEFAULT_DAMPING});
             player.body.setUserData(player);
             const halfWidth=(player.width/2-1)/B2_SCALE, halfHeight=(player.height/2-2)/B2_SCALE;
-            player.body.createFixture(pl.Box(halfWidth,halfHeight,pl.Vec2(0,-2/B2_SCALE),0),{density:1.0,friction:0.05});
+            player.body.createFixture(pl.Box(halfWidth,halfHeight,pl.Vec2(0,-2/B2_SCALE),0),{density:0.05,friction:0.05});
             const footRadius=(player.width/2-1)/B2_SCALE;
             player.body.createFixture(pl.Circle(pl.Vec2(0,(player.height/2-2)/B2_SCALE),footRadius),{friction:0.05});
         }
