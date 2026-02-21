@@ -920,6 +920,7 @@
         const MATERIAL_DENSITY = {
             // Default player density is 1.0. Higher numbers are heavier.
             [MAT.WOOD]: 0.7,
+            [MAT.SAND]: 0.7,
             [MAT.GLASS]: 1.2,
             [MAT.ROCK_WALL]: 2.5, // Not a rigid body, but for reference
             [MAT.COPPER]: 8.9,
@@ -929,6 +930,22 @@
             [MAT.GOLD]: 19.3,
             [MAT.PLATINUM]: 21.4,
             [MAT.ADAMANTIUM]: 50.0 // Make it extremely heavy
+        };
+
+        const MATERIALS_TO_WEIGH = {
+            [MAT.SAND]: 0.7,
+            [MAT.SOIL]: 0.7,
+            [MAT.GLASS]: 1.2,
+            [MAT.COAL]: 1.2,
+            [MAT.GUNPOWDER]: 1.2,
+            [MAT.COPPER]: 8.9,
+            [MAT.SILVER]: 10.5,
+            [MAT.GOLD]: 19.3,
+            [MAT.PLATINUM]: 21.4,
+            [MAT.WATER]: 1.2,
+            [MAT.OIL]: 1.2,
+            [MAT.ACID]: 1.2,
+            [MAT.LAVA]: 1.2,
         };
 
         const WALL_TYPES = new Set([
@@ -1261,7 +1278,7 @@
         const PLAYER_SUBMERGED_DAMPING = 5.0;
         const BUOYANCY_FORCE = 6.0;
 
-        const MAX_CHUNKS_PER_FRAME = 150;
+        const MAX_CHUNKS_PER_FRAME = 300;
         const REGEN_COOLDOWN = 250;
         const REBUILD_COOLDOWN = 250;
         const MIN_ISLAND_PIXELS = 5;
@@ -2699,7 +2716,20 @@
                 motorSpeed: 0.0,
                 maxMotorTorque: 2.0,
             }));
-            // --- END RE-INTEGRATED PANS ---
+
+            // Gather all the dynamic bodies that make up the moving part of the scale.
+            const allScaleBodies = [
+                beamBody,
+                leftPanBody,
+                rightPanBody,
+                leftBucket.body,
+                rightBucket.body
+            ];
+
+            SandForceManager.init(worldX, worldY, beamWidth, panHeight * 2);
+
+            // Register the entire composite structure. The beam is the main body that gets the force.
+            SandForceManager.registerTarget(beamBody, allScaleBodies);
         }
 
         // --- START OF NEW HELPER FUNCTION ---
@@ -2742,7 +2772,7 @@
 
             // --- Part 2: Create the corresponding RigidBody for Rendering ---
             const rb = new RigidBody(worldX, worldY, width, height, material, name);
-            rb.isFillable = true;
+            rb.isFillable = false;
             
             // Link the renderable object to our custom physics body
             world.destroyBody(rb.body);
@@ -3060,6 +3090,207 @@
                     .map(([name, time]) => `${name}: ${time.toFixed(2)}ms`);
             }
         };
+
+        // in index.html, near the other manager objects
+
+        // --- START OF NEW CODE ---
+
+        const SandForceManager = {
+            // This will store references to the rigid bodies we need to apply forces to.
+            targets: [],
+            noSettleZone: null,
+
+            init: function(worldX, worldY, width, height) {
+                const buffer = 20; // Extra space around the scale
+                const minX = worldX - width / 2 - buffer;
+                const minY = worldY - height - buffer; // Make sure it covers above the buckets
+                const maxX = worldX + width / 2 + buffer;
+                const maxY = worldY + buffer; // And below the beam
+                this.noSettleZone = { minX, minY, maxX, maxY };
+            },
+
+            // Registers a composite object.
+            // mainBody is the body that receives the final force.
+            // childBodies is an array of all bodies whose fixtures should be checked for support.
+            registerTarget: function(mainBody, childBodies) {
+                const allFixtures = [];
+                for (const body of childBodies) {
+                    for (let f = body.getFixtureList(); f; f = f.getNext()) {
+                        allFixtures.push(f);
+                    }
+                }
+                this.targets.push({ mainBody, allFixtures });
+            },
+
+            scanAndApplyForces: function() {
+                const gravity = world.m_gravity.y;
+
+                for (const target of this.targets) {
+                    if (!target.mainBody.isActive()) continue;
+
+                    let totalMass = 0;
+                    let massCenterX = 0;
+                    let massCenterY = 0;
+
+                    // 1. Get the combined AABB for the entire structure to define our scan area.
+                    let combinedAABB = null;
+                    for (const fixture of target.allFixtures) {
+                        const aabb = fixture.getAABB(0);
+                        if (!combinedAABB) {
+                            combinedAABB = new pl.AABB(aabb.lowerBound, aabb.upperBound);
+                        } else {
+                            combinedAABB.lowerBound.x = Math.min(combinedAABB.lowerBound.x, aabb.lowerBound.x);
+                            combinedAABB.lowerBound.y = Math.min(combinedAABB.lowerBound.y, aabb.lowerBound.y);
+                            combinedAABB.upperBound.x = Math.max(combinedAABB.upperBound.x, aabb.upperBound.x);
+                            combinedAABB.upperBound.y = Math.max(combinedAABB.upperBound.y, aabb.upperBound.y);
+                        }
+                    }
+
+                    if (!combinedAABB) continue;
+
+                    // --- START OF THE FIX ---
+                    // Force all chunks that the scale occupies to remain active.
+                    // This ensures that settled sand on top is always included in the simulation and weight calculation.
+                    const minCX = Math.floor(combinedAABB.lowerBound.x * B2_SCALE / CHUNK_SIZE);
+                    const maxCX = Math.ceil(combinedAABB.upperBound.x * B2_SCALE / CHUNK_SIZE);
+                    const minCY = Math.floor(combinedAABB.lowerBound.y * B2_SCALE / CHUNK_SIZE);
+                    const maxCY = Math.ceil(combinedAABB.upperBound.y * B2_SCALE / CHUNK_SIZE);
+
+                    for (let cy = minCY; cy <= maxCY; cy++) {
+                        for (let cx = minCX; cx <= maxCX; cx++) {
+                            // Add the chunk's key to the set that will be processed in the next frame.
+                            // We use nextActiveSolidChunks because sand is a "solid" in the grid simulation.
+                            nextActiveSolidChunks.add(coordToKey(cx, cy));
+                        }
+                    }
+
+                    // 2. Define a slightly larger scan area, especially above the scale.
+                    const minX = Math.floor(combinedAABB.lowerBound.x * B2_SCALE);
+                    const maxX = Math.ceil(combinedAABB.upperBound.x * B2_SCALE);
+                    const minY = Math.floor(combinedAABB.lowerBound.y * B2_SCALE - 60); // Scan 40px above
+                    const maxY = Math.ceil(combinedAABB.upperBound.y * B2_SCALE);
+
+                    //console.log("scanning");
+                    // 3. Scan the grid and check for support.
+                    for (let y = minY; y < maxY; y++) {
+                        for (let x = minX; x < maxX; x++) {
+                            const material = getGrid(x, y);
+                            if (MATERIAL_DENSITY[material] && ! STATIC_MATERIALS.has(material)) {
+                                //console.log("found something", material);
+                                // Check the pixel BELOW the current one to see if it's supported.
+                                const supportPoint = pl.Vec2((x + 0.5) / B2_SCALE, (y + 1.5) / B2_SCALE);
+
+                                let isSupported = true;
+                                for (const fixture of target.allFixtures) {
+                                    if (fixture.testPoint(supportPoint)) {
+                                        console.log("supporting");
+                                        isSupported = true;
+                                        break;
+                                    }
+                                }
+
+                                if (isSupported) {
+                                    const pixelMass = MATERIAL_DENSITY[material] * 0.1;
+                                    //console.log("isSupported", pixelMass);
+                                    // The pixel at (x, y) is supported by the scale. Add its weight.
+                                    totalMass += pixelMass;
+                                    massCenterX += x * pixelMass;
+                                    massCenterY += y * pixelMass;
+                                }
+                            }
+                        }
+                    }
+                    
+                    // 4. Apply the final aggregated force to the MAIN body.
+                    if (totalMass > 0.001) {
+                        const comX = massCenterX / totalMass;
+                        const comY = massCenterY / totalMass;
+
+                        const force = pl.Vec2(0, totalMass * gravity);
+                        const applicationPoint = pl.Vec2(comX / B2_SCALE, comY / B2_SCALE);
+                        
+                        target.mainBody.applyForce(force, applicationPoint, true);
+                    }
+                }
+            }
+        };
+
+        // --- END OF NEW CODE ---
+
+        // in index.html, near the other manager objects
+
+        // --- START OF NEW CODE ---
+
+        const GridSyncManager = {
+            // This function runs AFTER the physics step to resolve overlaps.
+            syncAndDisplace: function() {
+                // We can re-use the target list from the SandForceManager
+                for (const target of SandForceManager.targets) {
+                    if (!target.mainBody.isActive()) continue;
+
+                    // 1. Get the combined AABB of the entire structure to define a scan area.
+                    let combinedAABB = null;
+                    for (const fixture of target.allFixtures) {
+                        const aabb = fixture.getAABB(0);
+                        if (!combinedAABB) {
+                            combinedAABB = new pl.AABB(aabb.lowerBound, aabb.upperBound);
+                        } else {
+                            combinedAABB.lowerBound.x = Math.min(combinedAABB.lowerBound.x, aabb.lowerBound.x);
+                            combinedAABB.lowerBound.y = Math.min(combinedAABB.lowerBound.y, aabb.lowerBound.y);
+                            combinedAABB.upperBound.x = Math.max(combinedAABB.upperBound.x, aabb.upperBound.x);
+                            combinedAABB.upperBound.y = Math.max(combinedAABB.upperBound.y, aabb.upperBound.y);
+                        }
+                    }
+                    if (!combinedAABB) continue;
+
+                    const minX = Math.floor(combinedAABB.lowerBound.x * B2_SCALE);
+                    const maxX = Math.ceil(combinedAABB.upperBound.x * B2_SCALE);
+                    const minY = Math.floor(combinedAABB.lowerBound.y * B2_SCALE);
+                    const maxY = Math.ceil(combinedAABB.upperBound.y * B2_SCALE);
+
+                    // 2. Scan the grid BOTTOM-UP to handle displacement correctly.
+                    for (let y = maxY; y >= minY; y--) {
+                        for (let x = minX; x <= maxX; x++) {
+                            const material = getGrid(x, y);
+
+                            // We only care about displacing weighable materials.
+                            if (MATERIAL_DENSITY[material]) {
+                                const point = pl.Vec2((x + 0.5) / B2_SCALE, (y + 0.5) / B2_SCALE);
+                                
+                                let isOverlapping = false;
+                                for (const fixture of target.allFixtures) {
+                                    if (fixture.testPoint(point)) {
+                                        isOverlapping = true;
+                                        break;
+                                    }
+                                }
+
+                                if (isOverlapping) {
+                                    // This sand pixel is being crushed. Find a new home for it above.
+                                    let newY = y - 1;
+                                    let foundSpot = false;
+                                    for (let i = 0; i < 20; i++) { // Search up to 20 pixels up
+                                        if (getGrid(x, newY) === MAT.EMPTY) {
+                                            setGrid(x, y, MAT.EMPTY); // Clear the original spot
+                                            setGrid(x, newY, material, true); // Move the pixel up
+                                            foundSpot = true;
+                                            break;
+                                        }
+                                        newY--;
+                                    }
+                                    if (!foundSpot) {
+                                        // If no spot was found (e.g., hit a ceiling), the pixel is crushed out of existence.
+                                        setGrid(x, y, MAT.EMPTY);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        };
+
+        // --- END OF NEW CODE ---
 
         const SetPieceManager = {
             setPieces: [
@@ -6930,6 +7161,7 @@
             // --- END OF FIX ---
             
             syncPlayerWithBody();
+            GridSyncManager.syncAndDisplace();
             checkForLiquidSplashes(now);
             updateRigidBodyGrid();
 
@@ -7627,6 +7859,8 @@
                 lastColliderUpdateTime = now;
             }
 
+            SandForceManager.scanAndApplyForces();
+
             // The core physics step still runs every frame.
             world.step(1 / 60, 10, 5);
         }
@@ -7649,7 +7883,20 @@
                 for (let x = 0; x < CHUNK_SIZE; x++) {
                     const wX = startX + x;
                     const wY = startY + y;
-                    mask[y * CHUNK_SIZE + x] = isSolidForPlayer(getGrid(wX, wY)) && getAuxData(etcChunkMap, wX, wY) !== 1 ? 1 : 0;
+                    // --- START OF MODIFICATION ---
+                    let isSolid = isSolidForPlayer(getGrid(wX, wY)) && getAuxData(etcChunkMap, wX, wY) !== 1;
+
+                    // Check if we are inside the no-settle zone
+                    const zone = SandForceManager.noSettleZone;
+                    if (zone && wX >= zone.minX && wX <= zone.maxX && wY >= zone.minY && wY <= zone.maxY) {
+                        // If inside the zone, PREVENT sand-like materials from becoming part of the static body
+                        const type = getGrid(wX, wY);
+                        if (MATERIALS_TO_WEIGH[type]) { // Add any other materials you want to weigh
+                             isSolid = false;
+                        }
+                    }
+                    
+                    mask[y * CHUNK_SIZE + x] = isSolid ? 1 : 0;
                 }
             }
 
