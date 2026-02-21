@@ -167,6 +167,13 @@
         let debugMode = false;
         const STATION_FLOOR_Y = 0;
 
+        let isPlayerDead = false;
+        const PLAYER_DAMAGE_COOLDOWN_MS = 500;
+        let damageFlashIntensity = 0;
+        let causeOfDeath = '';
+        const deathScreenButton = { x: 0, y: -10, width: 60, height: 15 };
+        let deathScreenButtonHover = false;
+
         const generationWorker = new Worker('generation.worker.js'); // ADD THIS LINE
         let WORLD_SEED = 0; // Will be set in mainLoader
         let playerSpawnSX = 0;
@@ -3168,6 +3175,8 @@
         const player = {
             x: 391, y: STATION_FLOOR_Y - 12, vx: 0, vy: 0,
             width: 8, height: 16, speed: 1, onGround: false,
+            spawnX: 391,
+            spawnY: STATION_FLOOR_Y - 12,
             body: null,
             isSpawning: true, // ADD: Start in spawning state
             spawnAnimationTimer: 0, // ADD: Timer for animation speed
@@ -3182,6 +3191,10 @@
             hoverRechargeRate: 1,
             maxHp: 100,
             hp: 100,
+            lastDamageTime: 0,
+            lastDamageType: null,
+            lastTickDamage: 0,
+            deathAnimationProgress: -1,
             toolPocket: [],
             structurePocket: [],
             unlockedReactions: ['clear_cauldrons'],
@@ -3647,6 +3660,13 @@
                 resolve();
             }, 200));
         }
+
+        function shuffleArray(array) {
+            for (let i = array.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [array[i], array[j]] = [array[j], array[i]];
+            }
+        }
         
         /**
          * Creates the player's physics body. Unchanged.
@@ -3660,6 +3680,206 @@
             player.body.createFixture(pl.Circle(pl.Vec2(0,(player.height/2-2)/B2_SCALE),footRadius),{friction:0.05});
         }
 
+        // --- START OF REPLACEMENT ---
+        /**
+         * Updates the player's death animation, progressing the random dissolve.
+         */
+        function updateDeathAnimation() {
+            // Stop if the animation is over
+            if (!isPlayerDead || player.deathAnimationProgress >= player.deathPixelShuffle.length) return;
+
+            // Increment progress, removing a few pixels each time for speed.
+            player.deathAnimationProgress += 1; // Dissolve 1 pixels per update
+
+            // On the first frame of the animation, make the physics body static.
+            // if (player.body && player.body.getType() !== 'static') {
+            //     player.body.setType('static'); // Freezes the body in place
+            // }
+        }
+        // --- END OF REPLACEMENT ---
+
+        // --- START OF REPLACEMENT ---
+        /**
+         * Handles player death by preparing the random dissolve animation.
+         */
+        function handlePlayerDeath(damageType) {
+            if (isPlayerDead) return;
+            isPlayerDead = true;
+            canvas.style.cursor = 'default';
+
+            // --- Setup for the Random Dissolve Animation ---
+            
+            // 1. Get the player's current sprite frame at the moment of death.
+            const anim = getPlayerAnimFrame();
+            const sprite = PLAYER_SPRITE[anim.frameIdx & 1];
+            
+            // 2. Create a list of all visible pixel coordinates {x, y}.
+            const pixelCoords = [];
+            for (let y = 0; y < 16; y++) {
+                const row = sprite[y];
+                for (let x = 0; x < 8; x++) {
+                    if (row[x] !== '.') {
+                        pixelCoords.push({ x, y });
+                    }
+                }
+            }
+            
+            // 3. Shuffle this list to get a random order of disappearance.
+            shuffleArray(pixelCoords);
+            player.deathPixelShuffle = pixelCoords;
+
+            // 4. Kick off the animation.
+            player.deathAnimationProgress = 0;
+
+            // --- The rest of the function remains for visual/audio effects and state ---
+            createShapeDissolveEffect({
+                x: player.x + player.width / 2,
+                y: player.y + player.height / 2,
+                shapeImage: SpriteManager.sprites.get('pickup_shape'),
+                color: [255, 50, 50],
+                particleCount: 1500,
+                shapeSize: 64,
+                wispDuration: 120
+            });
+            
+            if (player.body) {
+                player.body.setLinearVelocity(pl.Vec2(0, 0));
+                player.body.setAngularVelocity(0);
+            }
+            
+            causeOfDeath = MATERIAL_NAME[damageType] || 'the elements';
+        }
+        // --- END OF REPLACEMENT ---
+        
+        /**
+         * Handles player death by resetting stats, creating visual effects,
+         * and moving the player back to their designated spawn point.
+         */
+        function respawnPlayer() {
+            // 1. Visual effect at death location
+            createShapeDissolveEffect({
+                x: player.x + player.width / 2,
+                y: player.y + player.height / 2,
+                shapeImage: SpriteManager.sprites.get('pickup_shape'), // Re-use an existing sprite
+                color: [255, 50, 50], // Red for death
+                particleCount: 1500,
+                shapeSize: 64,
+                wispDuration: 120
+            });
+
+            // 2. Reset player state
+            player.hp = player.maxHp;
+            if (player.body) {
+                player.body.setLinearVelocity(pl.Vec2(0, 0));
+                player.body.setAngularVelocity(0);
+                player.body.setPosition(pl.Vec2(player.spawnX / B2_SCALE, player.spawnY / B2_SCALE));
+            } else {
+                // This is a fallback in case the body doesn't exist for some reason
+                player.x = player.spawnX;
+                player.y = player.spawnY;
+            }
+            
+            // 3. Visual effect at spawn location
+             createShapeDissolveEffect({
+                x: player.spawnX + player.width / 2,
+                y: player.spawnY + player.height / 2,
+                shapeImage: SpriteManager.sprites.get('pickup_shape'),
+                color: [220, 220, 255], // White/blue for respawn
+                particleCount: 1500,
+                shapeSize: 64,
+                appearDuration: 30
+            });
+        }
+
+        // --- START OF REPLACEMENT ---
+        /**
+         * Applies damage based on a cooldown, but also applies immediate "catch-up"
+         * damage if the player becomes more submerged in a hazard during the cooldown period.
+         */
+        function updatePlayerDamage() {
+            if (!player.body || player.isSpawning || player.hp <= 0) return;
+
+            const now = performance.now();
+            
+            const DAMAGE_MAP = {
+                [MAT.FIRE]: 10,
+                [MAT.OIL_BURNING]: 12,
+                [MAT.COAL_BURNING]: 10,
+                [MAT.METHANE_BURNING]: 15,
+                [MAT.ACID]: 40,
+                [MAT.LAVA]: 50,
+            };
+
+            // --- Step 1: Always calculate the potential damage for the current frame ---
+            let potentialDamage = 0;
+            let deadliestMaterial = null;
+            let contactPoints = 0;
+
+            const samplePointsX = [0.2, 0.5, 0.8];
+            const samplePointsY = [0.1, 0.3, 0.5, 0.7, 0.9];
+            
+            for (const xPercent of samplePointsX) {
+                for (const yPercent of samplePointsY) {
+                    const localX = player.width * xPercent;
+                    const localY = player.height * yPercent;
+                    const worldPos = player.body.getWorldPoint(pl.Vec2(
+                        (localX - player.width / 2) / B2_SCALE,
+                        (localY - player.height / 2) / B2_SCALE
+                    ));
+                    const gridMaterial = getGrid(Math.floor(worldPos.x * B2_SCALE), Math.floor(worldPos.y * B2_SCALE));
+                    
+                    if (DAMAGE_MAP[gridMaterial]) {
+                        // We go back to accumulating damage based on how many points are in contact.
+                        potentialDamage += DAMAGE_MAP[gridMaterial] / (samplePointsX.length * samplePointsY.length);
+                        contactPoints++;
+                        deadliestMaterial = gridMaterial;
+                    }
+                }
+            }
+            
+            // --- Step 2: Decide how much damage to apply based on the cooldown state ---
+            let damageToApply = 0;
+            let shouldResetCooldown = false;
+
+            if (now - player.lastDamageTime >= PLAYER_DAMAGE_COOLDOWN_MS) {
+                // The cooldown is over. We can apply a normal damage tick.
+                if (potentialDamage > 0) {
+                    damageToApply = potentialDamage;
+                    shouldResetCooldown = true;
+                } else {
+                    // No hazard contact, so reset the baseline damage.
+                    player.lastTickDamage = 0;
+                }
+            } else {
+                // The player is on cooldown. Check for "catch-up" damage.
+                if (potentialDamage > player.lastTickDamage) {
+                    // The player is MORE submerged. Apply only the difference.
+                    damageToApply = potentialDamage - player.lastTickDamage;
+                    // We do NOT reset the cooldown timer here.
+                }
+            }
+
+            // --- Step 3: Apply damage and trigger effects if necessary ---
+            if (damageToApply > 0) {
+                damageFlashIntensity = 1.0;
+                player.hp = Math.round(Math.max(0, player.hp - damageToApply));
+                
+                // Always update the baseline damage to the new, higher potential.
+                // This prevents applying the difference repeatedly on subsequent frames.
+                player.lastTickDamage = potentialDamage;
+
+                if (shouldResetCooldown) {
+                    player.lastDamageTime = now;
+                }
+                
+                spawnMagicParticles(contactPoints, player.x + player.width / 2, player.y + player.height / 2, [255, 50, 50], 1.5);
+
+                if (player.hp <= 0) {
+                    handlePlayerDeath(deadliestMaterial);
+                }
+            }
+        }
+        // --- END OF REPLACEMENT ---
 
         function setMaterial(name) {
             const map = {
@@ -3745,6 +3965,25 @@
             }
         }
         canvas.addEventListener('mousemove', getMousePos);
+
+        // --- START OF NEW CODE ---
+        canvas.addEventListener('mousedown', (e) => {
+            // This listener only cares about clicks when the player is dead.
+            if (!isPlayerDead) return;
+            
+            // Get mouse position relative to the scaled canvas
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = (e.clientX - rect.left) / scale;
+            const mouseY = (e.clientY - rect.top) / scale;
+
+            // Check if the click was inside the button's bounds
+            if (mouseX >= deathScreenButton.x && mouseX <= deathScreenButton.x + deathScreenButton.width &&
+                mouseY >= deathScreenButton.y && mouseY <= deathScreenButton.y + deathScreenButton.height)
+            {
+                window.location.reload(); // If so, start a new game
+            }
+        });
+
         canvas.addEventListener('contextmenu', e => e.preventDefault());
         
         canvas.addEventListener('mousedown', (e) => {
@@ -3800,7 +4039,31 @@
             if (e.button === 2) isStoring = false;
         });
 
-        canvas.addEventListener('mousemove', (e) => { if (isDrawing) draw(mouse.worldX, mouse.worldY); });
+        canvas.addEventListener('mousemove', (e) => {
+            if (isPlayerDead){
+
+                // Get mouse position relative to the scaled canvas
+                const rect = canvas.getBoundingClientRect();
+                const mouseX = (e.clientX - rect.left) / scale;
+                const mouseY = (e.clientY - rect.top) / scale;
+
+                // Check if the mouse is inside the button's bounds
+                if (mouseX >= deathScreenButton.x && mouseX <= deathScreenButton.x + deathScreenButton.width &&
+                    mouseY >= deathScreenButton.y && mouseY <= deathScreenButton.y + deathScreenButton.height){
+                    deathScreenButtonHover = true;
+                    canvas.style.cursor = 'pointer';
+                } 
+                else {
+                    deathScreenButtonHover = false;
+                    canvas.style.cursor = 'default';
+                } 
+
+                return;
+            }
+
+            if (isDrawing) draw(mouse.worldX, mouse.worldY); 
+        });
+
         
         // This helper is only used for the small inventory grids now.
         const getIdx = (x, y, w, h) => {
@@ -3894,6 +4157,10 @@
         
         function updatePlayer() {
             if (player.isSpawning) return;
+
+            updatePlayerDamage(); // Check for environmental damage
+            if (player.hp <= 0) return;
+
             if (DialogueManager.isVisible) {
                 player.body.setLinearVelocity(pl.Vec2(0, 0));
                 return;
@@ -4876,7 +5143,7 @@
                 // For now, we reuse the player rendering logic
                 const npcScreenX = Math.round(npc.x - camera.x);
                 const npcScreenY = Math.round(npc.y - camera.y);
-                drawPlayerBodyScreen(npcScreenX, npcScreenY, false, anim.bob, anim.frameIdx);
+                drawPlayerBodyScreen(npcScreenX, npcScreenY, false, anim.bob, anim.frameIdx, true);
             }
         }
 
@@ -5246,6 +5513,7 @@
 
             ctx.strokeStyle = 'rgba(255,255,255,0.2)'; ctx.lineWidth = 0.5; ctx.beginPath(); ctx.moveTo(wandScreenX, wandScreenY); ctx.lineTo(mouse.x / scale, mouse.y / scale); ctx.stroke();
 
+            renderDamageFlash();
             renderToolbar();
             renderDialogueUI();
             renderPlayerStatsUI();
@@ -5267,7 +5535,41 @@
         
         // This group of functions can remain as-is
 		const PLAYER_SPRITE = [["....##..","...####.","..######","..##F##.","..##F##.","..######",".#######",".#######",".#######",".#######","..######","..######","...####.","..######",".######.","########"],["....##..","...####.","..######","..##F##.","..##F##.","..######",".#######",".#######",".#######",".#######","..######","...#####","..#####.","..######",".######.","########"]];
-		function drawPlayerBodyScreen(baseScreenX,baseScreenY,facingRight,bob,frameIdx){const cloak=[0x4a,0x2d,0x5e],face=[0x21,0x1e,0x20],sprite=PLAYER_SPRITE[frameIdx&1];for(let y=0;y<16;y++){const row=sprite[y];for(let x=0;x<8;x++){const ch=row[x];if(ch==='.')continue;const fx=facingRight?x:(7-x),sx=baseScreenX+fx,sy=baseScreenY+y+bob;if(ch==='F')drawPlayerPx(sx,sy,face[0],face[1],face[2]);else drawPlayerPx(sx,sy,cloak[0],cloak[1],cloak[2]);}}}
+		
+        function drawPlayerBodyScreen(baseScreenX,baseScreenY,facingRight,bob,frameIdx,isNpc=false){
+            const cloak=[0x4a,0x2d,0x5e],face=[0x21,0x1e,0x20],sprite=PLAYER_SPRITE[frameIdx&1];
+            
+            // --- START OF REPLACEMENT ---
+            if (isPlayerDead && !isNpc) {
+                // If the player is dead, we only draw the pixels that haven't been dissolved yet.
+                const remainingPixels = player.deathPixelShuffle.slice(player.deathAnimationProgress);
+                
+                for (const coord of remainingPixels) {
+                    const ch = sprite[coord.y][coord.x];
+                    const fx = facingRight ? coord.x : (7 - coord.x);
+                    const sx = baseScreenX + fx;
+                    const sy = baseScreenY + coord.y + bob;
+
+                    if(ch==='F') drawPlayerPx(sx,sy,face[0],face[1],face[2]);
+                    else drawPlayerPx(sx,sy,cloak[0],cloak[1],cloak[2]);
+                }
+
+            } else {
+                // If the player is alive, draw the sprite normally.
+                for(let y=0;y<16;y++){
+                    const row=sprite[y];
+                    for(let x=0;x<8;x++){
+                        const ch=row[x];
+                        if(ch==='.')continue;
+                        const fx=facingRight?x:(7-x),sx=baseScreenX+fx,sy=baseScreenY+y+bob;
+                        if(ch==='F')drawPlayerPx(sx,sy,face[0],face[1],face[2]);
+                        else drawPlayerPx(sx,sy,cloak[0],cloak[1],cloak[2]);
+                    }
+                }
+            }
+            // --- END OF REPLACEMENT ---
+        }
+
 		function blendPixel(pixels,destI,r,g,b,a){if(a>=255){pixels[destI]=r;pixels[destI+1]=g;pixels[destI+2]=b;pixels[destI+3]=255;return;}if(a<=0)return;const invA=255-a;pixels[destI]=((r*a+pixels[destI]*invA)/255)|0;pixels[destI+1]=((g*a+pixels[destI+1]*invA)/255)|0;pixels[destI+2]=((b*a+pixels[destI+2]*invA)/255)|0;pixels[destI+3]=255;}
         function getWorldTypeAtScreen(screenX,screenY){ const worldX=(screenX+camera.x)|0, worldY=(screenY+camera.y)|0; return getGrid(worldX, worldY); }
 		function playerAlphaAtScreen(screenX,screenY){const t=getWorldTypeAtScreen(screenX,screenY);if(!isFluid(t))return 1;const a=fluidAlpha(t)/255,minAlpha=0.20,strength=0.85,out=1-a*strength;return out<minAlpha?minAlpha:out;}
@@ -5312,6 +5614,8 @@
             const handY = scaledBaseY + handLocalY;
 
             let itemRendered = false;
+
+            if (isPlayerDead) return { wandOriginX: handX, wandOriginY: handY };
 
             // Try to render a tool if it's the active container
             if (activeContainer === 'tool' && player.toolPocket.length > 0) {
@@ -6208,6 +6512,8 @@
                 lastFpsTime = now;
             }
 
+            
+
             Profiler.start('UpdateSectors');
             checkGenerationQueue() 
 
@@ -6236,6 +6542,7 @@
             // This call advances the PlanckJS physics simulation, applying gravity and forces.
             tOtherMs2 = performance.now() - t0;
             updateRigidBodies(now);
+            updateDeathAnimation();
             // --- END OF FIX ---
             
             syncPlayerWithBody();
@@ -6330,6 +6637,10 @@
             
             drawHUD();
             tRenderMs = performance.now() - t2;
+
+            if (isPlayerDead && player.deathAnimationProgress >= player.deathPixelShuffle.length) {
+                renderDeathScreen();
+            }
             
             if ((frameCount % 2) === 0) updateHoverMaterial();
             
@@ -6358,6 +6669,52 @@
             }
 
             Profiler.stop('FrameTotal');
+        }
+
+        // --- START OF NEW CODE ---
+        function renderDeathScreen() {
+            // 1. Draw a dark, semi-transparent overlay
+            ctx.fillStyle = 'rgba(20, 0, 0, 0.75)';
+            ctx.fillRect(0, 0, renderWidth, renderHeight);
+
+            // 2. Draw the death message text
+            ctx.font = 'bold 12px monospace';
+            ctx.fillStyle = '#ff4545';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'bottom';
+            ctx.fillText(`You died by: ${causeOfDeath}`, renderWidth / 2, renderHeight / 2 - 20);
+
+            // 3. Define button position (centered)
+            deathScreenButton.x = (renderWidth - deathScreenButton.width) / 2;
+            deathScreenButton.y = renderHeight / 2 + 10;
+            
+            // 4. Draw the button background
+            // ctx.fillStyle = '#eee';
+            // ctx.fillRect(deathScreenButton.x, deathScreenButton.y, deathScreenButton.width, deathScreenButton.height);
+            // ctx.strokeStyle = 'white';
+            // ctx.lineWidth = 2;
+            // ctx.strokeRect(deathScreenButton.x, deathScreenButton.y, deathScreenButton.width, deathScreenButton.height);
+
+            // 5. Draw the button text
+            ctx.font = 'bold 8px monospace';
+            ctx.fillStyle = deathScreenButtonHover ? '#ffe' : '#ddd';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('New Game', renderWidth / 2, deathScreenButton.y + deathScreenButton.height / 2);
+        }
+        // --- END OF NEW CODE ---
+
+        function renderDamageFlash() {
+            if (damageFlashIntensity <= 0) return;
+
+            // Use the intensity to control the alpha (transparency) of a red overlay.
+            // Multiplying by 0.4 ensures the flash is never fully opaque.
+            const alpha = damageFlashIntensity * 0.4;
+            ctx.fillStyle = `rgba(255, 50, 50, ${alpha})`;
+            ctx.fillRect(0, 0, renderWidth, renderHeight);
+
+            // Decrease the intensity for the next frame to create a fade-out effect.
+            // A value of 0.05 means the flash will last for 20 frames (1.0 / 0.05).
+            damageFlashIntensity -= 0.05;
         }
         
         function cleanupDestroyedBodies(){
