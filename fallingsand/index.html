@@ -1781,6 +1781,7 @@
                 this.spritePixels = null; 
                 this.renderCacheCanvas = null;
                 this.pixelStateHash = -1;
+                this.isFillable = false;
                 
                 this.isDestroyed = false;
                 this.needsShapeUpdate = false;
@@ -1796,6 +1797,65 @@
                 this.body.setUserData(this);
                 
                 this._createFixturesFromPixels(); 
+            }
+
+            // In index.html, inside the RigidBody class
+
+            addPixelAtWorldCoord(worldX, worldY, type) {
+                // 1. Convert world coordinates to the body's local, rotated frame.
+                const worldPoint = pl.Vec2(worldX / B2_SCALE, worldY / B2_SCALE);
+                const localPointMeters = this.body.getLocalPoint(worldPoint);
+                const localPixelX = Math.floor(localPointMeters.x * B2_SCALE + this.width / 2);
+
+                // 2. Find an empty spot to place the pixel (simulate settling).
+                for (let ly = this.height - 1; ly >= 0; ly--) {
+                    const lIdx = ly * this.width + localPixelX;
+                    if (localPixelX >= 0 && localPixelX < this.width && ly >= 0) {
+                        if (this.pixels[lIdx] === MAT.EMPTY) {
+                            this.pixels[lIdx] = type;
+                            this.pixelStateHash--; // Invalidate render cache.
+
+                            // --- 3. Perform a "Safe Transaction" to add mass ---
+                            const oldType = this.body.getType();
+                            if (oldType !== 'dynamic') {
+                                this.body.setType('dynamic');
+                            }
+
+                            // --- START OF FIX: Correctly update Mass AND Center of Mass ---
+                            const massData = { mass: 0, center: pl.Vec2(0, 0), I: 0 };
+                            this.body.getMassData(massData);
+                            
+                            const oldMass = massData.mass; // <-- MODIFIED: Store old mass
+                            const pixelMass = (MATERIAL_DENSITY[type] || 1.0) * 0.01; 
+                            const newMass = oldMass + pixelMass; // <-- MODIFIED: Calculate new mass
+
+                            // --- NEW: Calculate the new center of mass ---
+                            // This is a weighted average of the old center and the new pixel's position.
+                            if (newMass > 0.0001) { // Avoid division by zero
+                                const newCenterX = (massData.center.x * oldMass + localPointMeters.x * pixelMass) / newMass;
+                                const newCenterY = (massData.center.y * oldMass + localPointMeters.y * pixelMass) / newMass;
+                                massData.center.set(newCenterX, newCenterY);
+                            }
+                            
+                            // Now update the mass and inertia
+                            massData.mass = newMass; // <-- MODIFIED: Assign the new mass
+                            const distSq = localPointMeters.x * localPointMeters.x + localPointMeters.y * localPointMeters.y;
+                            massData.I += pixelMass * distSq; // Inertia is about the origin, this is correct
+
+                            // Set the fully updated mass data
+                            this.body.setMassData(massData);
+                            // --- END OF FIX ---
+
+                            if (oldType !== 'dynamic') {
+                                this.body.setType(oldType);
+                            }
+                            
+                            return true; // Success!
+                        }
+                    }
+                }
+
+                return false; // Bucket is full in this column.
             }
 
             _createSimpleBoxFixture() {
@@ -2533,6 +2593,7 @@
 
             const beamBody = world.createDynamicBody({
                 position: pl.Vec2(worldX / B2_SCALE, (worldY + pivotOffsetY - (beamHeight / 2)) / B2_SCALE),
+                angularDamping: 2.0
             });
             beamBody.createFixture(pl.Box(beamWidth / 2 / B2_SCALE, beamHeight / 2 / B2_SCALE), {
                 density: (MATERIAL_DENSITY[MAT.IRON] || 7.8) * 5,
@@ -2601,7 +2662,7 @@
             world.createJoint(pl.RevoluteJoint({
                 bodyA: pivotBody, bodyB: beamBody,
                 localAnchorA: pl.Vec2(0, 0), localAnchorB: pl.Vec2(0, 0),
-                enableMotor: true, motorSpeed: 0.0, maxMotorTorque: 2.0,
+                enableMotor: false, motorSpeed: 0.0, maxMotorTorque: 2.0,
             }));
 
             // B. Weld Joints: Firmly attach the buckets to the beam
@@ -2681,6 +2742,7 @@
 
             // --- Part 2: Create the corresponding RigidBody for Rendering ---
             const rb = new RigidBody(worldX, worldY, width, height, material, name);
+            rb.isFillable = true;
             
             // Link the renderable object to our custom physics body
             world.destroyBody(rb.body);
@@ -4976,6 +5038,19 @@
                 }
             };
              const _getAux = (gx, gy) => isWorldSim ? getAuxData(etcChunkMap, gx, gy) : 0;
+
+            if (isWorldSim) {
+                // Check if the pixel is trying to fall into a fillable rigid body.
+                const bodyBelow = getRigidBodyAt(x, y + 1);
+                if (bodyBelow && bodyBelow.isFillable) {
+                    // Try to transfer the pixel from the world grid to the body's grid.
+                    if (bodyBelow.addPixelAtWorldCoord(x, y + 1, type)) {
+                        _set(x, y, MAT.EMPTY); // Remove pixel from the world.
+                        if(!isWorldSim && idx!==-1) moved[idx] = 1;
+                        return; // Stop simulation for this pixel this frame.
+                    }
+                }
+            }
 
             if (isWorldSim) { // This logic only applies to the main world simulation
                 const destY = y + 1;
