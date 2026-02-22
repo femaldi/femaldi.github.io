@@ -990,8 +990,8 @@
                     0,0,0,0,0,0,0,2,2,0,0,0,0,0,0,0,
                 ].map(p => p === 2 ? MAT.WOOD : p), // Helper to use a temp value
                 onUse: (player, mouse) => {
-                    const useRadius = 6;
-                    const softMaterials = new Set([MAT.SAND, MAT.SOIL, MAT.SANDSTONE_WALL, MAT.COAL]);
+                    const useRadius = 12;
+                    const softMaterials = new Set([MAT.SAND, MAT.SOIL, MAT.SANDSTONE_WALL, MAT.COAL, MAT.GLASS, MAT.GLASS_WALL, MAT.GROUND]);
                     for (let dy = -useRadius; dy <= useRadius; dy++) {
                         for (let dx = -useRadius; dx <= useRadius; dx++) {
                              if (dx*dx + dy*dy > useRadius*useRadius) continue;
@@ -3407,7 +3407,7 @@
                     const worldVertices = simplified.map(p => 
                         pl.Vec2((startX + p.x) / B2_SCALE, (startY + p.y) / B2_SCALE)
                     );
-                    
+
                     body.createFixture(pl.Chain(worldVertices, true), {
                         filterCategoryBits: CATEGORY_TEMP_SAND,
                         filterMaskBits: MASK_TEMP_SAND
@@ -3547,6 +3547,19 @@
                     postGenerationHook: function(piece) {
                         // The hook's job is to calculate the final world coordinates and call our creation function.
                         if (!piece.parsedData) return;
+
+                        // --- Part 1: Spawn Treasure ---
+                        // Check if the parser found treasure coordinates in the image.
+                        if (piece.parsedData.treasureCoords) {
+                            // Calculate the absolute world coordinates of the treasure marker.
+                            const treasureWorldX = piece.bounds.x + piece.parsedData.treasureCoords.x;
+                            const treasureWorldY = piece.bounds.y + piece.parsedData.treasureCoords.y;
+                            
+                            console.log(`Spawning treasure for '${piece.name}' at:`, treasureWorldX, treasureWorldY);
+                            
+                            // Call the function to create the treasure item at that location.
+                            createMagicTablet(treasureWorldX, treasureWorldY, 'increase_tool_slots');
+                        }
                         
                         // The set piece image stamps the static base. Now we build the physics parts on top.
                         // We use the image center as the reference point for the scale's base.
