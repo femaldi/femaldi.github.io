@@ -183,6 +183,15 @@
             gravity: pl.Vec2(0, 10)
         });
 
+        const CATEGORY_DEFAULT = 0x0001; // For static world terrain
+        const CATEGORY_SCALE = 0x0002;
+        const CATEGORY_PLAYER = 0x0004;
+        const CATEGORY_TEMP_SAND = 0x0008;
+
+        const MASK_PLAYER = CATEGORY_DEFAULT | CATEGORY_SCALE | CATEGORY_TEMP_SAND;
+        const MASK_SCALE = CATEGORY_DEFAULT | CATEGORY_PLAYER; // Notice: Does NOT include TEMP_SAND
+        const MASK_TEMP_SAND = CATEGORY_PLAYER;
+
         // --- Add this listener for SOLID splashes ---
         world.on('begin-contact', function(contact) {
             const now = performance.now();
@@ -2615,6 +2624,8 @@
             beamBody.createFixture(pl.Box(beamWidth / 2 / B2_SCALE, beamHeight / 2 / B2_SCALE), {
                 density: (MATERIAL_DENSITY[MAT.IRON] || 7.8) * 5,
                 friction: 2.0,
+                filterCategoryBits: CATEGORY_SCALE,
+                filterMaskBits: MASK_SCALE
             });
 
             // --- RE-INTEGRATED PANS ---
@@ -2629,6 +2640,8 @@
             leftPanBody.createFixture(pl.Box(panWidth / 2 / B2_SCALE, panHeight / 2 / B2_SCALE), {
                 density: MATERIAL_DENSITY[MAT.IRON] || 7.8,
                 friction: 2.0,
+                filterCategoryBits: CATEGORY_SCALE,
+                filterMaskBits: MASK_SCALE
             });
 
             const rightPanBody = world.createDynamicBody({
@@ -2637,6 +2650,8 @@
             rightPanBody.createFixture(pl.Box(panWidth / 2 / B2_SCALE, panHeight / 2 / B2_SCALE), {
                 density: MATERIAL_DENSITY[MAT.IRON] || 7.8,
                 friction: 2.0,
+                filterCategoryBits: CATEGORY_SCALE,
+                filterMaskBits: MASK_SCALE
             });
             // --- END RE-INTEGRATED PANS ---
 
@@ -2747,6 +2762,8 @@
             const fixtureDef = {
                 density: MATERIAL_DENSITY[material] || 7.8,
                 friction: 0.8,
+                filterCategoryBits: CATEGORY_SCALE,
+                filterMaskBits: MASK_SCALE
             };
 
             // A. Bottom fixture
@@ -3289,6 +3306,119 @@
                 }
             }
         };
+
+        // in index.html, near the other manager objects
+
+        // --- START OF NEW CODE ---
+
+        const PlayerSandColliderManager = {
+            // This will hold the temporary bodies we create each frame.
+            tempBodies: [],
+
+            update: function() {
+                // 1. Clear out the temporary bodies from the PREVIOUS frame.
+                for (const body of this.tempBodies) {
+                    world.destroyBody(body);
+                }
+                this.tempBodies = [];
+
+                // 2. Define a small area around the player to check.
+                const playerAABB = player.body.getFixtureList().getAABB(0);
+                const minCX = Math.floor(playerAABB.lowerBound.x * B2_SCALE / CHUNK_SIZE);
+                const maxCX = Math.ceil(playerAABB.upperBound.x * B2_SCALE / CHUNK_SIZE);
+                const minCY = Math.floor(playerAABB.lowerBound.y * B2_SCALE / CHUNK_SIZE);
+                const maxCY = Math.ceil(playerAABB.upperBound.y * B2_SCALE / CHUNK_SIZE);
+
+                // 3. For each chunk around the player, check if it's in a no-settle zone.
+                for (let cy = minCY; cy <= maxCY; cy++) {
+                    for (let cx = minCX; cx <= maxCX; cx++) {
+                        
+                        // --- START OF THE FIX ---
+                        // Get the zone from the SandForceManager, not a global variable.
+                        const zone = SandForceManager.noSettleZone;
+                        // --- END OF THE FIX ---
+                        
+                        let isInZone = false;
+
+                        // --- START OF THE FIX ---
+                        // Add a check to ensure the zone has been initialized before using it.
+                        if (zone) {
+                            const chunkMinX = cx * CHUNK_SIZE;
+                            const chunkMaxX = chunkMinX + CHUNK_SIZE;
+                            const chunkMinY = cy * CHUNK_SIZE;
+                            const chunkMaxY = chunkMinY + CHUNK_SIZE;
+
+                            if (chunkMaxX > zone.minX && chunkMinX < zone.maxX && chunkMaxY > zone.minY && chunkMinY < zone.maxY) {
+                                isInZone = true;
+                            }
+                        }
+                        // --- END OF THE FIX ---
+
+                        if (isInZone) {
+                            // This chunk is near the player AND inside a no-settle zone.
+                            // Generate a static body for its sand, just for this frame.
+                            const chunk = getChunk(chunkMap, coordToKey(cx, cy));
+                            const tempBody = this.generateColliderForSandInChunk(chunk);
+                            if (tempBody) {
+                                this.tempBodies.push(tempBody);
+                            }
+                        }
+                    }
+                }
+            },
+
+            // This function is a modified copy of your original generateStaticBodyForChunk,
+            // but it ONLY generates colliders for sand-like materials.
+            generateColliderForSandInChunk: function(chunk) {
+                if (!chunk) return null;
+                
+                const body = world.createBody({ type: 'static' });
+                const startX = chunk.cx * CHUNK_SIZE;
+                const startY = chunk.cy * CHUNK_SIZE;
+
+                const weighableSolids = [MAT.SAND, MAT.SOIL, MAT.GUNPOWDER, MAT.COPPER, MAT.SILVER, MAT.GOLD, MAT.PLATINUM];
+
+                const mask = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE);
+                let hasSand = false;
+                for (let y = 0; y < CHUNK_SIZE; y++) {
+                    for (let x = 0; x < CHUNK_SIZE; x++) {
+                        // We ONLY care about weighable solids for this collider.
+                        if (weighableSolids.includes(chunk.data[y * CHUNK_SIZE + x])) {
+                            mask[y * CHUNK_SIZE + x] = 1;
+                            hasSand = true;
+                        }
+                    }
+                }
+                
+                // If there's no sand in this chunk, don't bother creating a body.
+                if (!hasSand) {
+                    world.destroyBody(body);
+                    return null;
+                }
+
+                // --- The rest is the same geometry-generation logic from generateStaticBodyForChunk ---
+                const islands = extractIslands(mask, CHUNK_SIZE, CHUNK_SIZE);
+                for (const island of islands) {
+                    const outline = marchingSquares(island, CHUNK_SIZE, CHUNK_SIZE);
+                    if (outline.length < 3) continue;
+                    const simplified = removeCollinear(simplifyDouglasPeucker(outline, 0.2), 0.001);
+                    if (simplified.length < 3) continue;
+
+                    const worldVertices = simplified.map(p => 
+                        pl.Vec2((startX + p.x) / B2_SCALE, (startY + p.y) / B2_SCALE)
+                    );
+                    
+                    body.createFixture(pl.Chain(worldVertices, true), {
+                        filterCategoryBits: CATEGORY_TEMP_SAND,
+                        filterMaskBits: MASK_TEMP_SAND
+                    });
+                }
+
+                return body;
+            }
+        };
+
+        // --- END OF NEW CODE ---
 
         // --- END OF NEW CODE ---
 
@@ -4198,9 +4328,11 @@
             player.body = world.createBody({type:'dynamic', position:pl.Vec2(player.x/B2_SCALE,player.y/B2_SCALE), fixedRotation:true, linearDamping:PLAYER_DEFAULT_DAMPING});
             player.body.setUserData(player);
             const halfWidth=(player.width/2-1)/B2_SCALE, halfHeight=(player.height/2-2)/B2_SCALE;
-            player.body.createFixture(pl.Box(halfWidth,halfHeight,pl.Vec2(0,-2/B2_SCALE),0),{density:0.05,friction:0.05});
+            player.body.createFixture(pl.Box(halfWidth,halfHeight,pl.Vec2(0,-2/B2_SCALE),0),{density:0.05,friction:0.05, filterCategoryBits: CATEGORY_PLAYER,
+                filterMaskBits: MASK_PLAYER});
             const footRadius=(player.width/2-1)/B2_SCALE;
-            player.body.createFixture(pl.Circle(pl.Vec2(0,(player.height/2-2)/B2_SCALE),footRadius),{friction:0.05});
+            player.body.createFixture(pl.Circle(pl.Vec2(0,(player.height/2-2)/B2_SCALE),footRadius),{friction:0.05, filterCategoryBits: CATEGORY_PLAYER,
+                filterMaskBits: MASK_PLAYER});
         }
 
         // --- START OF REPLACEMENT ---
@@ -7152,6 +7284,11 @@
             if (toolUseCooldown > 0) toolUseCooldown--;
             updateSpawnAnimation();
             updatePlayer();
+
+            if (player.body) {
+                PlayerSandColliderManager.update();
+            }
+
             updateRigidBodyInteractions();
             // --- THIS IS THE FIX ---
             // This call advances the PlanckJS physics simulation, applying gravity and forces.
