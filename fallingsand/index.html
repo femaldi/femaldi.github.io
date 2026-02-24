@@ -867,7 +867,42 @@
         const imageData = ctx.createImageData(renderWidth, renderHeight);
         const pixels = imageData.data; // Uint8ClampedArray
 
-        // --- MATERIAL DEFINITIONS ---
+        // A definitive list of all Essence IDs in the game.
+        const ESSENCES = {
+            // Elemental
+            INTENSE_HEAT: 'intense_heat', FLUIDITY: 'fluidity',
+            DAMPENING: 'dampening', STABILITY: 'stability',
+            FERTILITY: 'fertility', VAPOR: 'vapor',
+            COLD: 'cold', PERMEABILITY: 'permeability',
+            // Physical
+            HARDNESS: 'hardness', WEIGHT: 'weight',
+            GRANULARITY: 'granularity', ABRASION: 'abrasion',
+            STRUCTURE: 'structure', BUOYANCY: 'buoyancy',
+            CLARITY: 'clarity', BRITTLENESS: 'brittleness',
+            HEAT_RESISTANCE: 'heat_resistance', LEVITY: 'levity',
+            OBSCURITY: 'obscurity', VISCOSITY: 'viscosity',
+            // Chemical
+            RAPID_EXPANSION: 'rapid_expansion', VOLATILITY: 'volatility',
+            SLOW_BURN: 'slow_burn', CARBON: 'carbon',
+            SEPARATION: 'separation', CONDUCTION: 'conduction',
+            OXIDATION: 'oxidation', INERTIA: 'inertia',
+            // Arcane & Noble
+            PURITY: 'purity', CATALYSIS: 'catalysis',
+            AETHERIC_RESONANCE: 'aetheric_resonance',
+            // Synthesized Essences
+            DURABILITY: 'durability', STASIS: 'stasis',
+            REGENERATION: 'regeneration', CONNECTIVITY: 'connectivity',
+            ADHESION: 'adhesion', ADHERENT_EXPANSION: 'adherent_expansion',
+            REACTION: 'reaction', FUSION: 'fusion',
+            POTENT_CONDUCTIVITY: 'potent_conductivity', FOCUSED_LIGHT: 'focused_light',
+            ENERGY_STORAGE: 'energy_storage', MAGIC_NULLIFICATION: 'magic_nullification',
+            FLEXIBILITY: 'flexibility', TRUE_SIGHT: 'true_sight',
+            ENTROPY: 'entropy', SENTIENCE: 'sentience', LOGIC: 'logic',
+            CHAIN_REACTION: 'chain_reaction', INDESTRUCTIBILITY: 'indestructibility',
+            ALACRITY: 'alacrity', DENSITY: 'density', BIOLUMINESCENCE: 'bioluminescence',
+            NEGATION: 'negation', GRAVITY: 'gravity'
+        };
+
         const MAT = {
             EMPTY: 0, ROCK_WALL: 1, SAND: 2, WATER: 3, SOIL: 4, 
             WOOD: 10, FIRE: 11, GUNPOWDER: 12, GUNPOWDER_IGNITED: 13,
@@ -876,13 +911,61 @@
             ACID:18, GLASS:19, GLASS_WALL: 20,
             ADAMANTIUM: 21, COPPER: 22, SILVER: 23, GOLD: 24, PLATINUM: 25, RUNE_WALL: 26,
             SANDSTONE_WALL: 27, VOLCANIC_WALL: 28, LABYRINTH_WALL: 29, MAGIC_WALL: 30,
-            // --- START OF NEW MATERIALS (Remove GAS: 5) ---
             GROUND: 31, IRON: 32, RUSTED_IRON: 33, OBSIDIAN: 34,
             LAVA: 40, 
             STEAM: 50, SMOKE: 51, METHANE: 52, METHANE_BURNING: 53,
-            // --- END OF NEW MATERIALS ---
-            RIGID_BODY_STUB: 99
+            RIGID_BODY_STUB: 99,
+
+            ICE: 100, FUNGAL_SPORES: 101, QUICKSILVER: 102, QUARTZ: 103, GLOW_MOSS: 104, VOID_SALTS: 105,
+            CRYSTAL_GLASS: 110, STEEL: 111, CRYO_STATIC_DUST: 112, MYCELIAL_BRICK: 113, RESIN: 114,
+            BLASTING_JELLY: 115, COPPER_SALTS: 116, PHILOSOPHERS_AMALGAM: 117, LUMINITE_CRYSTAL: 118, NULL_CHALK: 119,
+            REINFORCED_COMPOSITE: 120, SCRYING_LENS: 121, ABSOLUTE_ZERO_DUST: 122, LIVING_CIRCUITRY: 123, HEX_CHARGE: 124, VOLCANIC_ADAMANT: 125,
+
+            // --- Hardcoded Unstable Essence Materials ---
+            UNSTABLE_ESSENCE_INTENSE_HEAT: 200, UNSTABLE_ESSENCE_FLUIDITY: 201, UNSTABLE_ESSENCE_DAMPENING: 202,
+            UNSTABLE_ESSENCE_STABILITY: 203, UNSTABLE_ESSENCE_FERTILITY: 204, UNSTABLE_ESSENCE_VAPOR: 205,
+            UNSTABLE_ESSENCE_COLD: 206, UNSTABLE_ESSENCE_PERMEABILITY: 207, UNSTABLE_ESSENCE_HARDNESS: 208,
+            UNSTABLE_ESSENCE_WEIGHT: 209, UNSTABLE_ESSENCE_GRANULARITY: 210, UNSTABLE_ESSENCE_ABRASION: 211,
+            UNSTABLE_ESSENCE_STRUCTURE: 212, UNSTABLE_ESSENCE_BUOYANCY: 213, UNSTABLE_ESSENCE_CLARITY: 214,
+            UNSTABLE_ESSENCE_BRITTLENESS: 215, UNSTABLE_ESSENCE_HEAT_RESISTANCE: 216, UNSTABLE_ESSENCE_LEVITY: 217,
+            UNSTABLE_ESSENCE_OBSCURITY: 218, UNSTABLE_ESSENCE_VISCOSITY: 219, UNSTABLE_ESSENCE_RAPID_EXPANSION: 220,
+            UNSTABLE_ESSENCE_VOLATILITY: 221, UNSTABLE_ESSENCE_SLOW_BURN: 222, UNSTABLE_ESSENCE_CARBON: 223,
+            UNSTABLE_ESSENCE_SEPARATION: 224, UNSTABLE_ESSENCE_CONDUCTION: 225, UNSTABLE_ESSENCE_OXIDATION: 226,
+            UNSTABLE_ESSENCE_INERTIA: 227, UNSTABLE_ESSENCE_PURITY: 228, UNSTABLE_ESSENCE_CATALYSIS: 229,
+            UNSTABLE_ESSENCE_AETHERIC_RESONANCE: 230, UNSTABLE_ESSENCE_DURABILITY: 231, UNSTABLE_ESSENCE_STASIS: 232,
+            UNSTABLE_ESSENCE_REGENERATION: 233, UNSTABLE_ESSENCE_CONNECTIVITY: 234, UNSTABLE_ESSENCE_ADHESION: 235,
+            UNSTABLE_ESSENCE_ADHERENT_EXPANSION: 236, UNSTABLE_ESSENCE_REACTION: 237, UNSTABLE_ESSENCE_FUSION: 238,
+            UNSTABLE_ESSENCE_POTENT_CONDUCTIVITY: 239, UNSTABLE_ESSENCE_FOCUSED_LIGHT: 240, UNSTABLE_ESSENCE_ENERGY_STORAGE: 241,
+            UNSTABLE_ESSENCE_MAGIC_NULLIFICATION: 242, UNSTABLE_ESSENCE_FLEXIBILITY: 243, UNSTABLE_ESSENCE_TRUE_SIGHT: 244,
+            UNSTABLE_ESSENCE_ENTROPY: 245, UNSTABLE_ESSENCE_SENTIENCE: 246, UNSTABLE_ESSENCE_LOGIC: 247,
+            UNSTABLE_ESSENCE_CHAIN_REACTION: 248, UNSTABLE_ESSENCE_INDESTRUCTIBILITY: 249, UNSTABLE_ESSENCE_ALACRITY: 250,
+            UNSTABLE_ESSENCE_DENSITY: 251, UNSTABLE_ESSENCE_BIOLUMINESCENCE: 252, UNSTABLE_ESSENCE_NEGATION: 253,
+            UNSTABLE_ESSENCE_GRAVITY: 254,
         };
+
+        const ESSENCE_TO_MAT = {
+            [ESSENCES.INTENSE_HEAT]: 200, [ESSENCES.FLUIDITY]: 201, [ESSENCES.DAMPENING]: 202,
+            [ESSENCES.STABILITY]: 203, [ESSENCES.FERTILITY]: 204, [ESSENCES.VAPOR]: 205,
+            [ESSENCES.COLD]: 206, [ESSENCES.PERMEABILITY]: 207, [ESSENCES.HARDNESS]: 208,
+            [ESSENCES.WEIGHT]: 209, [ESSENCES.GRANULARITY]: 210, [ESSENCES.ABRASION]: 211,
+            [ESSENCES.STRUCTURE]: 212, [ESSENCES.BUOYANCY]: 213, [ESSENCES.CLARITY]: 214,
+            [ESSENCES.BRITTLENESS]: 215, [ESSENCES.HEAT_RESISTANCE]: 216, [ESSENCES.LEVITY]: 217,
+            [ESSENCES.OBSCURITY]: 218, [ESSENCES.VISCOSITY]: 219, [ESSENCES.RAPID_EXPANSION]: 220,
+            [ESSENCES.VOLATILITY]: 221, [ESSENCES.SLOW_BURN]: 222, [ESSENCES.CARBON]: 223,
+            [ESSENCES.SEPARATION]: 224, [ESSENCES.CONDUCTION]: 225, [ESSENCES.OXIDATION]: 226,
+            [ESSENCES.INERTIA]: 227, [ESSENCES.PURITY]: 228, [ESSENCES.CATALYSIS]: 229,
+            [ESSENCES.AETHERIC_RESONANCE]: 230, [ESSENCES.DURABILITY]: 231, [ESSENCES.STASIS]: 232,
+            [ESSENCES.REGENERATION]: 233, [ESSENCES.CONNECTIVITY]: 234, [ESSENCES.ADHESION]: 235,
+            [ESSENCES.ADHERENT_EXPANSION]: 236, [ESSENCES.REACTION]: 237, [ESSENCES.FUSION]: 238,
+            [ESSENCES.POTENT_CONDUCTIVITY]: 239, [ESSENCES.FOCUSED_LIGHT]: 240, [ESSENCES.ENERGY_STORAGE]: 241,
+            [ESSENCES.MAGIC_NULLIFICATION]: 242, [ESSENCES.FLEXIBILITY]: 243, [ESSENCES.TRUE_SIGHT]: 244,
+            [ESSENCES.ENTROPY]: 245, [ESSENCES.SENTIENCE]: 246, [ESSENCES.LOGIC]: 247,
+            [ESSENCES.CHAIN_REACTION]: 248, [ESSENCES.INDESTRUCTIBILITY]: 249, [ESSENCES.ALACRITY]: 250,
+            [ESSENCES.DENSITY]: 251, [ESSENCES.BIOLUMINESCENCE]: 252, [ESSENCES.NEGATION]: 253,
+            [ESSENCES.GRAVITY]: 254,
+        };
+
+        
 
         const COLORS = {
             [MAT.ROCK_WALL]: [100, 100, 100], [MAT.SAND]: [246, 215, 176],
@@ -897,34 +980,132 @@
             [MAT.PLATINUM]: [229, 228, 226], [MAT.RUNE_WALL]: [200, 200, 100],
             [MAT.SANDSTONE_WALL]: [130, 100, 70], [MAT.VOLCANIC_WALL]: [45, 20, 20],
             [MAT.LABYRINTH_WALL]: [70, 75, 80], [MAT.MAGIC_WALL]: [40, 25, 60],
-            // --- START OF NEW COLORS ---
             [MAT.GROUND]: [107, 77, 60], [MAT.IRON]: [122, 122, 122],
             [MAT.RUSTED_IRON]: [180, 90, 50], [MAT.OBSIDIAN]: [42, 34, 58],
             [MAT.LAVA]: [252, 68, 15], [MAT.STEAM]: [208, 208, 208],
             [MAT.SMOKE]: [68, 68, 68], [MAT.METHANE]: [180, 240, 180], [MAT.METHANE_BURNING]: [255, 150, 50],
-            // --- END OF NEW COLORS ---
+            // New Material Colors
+            [MAT.ICE]: [170, 220, 255], [MAT.FUNGAL_SPORES]: [140, 110, 180],
+            [MAT.QUICKSILVER]: [200, 205, 210], [MAT.QUARTZ]: [240, 240, 250],
+            [MAT.GLOW_MOSS]: [180, 255, 100], [MAT.VOID_SALTS]: [25, 0, 40],
+            [MAT.CRYSTAL_GLASS]: [220, 240, 255], [MAT.STEEL]: [90, 100, 110],
+            [MAT.CRYO_STATIC_DUST]: [210, 255, 255], [MAT.MYCELIAL_BRICK]: [120, 95, 90],
+            [MAT.RESIN]: [210, 150, 30], [MAT.BLASTING_JELLY]: [180, 160, 40],
+            [MAT.COPPER_SALTS]: [40, 220, 150], [MAT.PHILOSOPHERS_AMALGAM]: [255, 230, 180],
+            [MAT.LUMINITE_CRYSTAL]: [255, 250, 200], [MAT.NULL_CHALK]: [50, 50, 70],
+            [MAT.REINFORCED_COMPOSITE]: [110, 110, 90], [MAT.SCRYING_LENS]: [150, 200, 255],
+            [MAT.ABSOLUTE_ZERO_DUST]: [250, 250, 255], [MAT.LIVING_CIRCUITRY]: [100, 150, 140],
+            [MAT.HEX_CHARGE]: [100, 20, 120], [MAT.VOLCANIC_ADAMANT]: [60, 50, 70],
+
+            [MAT.UNSTABLE_ESSENCE_INTENSE_HEAT]: [255, 150, 80], [MAT.UNSTABLE_ESSENCE_FLUIDITY]: [150, 200, 255], [MAT.UNSTABLE_ESSENCE_DAMPENING]: [100, 120, 140],
+            [MAT.UNSTABLE_ESSENCE_STABILITY]: [180, 160, 140], [MAT.UNSTABLE_ESSENCE_FERTILITY]: [120, 200, 100], [MAT.UNSTABLE_ESSENCE_VAPOR]: [220, 220, 230],
+            [MAT.UNSTABLE_ESSENCE_COLD]: [180, 240, 255], [MAT.UNSTABLE_ESSENCE_PERMEABILITY]: [210, 190, 170], [MAT.UNSTABLE_ESSENCE_HARDNESS]: [190, 190, 200],
+            [MAT.UNSTABLE_ESSENCE_WEIGHT]: [140, 140, 150], [MAT.UNSTABLE_ESSENCE_GRANULARITY]: [230, 210, 180], [MAT.UNSTABLE_ESSENCE_ABRASION]: [200, 180, 160],
+            [MAT.UNSTABLE_ESSENCE_STRUCTURE]: [160, 120, 90], [MAT.UNSTABLE_ESSENCE_BUOYANCY]: [200, 255, 230], [MAT.UNSTABLE_ESSENCE_CLARITY]: [240, 240, 255],
+            [MAT.UNSTABLE_ESSENCE_BRITTLENESS]: [190, 190, 220], [MAT.UNSTABLE_ESSENCE_HEAT_RESISTANCE]: [255, 180, 150], [MAT.UNSTABLE_ESSENCE_LEVITY]: [220, 255, 200],
+            [MAT.UNSTABLE_ESSENCE_OBSCURITY]: [100, 100, 100], [MAT.UNSTABLE_ESSENCE_VISCOSITY]: [200, 170, 100], [MAT.UNSTABLE_ESSENCE_RAPID_EXPANSION]: [255, 200, 100],
+            [MAT.UNSTABLE_ESSENCE_VOLATILITY]: [240, 100, 100], [MAT.UNSTABLE_ESSENCE_SLOW_BURN]: [150, 90, 70], [MAT.UNSTABLE_ESSENCE_CARBON]: [80, 80, 80],
+            [MAT.UNSTABLE_ESSENCE_SEPARATION]: [100, 255, 180], [MAT.UNSTABLE_ESSENCE_CONDUCTION]: [220, 210, 180], [MAT.UNSTABLE_ESSENCE_OXIDATION]: [210, 130, 90],
+            [MAT.UNSTABLE_ESSENCE_INERTIA]: [130, 130, 130], [MAT.UNSTABLE_ESSENCE_PURITY]: [255, 255, 220], [MAT.UNSTABLE_ESSENCE_CATALYSIS]: [255, 220, 180],
+            [MAT.UNSTABLE_ESSENCE_AETHERIC_RESONANCE]: [220, 180, 255], [MAT.UNSTABLE_ESSENCE_DURABILITY]: [180, 190, 200], [MAT.UNSTABLE_ESSENCE_STASIS]: [200, 255, 250],
+            [MAT.UNSTABLE_ESSENCE_REGENERATION]: [180, 255, 180], [MAT.UNSTABLE_ESSENCE_CONNECTIVITY]: [255, 255, 150], [MAT.UNSTABLE_ESSENCE_ADHESION]: [240, 200, 100],
+            [MAT.UNSTABLE_ESSENCE_ADHERENT_EXPANSION]: [255, 220, 120], [MAT.UNSTABLE_ESSENCE_REACTION]: [150, 255, 200], [MAT.UNSTABLE_ESSENCE_FUSION]: [255, 215, 100],
+            [MAT.UNSTABLE_ESSENCE_POTENT_CONDUCTIVITY]: [255, 240, 200], [MAT.UNSTABLE_ESSENCE_FOCUSED_LIGHT]: [255, 255, 240], [MAT.UNSTABLE_ESSENCE_ENERGY_STORAGE]: [200, 230, 255],
+            [MAT.UNSTABLE_ESSENCE_MAGIC_NULLIFICATION]: [100, 90, 110], [MAT.UNSTABLE_ESSENCE_FLEXIBILITY]: [200, 200, 150], [MAT.UNSTABLE_ESSENCE_TRUE_SIGHT]: [220, 220, 255],
+            [MAT.UNSTABLE_ESSENCE_ENTROPY]: [240, 240, 240], [MAT.UNSTABLE_ESSENCE_SENTIENCE]: [200, 255, 200], [MAT.UNSTABLE_ESSENCE_LOGIC]: [180, 200, 255],
+            [MAT.UNSTABLE_ESSENCE_CHAIN_REACTION]: [255, 100, 200], [MAT.UNSTABLE_ESSENCE_INDESTRUCTIBILITY]: [220, 220, 220], [MAT.UNSTABLE_ESSENCE_ALACRITY]: [200, 255, 255],
+            [MAT.UNSTABLE_ESSENCE_DENSITY]: [120, 120, 140], [MAT.UNSTABLE_ESSENCE_BIOLUMINESCENCE]: [230, 255, 200], [MAT.UNSTABLE_ESSENCE_NEGATION]: [50, 40, 60],
+            [MAT.UNSTABLE_ESSENCE_GRAVITY]: [80, 80, 120],
         };
 
+        // --- START OF REPLACEMENT (Complete MATERIAL_NAME object) ---
         const MATERIAL_NAME = {
-            [MAT.EMPTY]: 'Empty', [MAT.ROCK_WALL]: 'Wall', [MAT.SAND]: 'Sand',
+            [MAT.EMPTY]: 'Empty', [MAT.ROCK_WALL]: 'Rock Wall', [MAT.SAND]: 'Sand',
             [MAT.WATER]: 'Water', [MAT.SOIL]: 'Soil', [MAT.WOOD]: 'Wood',
             [MAT.FIRE]: 'Fire', [MAT.GUNPOWDER]: 'Gunpowder',
-            [MAT.GUNPOWDER_IGNITED]: 'Gunpowder (Ignited)', [MAT.OIL]: 'Oil',
+            [MAT.GUNPOWDER_IGNITED]: 'Ignited Gunpowder', [MAT.OIL]: 'Oil',
             [MAT.OIL_BURNING]: 'Burning Oil', [MAT.COAL]: 'Coal',
             [MAT.COAL_BURNING]: 'Burning Coal', [MAT.ACID]: 'Acid',
-            [MAT.GLASS]: 'Glass', [MAT.GLASS_WALL]: 'Glass Wall',
+            [MAT.GLASS]: 'Crude Glass', [MAT.GLASS_WALL]: 'Glass Wall',
             [MAT.ADAMANTIUM]: 'Adamantium', [MAT.COPPER]: 'Copper',
             [MAT.SILVER]: 'Silver', [MAT.GOLD]: 'Gold', [MAT.PLATINUM]: 'Platinum',
             [MAT.RUNE_WALL]: 'Rune Wall', [MAT.SANDSTONE_WALL]: 'Sandstone Wall', 
             [MAT.VOLCANIC_WALL]: 'Volcanic Wall', [MAT.LABYRINTH_WALL]: 'Labyrinth Wall', 
             [MAT.MAGIC_WALL]: 'Magic Wall',
-            // --- START OF NEW NAMES (Remove Gas) ---
             [MAT.GROUND]: 'Ground', [MAT.IRON]: 'Iron',
             [MAT.RUSTED_IRON]: 'Rusted Iron', [MAT.OBSIDIAN]: 'Obsidian',
             [MAT.LAVA]: 'Lava', [MAT.STEAM]: 'Steam',
-            [MAT.SMOKE]: 'Smoke', [MAT.METHANE]: 'Methane', [MAT.METHANE_BURNING]: 'Burning Methane'
-            // --- END OF NEW NAMES ---
+            [MAT.SMOKE]: 'Smoke', [MAT.METHANE]: 'Methane', [MAT.METHANE_BURNING]: 'Burning Methane',
+            [MAT.ICE]: 'Ice', [MAT.FUNGAL_SPORES]: 'Fungal Spores',
+            [MAT.QUICKSILVER]: 'Quicksilver', [MAT.QUARTZ]: 'Quartz',
+            [MAT.GLOW_MOSS]: 'Glow Moss', [MAT.VOID_SALTS]: 'Void Salts',
+            [MAT.CRYSTAL_GLASS]: 'Crystal Glass', [MAT.STEEL]: 'Steel',
+            [MAT.CRYO_STATIC_DUST]: 'Cryo-Static Dust', [MAT.MYCELIAL_BRICK]: 'Mycelial Brick',
+            [MAT.RESIN]: 'Resin', [MAT.BLASTING_JELLY]: 'Blasting Jelly',
+            [MAT.COPPER_SALTS]: 'Copper Salts', [MAT.PHILOSOPHERS_AMALGAM]: "Philosopher's Amalgam",
+            [MAT.LUMINITE_CRYSTAL]: 'Luminite Crystal', [MAT.NULL_CHALK]: 'Null-Chalk',
+            [MAT.REINFORCED_COMPOSITE]: 'Reinforced Composite', [MAT.SCRYING_LENS]: 'Scrying Lens',
+            [MAT.ABSOLUTE_ZERO_DUST]: 'Absolute Zero Dust', [MAT.LIVING_CIRCUITRY]: 'Living Circuitry',
+            [MAT.HEX_CHARGE]: 'Hex-Charge', [MAT.VOLCANIC_ADAMANT]: 'Volcanic Adamant',
+
+            // --- Hardcoded Unstable Essence Names ---
+            [MAT.UNSTABLE_ESSENCE_INTENSE_HEAT]: 'Unstable Essence of intense heat',
+            [MAT.UNSTABLE_ESSENCE_FLUIDITY]: 'Unstable Essence of fluidity',
+            [MAT.UNSTABLE_ESSENCE_DAMPENING]: 'Unstable Essence of dampening',
+            [MAT.UNSTABLE_ESSENCE_STABILITY]: 'Unstable Essence of stability',
+            [MAT.UNSTABLE_ESSENCE_FERTILITY]: 'Unstable Essence of fertility',
+            [MAT.UNSTABLE_ESSENCE_VAPOR]: 'Unstable Essence of vapor',
+            [MAT.UNSTABLE_ESSENCE_COLD]: 'Unstable Essence of cold',
+            [MAT.UNSTABLE_ESSENCE_PERMEABILITY]: 'Unstable Essence of permeability',
+            [MAT.UNSTABLE_ESSENCE_HARDNESS]: 'Unstable Essence of hardness',
+            [MAT.UNSTABLE_ESSENCE_WEIGHT]: 'Unstable Essence of weight',
+            [MAT.UNSTABLE_ESSENCE_GRANULARITY]: 'Unstable Essence of granularity',
+            [MAT.UNSTABLE_ESSENCE_ABRASION]: 'Unstable Essence of abrasion',
+            [MAT.UNSTABLE_ESSENCE_STRUCTURE]: 'Unstable Essence of structure',
+            [MAT.UNSTABLE_ESSENCE_BUOYANCY]: 'Unstable Essence of buoyancy',
+            [MAT.UNSTABLE_ESSENCE_CLARITY]: 'Unstable Essence of clarity',
+            [MAT.UNSTABLE_ESSENCE_BRITTLENESS]: 'Unstable Essence of brittleness',
+            [MAT.UNSTABLE_ESSENCE_HEAT_RESISTANCE]: 'Unstable Essence of heat resistance',
+            [MAT.UNSTABLE_ESSENCE_LEVITY]: 'Unstable Essence of levity',
+            [MAT.UNSTABLE_ESSENCE_OBSCURITY]: 'Unstable Essence of obscurity',
+            [MAT.UNSTABLE_ESSENCE_VISCOSITY]: 'Unstable Essence of viscosity',
+            [MAT.UNSTABLE_ESSENCE_RAPID_EXPANSION]: 'Unstable Essence of rapid expansion',
+            [MAT.UNSTABLE_ESSENCE_VOLATILITY]: 'Unstable Essence of volatility',
+            [MAT.UNSTABLE_ESSENCE_SLOW_BURN]: 'Unstable Essence of slow burn',
+            [MAT.UNSTABLE_ESSENCE_CARBON]: 'Unstable Essence of carbon',
+            [MAT.UNSTABLE_ESSENCE_SEPARATION]: 'Unstable Essence of separation',
+            [MAT.UNSTABLE_ESSENCE_CONDUCTION]: 'Unstable Essence of conduction',
+            [MAT.UNSTABLE_ESSENCE_OXIDATION]: 'Unstable Essence of oxidation',
+            [MAT.UNSTABLE_ESSENCE_INERTIA]: 'Unstable Essence of inertia',
+            [MAT.UNSTABLE_ESSENCE_PURITY]: 'Unstable Essence of purity',
+            [MAT.UNSTABLE_ESSENCE_CATALYSIS]: 'Unstable Essence of catalysis',
+            [MAT.UNSTABLE_ESSENCE_AETHERIC_RESONANCE]: 'Unstable Essence of aetheric resonance',
+            [MAT.UNSTABLE_ESSENCE_DURABILITY]: 'Unstable Essence of durability',
+            [MAT.UNSTABLE_ESSENCE_STASIS]: 'Unstable Essence of stasis',
+            [MAT.UNSTABLE_ESSENCE_REGENERATION]: 'Unstable Essence of regeneration',
+            [MAT.UNSTABLE_ESSENCE_CONNECTIVITY]: 'Unstable Essence of connectivity',
+            [MAT.UNSTABLE_ESSENCE_ADHESION]: 'Unstable Essence of adhesion',
+            [MAT.UNSTABLE_ESSENCE_ADHERENT_EXPANSION]: 'Unstable Essence of adherent expansion',
+            [MAT.UNSTABLE_ESSENCE_REACTION]: 'Unstable Essence of reaction',
+            [MAT.UNSTABLE_ESSENCE_FUSION]: 'Unstable Essence of fusion',
+            [MAT.UNSTABLE_ESSENCE_POTENT_CONDUCTIVITY]: 'Unstable Essence of potent conductivity',
+            [MAT.UNSTABLE_ESSENCE_FOCUSED_LIGHT]: 'Unstable Essence of focused light',
+            [MAT.UNSTABLE_ESSENCE_ENERGY_STORAGE]: 'Unstable Essence of energy storage',
+            [MAT.UNSTABLE_ESSENCE_MAGIC_NULLIFICATION]: 'Unstable Essence of magic nullification',
+            [MAT.UNSTABLE_ESSENCE_FLEXIBILITY]: 'Unstable Essence of flexibility',
+            [MAT.UNSTABLE_ESSENCE_TRUE_SIGHT]: 'Unstable Essence of true sight',
+            [MAT.UNSTABLE_ESSENCE_ENTROPY]: 'Unstable Essence of entropy',
+            [MAT.UNSTABLE_ESSENCE_SENTIENCE]: 'Unstable Essence of sentience',
+            [MAT.UNSTABLE_ESSENCE_LOGIC]: 'Unstable Essence of logic',
+            [MAT.UNSTABLE_ESSENCE_CHAIN_REACTION]: 'Unstable Essence of chain reaction',
+            [MAT.UNSTABLE_ESSENCE_INDESTRUCTIBILITY]: 'Unstable Essence of indestructibility',
+            [MAT.UNSTABLE_ESSENCE_ALACRITY]: 'Unstable Essence of alacrity',
+            [MAT.UNSTABLE_ESSENCE_DENSITY]: 'Unstable Essence of density',
+            [MAT.UNSTABLE_ESSENCE_BIOLUMINESCENCE]: 'Unstable Essence of bioluminescence',
+            [MAT.UNSTABLE_ESSENCE_NEGATION]: 'Unstable Essence of negation',
+            [MAT.UNSTABLE_ESSENCE_GRAVITY]: 'Unstable Essence of gravity',
         };
+        // --- END OF REPLACEMENT ---
 
         const MATERIAL_DENSITY = {
             // Default player density is 1.0. Higher numbers are heavier.
@@ -961,6 +1142,103 @@
             MAT.ROCK_WALL, MAT.SANDSTONE_WALL, MAT.VOLCANIC_WALL, 
             MAT.LABYRINTH_WALL, MAT.MAGIC_WALL
         ]);
+
+        // --- ADD THIS ENTIRE NEW CODE BLOCK ---
+
+        const RUNE_DEFINITIONS = {
+            // --- Source ---
+            'from_input_crucible': { name: "From Input Crucible", category: 'Source' },
+
+            // --- Action ---
+            'transform': { name: "Transform X to Y", category: 'Action', type: 'transform' }, // Special variable type
+            'combine': { name: "Combine", category: 'Action' },
+            'separate': { name: "Separate", category: 'Action' },
+            'extract_essence': { name: "Extract Essence", category: 'Action', isVariable: true, type: 'essence' },
+            'infuse_from_retort': { name: "Infuse from Retort", category: 'Action' },
+            'infuse_from_input': { name: "Infuse from Input", category: 'Action' },
+            
+            // --- Control ---
+            'filter_by': { name: "Filter By", category: 'Control', isVariable: true, type: 'material' },
+            'batch': { name: "Batch", category: 'Control', isVariable: true, type: 'material_amount' },
+            'yield_to_retort': { name: "Yield To Retort", category: 'Control' },
+            'yield_to_output': { name: "Yield To Output", category: 'Control' },
+
+            // --- Forma ---
+            'forma_potion': { name: "Forma: Potion", category: 'Forma' },
+            'forma_oil': { name: "Forma: Oil", category: 'Forma' },
+            'forma_alkahest': { name: "Forma: Alkahest", category: 'Forma' },
+            'forma_gem': { name: "Forma: Gem", category: 'Forma' },
+            // Note: As per our discussion, Forma: Substance is omitted in favor of the 'smart' Yield rune.
+
+            // --- Meta ---
+            'meta_efficiency': { name: "Rune of Efficiency", category: 'Meta' },
+            'meta_potency': { name: "Rune of Potency", category: 'Meta' },
+            'meta_stability': { name: "Rune of Stability", category: 'Meta' },
+            'meta_mutation': { name: "Rune of Mutation", category: 'Meta' },
+        };
+
+        // --- END OF NEW CODE BLOCK ---
+
+        // --- ADD THIS NEW SECTION FOR ESSENCE DATA ---
+
+        
+
+        // This master object maps every material to the essences it contains.
+        // The first essence in the array is the "primary" one discoverable via Basic Analysis.
+        const MATERIAL_ESSENCES = {
+            // Natural Materials
+            [MAT.WATER]: [ESSENCES.FLUIDITY, ESSENCES.DAMPENING],
+            [MAT.LAVA]: [ESSENCES.INTENSE_HEAT, ESSENCES.ILLUMINATION],
+            [MAT.SOIL]: [ESSENCES.STABILITY, ESSENCES.FERTILITY],
+            [MAT.STEAM]: [ESSENCES.VAPOR],
+            [MAT.SANDSTONE_WALL]: [ESSENCES.PERMEABILITY],
+            [MAT.ROCK_WALL]: [ESSENCES.HARDNESS, ESSENCES.WEIGHT],
+            [MAT.ADAMANTIUM]: [ESSENCES.HARDNESS, ESSENCES.WEIGHT],
+            [MAT.SAND]: [ESSENCES.GRANULARITY, ESSENCES.ABRASION],
+            [MAT.WOOD]: [ESSENCES.STRUCTURE, ESSENCES.BUOYANCY],
+            [MAT.GLASS]: [ESSENCES.BRITTLENESS], // Crude Glass
+            [MAT.OBSIDIAN]: [ESSENCES.HARDNESS, ESSENCES.HEAT_RESISTANCE],
+            [MAT.METHANE]: [ESSENCES.LEVITY, ESSENCES.VOLATILITY],
+            [MAT.SMOKE]: [ESSENCES.OBSCURITY],
+            [MAT.OIL]: [ESSENCES.VISCOSITY, ESSENCES.SLOW_BURN],
+            [MAT.GUNPOWDER]: [ESSENCES.RAPID_EXPANSION, ESSENCES.VOLATILITY],
+            [MAT.COAL]: [ESSENCES.CARBON, ESSENCES.SLOW_BURN],
+            [MAT.ACID]: [ESSENCES.SEPARATION],
+            [MAT.IRON]: [ESSENCES.CONDUCTION, ESSENCES.OXIDATION],
+            [MAT.RUSTED_IRON]: [ESSENCES.INERTIA],
+            [MAT.COPPER]: [ESSENCES.PURITY, ESSENCES.CONDUCTION],
+            [MAT.SILVER]: [ESSENCES.PURITY, ESSENCES.AETHERIC_RESONANCE],
+            [MAT.GOLD]: [ESSENCES.PURITY, ESSENCES.CATALYSIS],
+            [MAT.PLATINUM]: [ESSENCES.PURITY, ESSENCES.CATALYSIS],
+            [MAT.RUNE_WALL]: [ESSENCES.AETHERIC_RESONANCE],
+            // New Natural Materials
+            [MAT.ICE]: [ESSENCES.COLD],
+            [MAT.FUNGAL_SPORES]: [ESSENCES.FERTILITY],
+            [MAT.QUICKSILVER]: [ESSENCES.ALACRITY, ESSENCES.DENSITY],
+            [MAT.QUARTZ]: [ESSENCES.FOCUSED_LIGHT],
+            [MAT.GLOW_MOSS]: [ESSENCES.BIOLUMINESCENCE, ESSENCES.ENERGY_STORAGE],
+            [MAT.VOID_SALTS]: [ESSENCES.NEGATION, ESSENCES.GRAVITY],
+            // Tier 2 Synthesized Materials
+            [MAT.CRYSTAL_GLASS]: [ESSENCES.CLARITY, ESSENCES.PURITY],
+            [MAT.STEEL]: [ESSENCES.DURABILITY],
+            [MAT.CRYO_STATIC_DUST]: [ESSENCES.STASIS],
+            [MAT.MYCELIAL_BRICK]: [ESSENCES.REGENERATION, ESSENCES.CONNECTIVITY],
+            [MAT.RESIN]: [ESSENCES.ADHESION, ESSENCES.VISCOSITY],
+            [MAT.BLASTING_JELLY]: [ESSENCES.ADHERENT_EXPANSION],
+            [MAT.COPPER_SALTS]: [ESSENCES.CATALYSIS, ESSENCES.REACTION],
+            [MAT.PHILOSOPHERS_AMALGAM]: [ESSENCES.FUSION, ESSENCES.POTENT_CONDUCTIVITY],
+            [MAT.LUMINITE_CRYSTAL]: [ESSENCES.FOCUSED_LIGHT, ESSENCES.ENERGY_STORAGE],
+            [MAT.NULL_CHALK]: [ESSENCES.MAGIC_NULLIFICATION],
+            // Tier 3 Advanced Materials
+            [MAT.REINFORCED_COMPOSITE]: [ESSENCES.FLEXIBILITY],
+            [MAT.SCRYING_LENS]: [ESSENCES.TRUE_SIGHT],
+            [MAT.ABSOLUTE_ZERO_DUST]: [ESSENCES.ENTROPY],
+            [MAT.LIVING_CIRCUITRY]: [ESSENCES.SENTIENCE, ESSENCES.LOGIC],
+            [MAT.HEX_CHARGE]: [ESSENCES.CHAIN_REACTION],
+            [MAT.VOLCANIC_ADAMANT]: [ESSENCES.INDESTRUCTIBILITY],
+        };
+
+        // --- END OF NEW SECTION ---
 
         let lastColliderUpdateTime = 0;
         const COLLIDER_UPDATE_INTERVAL = 100;
@@ -1358,7 +1636,7 @@
         let firePixelsCoords = [];
         let triggers = [];
         let nextTriggerId = 0;
-        let isAlchemyUIVisible = false;
+        let isAlembicUIVisible = false;
 
         let lastFpsTime = performance.now();
         let framesThisSecond = 0;
@@ -1400,7 +1678,10 @@
         let activeStubs = [];
 
         const STORABLE_SOLIDS = new Set([MAT.SAND, MAT.SOIL, MAT.GUNPOWDER, MAT.COAL, MAT.GLASS, MAT.COPPER, MAT.SILVER, MAT.GOLD, MAT.PLATINUM]);
-        const STORABLE_LIQUIDS = new Set([MAT.WATER, MAT.OIL, MAT.ACID]);
+        const STORABLE_LIQUIDS = new Set([MAT.WATER, MAT.OIL, MAT.ACID, MAT.LAVA]);
+        for (const key in ESSENCE_TO_MAT) {
+            STORABLE_LIQUIDS.add(ESSENCE_TO_MAT[key]);
+        }
 
         let fluidsCanvas = null;
         let fluidsCtx = null;
@@ -3222,7 +3503,7 @@
                                 let isSupported = true;
                                 for (const fixture of target.allFixtures) {
                                     if (fixture.testPoint(supportPoint)) {
-                                        console.log("supporting");
+                                        //console.log("supporting");
                                         isSupported = true;
                                         break;
                                     }
@@ -3440,9 +3721,288 @@
             }
         };
 
-        // --- END OF NEW CODE ---
+        // --- ADD THIS NEW MANAGER OBJECT ---
+        const AlembicManager = {
+            isRecipeLoaded: false,
+            loadedRecipeIndex: -1,
+            loadedRecipeName: "",
+        };
 
-        // --- END OF NEW CODE ---
+        // --- ADD THIS ENTIRE NEW BLOCK OF HELPER FUNCTIONS ---
+
+        /**
+         * Scans all pixels within a defined area and returns a Map of materials and their quantities.
+         * @param {Array<{x, y}>} areaPoints - An array of world coordinates defining the area.
+         * @returns {Map<number, number>} A map where keys are MAT IDs and values are their counts.
+         */
+        function getMaterialsInArea(areaPoints) {
+            const counts = new Map();
+            if (!areaPoints) return counts;
+
+            for (const point of areaPoints) {
+                const type = getGrid(point.x, point.y);
+                if (type !== MAT.EMPTY) {
+                    counts.set(type, (counts.get(type) || 0) + 1);
+                }
+            }
+            return counts;
+        }
+
+        /**
+         * Removes a specific quantity of materials from a defined area.
+         * @param {Array<{x, y}>} areaPoints - The world coordinates to remove materials from.
+         * @param {Map<number, number>} materialsToRemove - A map of MAT IDs and quantities to remove.
+         */
+        function removeMaterialsFromArea(areaPoints, materialsToRemove) {
+            if (!areaPoints) return;
+            const shuffledPoints = [...areaPoints].sort(() => 0.5 - Math.random());
+            const materialsLeft = new Map(materialsToRemove);
+
+            for (const point of shuffledPoints) {
+                const type = getGrid(point.x, point.y);
+                const countLeft = materialsLeft.get(type);
+
+                if (countLeft && countLeft > 0) {
+                    setGrid(point.x, point.y, MAT.EMPTY, true);
+                    materialsLeft.set(type, countLeft - 1);
+                }
+            }
+        }
+
+        /**
+         * Spawns a specific quantity of a material into empty spaces within a defined area.
+         * @param {Array<{x, y}>} areaPoints - The world coordinates to spawn materials into.
+         * @param {number} materialToSpawn - The MAT ID of the material to spawn.
+         * @param {number} quantity - The number of pixels to spawn.
+         */
+        function spawnMaterialsInArea(areaPoints, materialToSpawn, quantity) {
+            if (!areaPoints) return;
+            
+            const emptyPoints = areaPoints.filter(p => getGrid(p.x, p.y) === MAT.EMPTY);
+            const shuffledEmptyPoints = emptyPoints.sort(() => 0.5 - Math.random());
+
+            const spawnCount = Math.min(quantity, shuffledEmptyPoints.length);
+            for (let i = 0; i < spawnCount; i++) {
+                const point = shuffledEmptyPoints[i];
+                setGrid(point.x, point.y, materialToSpawn, true);
+            }
+        }
+
+        // --- START OF REPLACEMENT (Complete executeRecipe function) ---
+        /**
+         * The core engine for processing an alchemical recipe.
+         * @param {number} recipePageIndex - The index of the recipe in the player's grimoire.
+         * @param {object} stationGeometry - The geometry of the active Alembic station.
+         */
+        function executeRecipe(recipePageIndex, stationGeometry) {
+            const recipe = player.grimoire.pages[recipePageIndex];
+            if (!recipe || recipe.runes.length === 0) {
+                displayMessage("Reaction Failed", "The selected recipe is empty.", 240);
+                return;
+            }
+
+            console.log(`--- Executing Recipe: ${recipe.name} ---`);
+            const AETHER_COST = 10; // Base cost for any reaction
+            if (player.aether < AETHER_COST) {
+                displayMessage("Reaction Failed", "Not enough Aether to start the reaction.", 240);
+                return;
+            }
+            player.aether -= AETHER_COST;
+
+            // --- Step 1: Initialize the Processing Batch ---
+            let processingBatch = new Map();
+            const firstRune = recipe.runes[0];
+            if (firstRune.id === 'from_input_crucible') {
+                processingBatch = getMaterialsInArea(stationGeometry.inputCrucible.worldPoints);
+            } else {
+                displayMessage("Reaction Failed", "Recipe must start with [From Input Crucible].", 300);
+                return;
+            }
+
+            if (processingBatch.size === 0) {
+                displayMessage("Reaction Failed", "Input Crucible is empty.", 240);
+                return;
+            }
+
+            // --- Step 2: Process Runes Sequentially ---
+            for (let i = 1; i < recipe.runes.length; i++) {
+                const rune = recipe.runes[i];
+                console.log(`Processing Rune ${i}: ${rune.id}`);
+
+                switch (rune.id) {
+                    case 'filter_by': {
+                        const targetMaterial = rune.target;
+                        if (processingBatch.has(targetMaterial)) {
+                            const quantity = processingBatch.get(targetMaterial);
+                            // The new batch contains ONLY the filtered material
+                            processingBatch = new Map([[targetMaterial, quantity]]);
+                        } else {
+                            processingBatch.clear(); // Filter found nothing, batch is now empty
+                        }
+                        break;
+                    }
+
+                    case 'extract_essence': {
+                        const essenceToExtract = rune.target;
+                        if (!essenceToExtract) {
+                            displayMessage("Reaction Failed", "Extract Essence rune is not set.", 300);
+                            processingBatch.clear();
+                            break;
+                        }
+
+                        let sourceMaterial = -1;
+                        let sourceQuantity = 0;
+
+                        for (const [matId, quantity] of processingBatch.entries()) {
+                            const essencesInMaterial = MATERIAL_ESSENCES[matId] || [];
+                            if (essencesInMaterial.includes(essenceToExtract)) {
+                                sourceMaterial = matId;
+                                sourceQuantity = quantity;
+                                break;
+                            }
+                        }
+
+                        if (sourceMaterial !== -1) {
+                            // Use the hardcoded mapping to get the correct material ID for the essence.
+                            const essenceMaterialId = ESSENCE_TO_MAT[essenceToExtract];
+                            
+                            processingBatch = new Map([[essenceMaterialId, sourceQuantity]]);
+                        } else {
+                            displayMessage("Reaction Fizzled", `No material containing [${essenceToExtract.replace(/_/g, ' ')}] was found.`, 300);
+                            processingBatch.clear();
+                        }
+                        break;
+                    }
+
+                    case 'transform': {
+                        const fromMat = rune.from;
+                        const toMat = rune.to;
+                        if (processingBatch.has(fromMat)) {
+                            const quantity = processingBatch.get(fromMat);
+                            processingBatch.delete(fromMat);
+                            processingBatch.set(toMat, (processingBatch.get(toMat) || 0) + quantity);
+                        }
+                        break;
+                    }
+
+                    case 'yield_to_output': {
+                        const originalContents = getMaterialsInArea(stationGeometry.inputCrucible.worldPoints);
+                        removeMaterialsFromArea(stationGeometry.inputCrucible.worldPoints, originalContents);
+
+                        for (const [key, value] of processingBatch.entries()) {
+                            if (typeof key === 'number') {
+                                spawnMaterialsInArea(stationGeometry.outputCrucible.worldPoints, key, value);
+                            }
+                        }
+                        
+                        const outputCenter = { x: stationGeometry.outputCrucible.x + stationGeometry.outputCrucible.width / 2, y: stationGeometry.outputCrucible.y + stationGeometry.outputCrucible.height / 2 };
+                        createShapeDissolveEffect({ x: outputCenter.x, y: outputCenter.y, shapeImage: SpriteManager.sprites.get('filter_shape'), color: [220, 255, 220], shapeSize: 48, particleCount: 1000 });
+                        displayMessage("Reaction Complete!", `${recipe.name} finished successfully.`, 300);
+                        return;
+                    }
+
+                    default:
+                        console.warn(`Unimplemented rune in recipe: ${rune.id}`);
+                        break;
+                }
+                
+                if (processingBatch.size === 0) {
+                    displayMessage("Reaction Fizzled", "A step in the recipe resulted in no material.", 300);
+                    return;
+                }
+            }
+
+            displayMessage("Reaction Incomplete", "The recipe does not have a [Yield] or [Forma] rune at the end.", 300);
+        }
+        // --- END OF REPLACEMENT ---
+
+        // --- START OF REPLACEMENT ---
+        const GrimoireManager = {
+            isVisible: false,
+            activeTab: 'compendium',
+            
+            compendiumScroll: 0,
+            selectedMaterial: null,
+
+            selectedRecipeIndex: 0,
+            isRenamingRecipe: false,
+
+            // New state for the context-sensitive pop-ups
+            isSelectingRune: false,     // Is the rune selector pop-up open?
+            runeSelectionContext: null, // { pageIndex, slotIndex }
+            isAwaitingAttunement: false,
+            attunementContext: null,    // { pageIndex, slotIndex, runeId }
+            isSelectingEssence: false,
+            essenceSelectionContext: null,
+        };
+        // --- END OF REPLACEMENT ---
+
+        // --- ADD THIS NEW HELPER FUNCTION ---
+        /**
+         * Finds the first valid material present in the Athanor's designated area.
+         * Checks for both grid materials (powders/liquids) and rigid bodies (chunks/ingots).
+         * @param {object} stationGeometry - The station's geometry object containing the Athanor's worldPoints.
+         * @returns {object|null} An object describing the found material, or null if empty.
+         */
+        function getMaterialInAthanor(stationGeometry) {
+            if (!stationGeometry || !stationGeometry.athanor) return null;
+
+            const athanorArea = stationGeometry.athanor;
+
+            // 1. Check for materials on the static grid (powders, liquids)
+            for (const point of athanorArea.worldPoints) {
+                const type = getGrid(point.x, point.y);
+                if (type !== MAT.EMPTY && MATERIAL_ESSENCES[type]) {
+                    return { type: type, x: point.x, y: point.y, isRigidBody: false };
+                }
+            }
+
+            // 2. Check for rigid body objects overlapping the area (chunks, ingots)
+            const areaAABB = {
+                minX: athanorArea.x, minY: athanorArea.y,
+                maxX: athanorArea.x + athanorArea.width, maxY: athanorArea.y + athanorArea.height
+            };
+
+            for (const body of rigidBodies) {
+                if (body.isDestroyed || !body.body) continue;
+                const bodyPos = body.body.getPosition();
+                const worldX = bodyPos.x * B2_SCALE;
+                const worldY = bodyPos.y * B2_SCALE;
+
+                if (worldX > areaAABB.minX && worldX < areaAABB.maxX &&
+                    worldY > areaAABB.minY && worldY < areaAABB.maxY)
+                {
+                    // Found an overlapping rigid body. We assume it's a single chunk/ingot.
+                    // Note: This logic assumes Chunks/Ingots will have a 'materialType' property.
+                    const bodyMaterialType = body.materialType;
+                    if (MATERIAL_ESSENCES[bodyMaterialType]) {
+                        return { type: bodyMaterialType, body: body, isRigidBody: true };
+                    }
+                }
+            }
+
+            return null; // Athanor is empty
+        }
+
+        /**
+         * Adds a discovered essence for a specific material to the player's knowledge base.
+         * @param {number} materialId - The MAT ID of the material that was analyzed.
+         * @param {string} essenceId - The ESSENCES ID that was discovered.
+         */
+        function discoverEssenceForMaterial(materialId, essenceId) {
+            // Also mark the material itself as discovered if it's the first time
+            player.discoveredMaterials.add(materialId);
+
+            if (!player.discoveredEssences.has(materialId)) {
+                // If this is the first essence discovered for this material, create the Set
+                player.discoveredEssences.set(materialId, new Set());
+            }
+            // Add the new essence to the set for that material
+            player.discoveredEssences.get(materialId).add(essenceId);
+
+            console.log(`Discovered essence '${essenceId}' for material '${MATERIAL_NAME[materialId]}'`);
+            // Here you could trigger a UI notification or sound effect
+        }
 
         const SetPieceManager = {
             setPieces: [
@@ -3454,6 +4014,7 @@
                     spawnLocalX: SECTOR_SIZE / 2,
                     spawnLocalY: SECTOR_SIZE / 2,
                     parsedData: null,
+                    // --- START OF REPLACEMENT ---
                     postGenerationHook: function(pieceInfo) {
                         if (!pieceInfo.parsedData || !pieceInfo.parsedData.functionalAreas) {
                             console.error("AlchemistStation postGenerationHook failed: No functional areas parsed!");
@@ -3463,71 +4024,54 @@
                         const worldX = (x, w = 0) => pieceInfo.bounds.x + x + Math.floor(w / 2);
                         const worldY = (y, h = 0) => pieceInfo.bounds.y + y + Math.floor(h / 2);
                         const areas = pieceInfo.parsedData.functionalAreas;
-
                         const stationGeometry = {};
 
-                        // Loop through all parsed areas to build the complete station geometry object
                         for (const key in areas) {
                             const area = areas[key];
                             const worldPoints = [];
-                            // Convert each local point from the image into a world coordinate
                             for (const localPoint of area.points) {
-                                worldPoints.push({
-                                    x: pieceInfo.bounds.x + localPoint.x,
-                                    y: pieceInfo.bounds.y + localPoint.y
-                                });
+                                worldPoints.push({ x: pieceInfo.bounds.x + localPoint.x, y: pieceInfo.bounds.y + localPoint.y });
                             }
-
-                            // Store the bounding box and the pixel-perfect world points
                             stationGeometry[key] = {
-                                x: pieceInfo.bounds.x + area.x,
-                                y: pieceInfo.bounds.y + area.y,
-                                width: area.width,
-                                height: area.height,
-                                worldPoints: worldPoints
+                                x: pieceInfo.bounds.x + area.x, y: pieceInfo.bounds.y + area.y,
+                                width: area.width, height: area.height, worldPoints: worldPoints
                             };
 
-                            // Create the main interaction trigger for the station's controls
+                            // --- TRIGGER LOGIC MODIFICATION ---
                             if (key === 'stationControls') {
                                 createTrigger({
-                                    name: 'alembic_controls',
-                                    x: stationGeometry[key].x,
-                                    y: stationGeometry[key].y,
-                                    width: stationGeometry[key].width,
-                                    height: stationGeometry[key].height,
-                                    onInteract: function(trigger) { 
-                                        console.log("Interacting with Alembic!");
+                                    name: 'alembic_controls', x: stationGeometry[key].x, y: stationGeometry[key].y,
+                                    width: stationGeometry[key].width, height: stationGeometry[key].height,
+                                    onInteract: (trigger) => {
+                                        // THE FIX: Open the new Alembic UI instead of showing a message.
+                                        isAlembicUIVisible = true;
                                         player.activeStationGeometry = trigger.associatedData.stationGeometry;
                                     },
-                                    associatedData: { stationGeometry } // Pass the entire geometry object to the trigger
+                                    associatedData: { stationGeometry }
                                 });
                             }
                         }
 
-                        // Spawn the Master Alchemist NPC if its location was parsed
                         if (areas.masterAlchemist) {
                             const npcArea = areas.masterAlchemist;
                             createNpc({
                                 name: 'Ylialkemisti',
-                                // Spawn him centered and at the bottom of the marker area
                                 x: worldX(npcArea.x, npcArea.width),
                                 y: worldY(npcArea.y, npcArea.height) - player.height / 2,
                                 dialogueTreeId: 'ylialkemisti_main',
-                                associatedData: { stationGeometry } // Link him to this station instance
+                                associatedData: { stationGeometry }
                             });
                         }
                         
-                        // Set the player's spawn location if the output crucible area was parsed
                         if (areas.outputCrucible) {
-                            const spawnArea = stationGeometry.outputCrucible; // Use the processed geometry
+                            const spawnArea = stationGeometry.outputCrucible;
                             playerSpawnLocation = {
-                                // Spawn centered in the output crucible area
                                 x: spawnArea.x + Math.floor(spawnArea.width / 2),
                                 y: spawnArea.y + Math.floor(spawnArea.height / 2)
                             };
-                            console.log("Player spawn location set to:", playerSpawnLocation);
                         }
                     }
+                    // --- END OF REPLACEMENT ---
                 },
                 // --- END OF REPLACEMENT ---
                 {
@@ -3890,6 +4434,53 @@
             maxStructureSlots: 1,
             toolIndex: 0,
             structureIndex: 0,
+            discoveredEssences: new Map(),
+            discoveredMaterials: new Set([MAT.SAND, MAT.GLASS]),
+            
+            runeInventory: {
+                // This is the player's RUNE REPERTOIRE (knowledge base)
+                knownRunes: new Set([
+                    'from_input_crucible',
+                    'yield_to_output',
+                    'combine',
+                    'separate',
+                    'extract_essence',
+                    'infuse_from_retort',
+                    'infuse_from_input',
+                    // etc. for all non-variable runes
+                ]),
+
+                // Learned transformations are stored here as objects
+                transform: [
+                    { from: MAT.SAND, to: MAT.GLASS } // Player has learned this specific reaction
+                ],
+                
+                // Inventory of blank, attunable runes
+                blank_filter_runes: 2,
+                
+                // Learned, specific versions of attunable runes
+                known_filters: new Set([MAT.SAND]),
+            },
+            
+            grimoire: {
+                maxPages: 4,
+                pages: [
+                    { 
+                        name: "Glass Recipe",
+                        maxRunes: 4,
+                        runes: [
+                            { id: 'from_input_crucible' },
+                            { id: 'filter_by', target: MAT.SAND },
+                            { id: 'transform', from: MAT.SAND, to: MAT.GLASS },
+                            { id: 'yield_to_output' },
+                        ]
+                    },
+                    null, null, null
+                ]
+            },
+
+            aether: 100,
+            maxAether: 100,
         };
         const camera = { x: player.x - viewWidth / 2, y: player.y - viewHeight / 2 };
         const floatingArrow = {
@@ -3908,6 +4499,84 @@
                 return; // Consume the key press and do nothing else.
             }
 
+            if (isAlembicUIVisible) {
+                if (e.code === 'Escape') {
+                    isAlembicUIVisible = false;
+                    player.activeStationGeometry = null;
+                    AlembicManager.isRecipeLoaded = false;
+                }
+                if (e.code === 'Digit1') {
+                    // This is the entire logic moved from the old Athanor trigger
+                    const AETHER_COST = 25;
+                    const stationGeo = player.activeStationGeometry;
+                    const materialInfo = getMaterialInAthanor(stationGeo);
+
+                    if (!materialInfo) {
+                        displayMessage("Analysis Failed", "The Athanor is empty.", 240); return;
+                    }
+                    if (player.aether < AETHER_COST) {
+                        displayMessage("Analysis Failed", "Not enough Aether.", 240); return;
+                    }
+
+                    const allEssences = MATERIAL_ESSENCES[materialInfo.type] || [];
+                    const knownEssences = player.discoveredEssences.get(materialInfo.type) || new Set();
+                    const undiscoveredEssences = allEssences.filter(e => !knownEssences.has(e));
+
+                    if (undiscoveredEssences.length === 0) {
+                        displayMessage("Analysis Complete", "No new essences to discover in this material.", 300); return;
+                    }
+
+                    player.aether -= AETHER_COST;
+                    if (materialInfo.isRigidBody) { materialInfo.body.isDestroyed = true; } 
+                    else { setGrid(materialInfo.x, materialInfo.y, MAT.EMPTY); }
+
+                    const discoveredEssence = undiscoveredEssences[Math.floor(Math.random() * undiscoveredEssences.length)];
+                    discoverEssenceForMaterial(materialInfo.type, discoveredEssence);
+
+                    const materialName = MATERIAL_NAME[materialInfo.type];
+                    const essenceName = discoveredEssence.replace(/_/g, ' ');
+                    displayMessage("Discovery!", `You have learned [${essenceName}] from ${materialName}.`, 480);
+                    
+                    const athanorCenter = { x: stationGeo.athanor.x + stationGeo.athanor.width / 2, y: stationGeo.athanor.y + stationGeo.athanor.height / 2 };
+                    createShapeDissolveEffect({
+                        x: athanorCenter.x, y: athanorCenter.y,
+                        shapeImage: SpriteManager.sprites.get('pickup_shape'),
+                        color: [180, 220, 255], shapeSize: 32, particleCount: 1500,
+                        appearDuration: 20, holdDuration: 40, wispDuration: 60, bloomIntensity: 0.5
+                    });
+                    
+                    isAlembicUIVisible = false; // Close UI after successful analysis
+                    player.activeStationGeometry = null;
+                }
+                if (e.code === 'Digit2') {
+                    // Smoothly transition from the Alembic UI to the Grimoire
+                    isAlembicUIVisible = false;
+                    GrimoireManager.isVisible = true;
+                    GrimoireManager.activeTab = 'recipes'; // Default to a useful tab
+                }
+                
+                if (e.code === 'Digit3') {
+                    if (AlembicManager.isRecipeLoaded) {
+                        // --- START REACTION ---
+                        executeRecipe(AlembicManager.loadedRecipeIndex, player.activeStationGeometry);
+                        isAlembicUIVisible = false; // Close UI after starting
+                        player.activeStationGeometry = null;
+                        AlembicManager.isRecipeLoaded = false;
+                    } else {
+                        // --- LOAD RECIPE ---
+                        const selectedRecipe = player.grimoire.pages[GrimoireManager.selectedRecipeIndex];
+                        if (selectedRecipe) {
+                            AlembicManager.isRecipeLoaded = true;
+                            AlembicManager.loadedRecipeIndex = GrimoireManager.selectedRecipeIndex;
+                            AlembicManager.loadedRecipeName = selectedRecipe.name;
+                        } else {
+                            displayMessage("Load Failed", "No recipe selected on that Grimoire page.", 240);
+                        }
+                    }
+                }
+                return;
+            }
+
             if (DialogueManager.isVisible) {
                 if (e.code.startsWith('Digit')) {
                     const index = parseInt(e.code.replace('Digit', ''), 10) - 1;
@@ -3917,30 +4586,6 @@
                     DialogueManager.closeDialogue();
                 }
                 return; // Prevent any other input when dialogue is open
-            }
-
-            if (isAlchemyUIVisible) {
-                
-                if (e.code === 'Escape') {
-                    isAlchemyUIVisible = false;
-                    player.activeStationGeometry = null;  
-                } 
-
-                if (e.code.startsWith('Digit')) {
-                    const index = parseInt(e.code.replace('Digit', ''), 10) - 1;
-                    const reactionKeys = player.unlockedReactions;
-                    if (index >= 0 && index < reactionKeys.length) {
-                        const reactionKey = reactionKeys[index];
-                        
-                        if (player.activeStationGeometry) {
-                            ALCHEMY_REACTIONS[reactionKey].execute(player.activeStationGeometry);
-                        }
-
-                        isAlchemyUIVisible = false;
-                        player.activeStationGeometry = null; 
-                    }
-                }
-                return;
             }
 
             if (TradeManager.isVisible) {
@@ -3973,6 +4618,16 @@
                 case 'Digit2': activeContainer = 'pouch'; break;
                 case 'Digit3': activeContainer = 'tool'; break;
                 case 'Digit4': activeContainer = 'structure'; break;
+                
+                case 'KeyG':
+                    if (GrimoireManager.isVisible) {
+                        GrimoireManager.isVisible = false;
+                    } else {
+                        GrimoireManager.isVisible = true;
+                        // When opening, default to the most useful tab
+                        GrimoireManager.activeTab = 'compendium'; 
+                    }
+                    break;
 
                 // Toolbar item cycling
                 case 'KeyQ':
@@ -4599,6 +5254,10 @@
         }
 
         const LIQUIDS = new Set([MAT.WATER, MAT.OIL, MAT.OIL_BURNING, MAT.ACID, MAT.LAVA]);
+        for (const key in ESSENCE_TO_MAT) {
+            LIQUIDS.add(ESSENCE_TO_MAT[key]);
+        }
+
         const GASES = new Set([MAT.STEAM, MAT.SMOKE, MAT.METHANE, MAT.METHANE_BURNING]);
         const FIRE_PASSABLE = new Set([
             MAT.EMPTY, 
@@ -4675,6 +5334,40 @@
         });
 
         canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+        // --- ADD THIS NEW EVENT LISTENER for Right-Clicking ---
+        canvas.addEventListener('contextmenu', (e) => {
+            if (!GrimoireManager.isVisible || GrimoireManager.activeTab !== 'recipes') return;
+            
+            e.preventDefault();
+            e.stopPropagation();
+
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = (e.clientX - rect.left) / scale;
+            const mouseY = (e.clientY - rect.top) / scale;
+
+            const boxW = renderWidth - 40; const boxH = renderHeight - 60;
+            const boxX = (renderWidth - boxW) / 2; const boxY = (renderHeight - boxH) / 2;
+            const contentX = boxX; const contentY = boxY + 20;
+
+            const selectedRecipe = player.grimoire.pages[GrimoireManager.selectedRecipeIndex];
+            if (selectedRecipe) {
+                const listWidth = 120;
+                const editorX = contentX + listWidth;
+                let yOff = contentY + 45;
+                const maxSlots = selectedRecipe.maxRunes;
+                const slotHeight = 22, slotPadding = 5;
+
+                for (let i = 0; i < maxSlots; i++) {
+                    const slotY = yOff + i * (slotHeight + slotPadding);
+                    if (mouseX > editorX && mouseY >= slotY && mouseY < slotY + slotHeight) {
+                        // Right-clicked on this slot. Clear it.
+                        selectedRecipe.runes[i] = null;
+                        return;
+                    }
+                }
+            }
+        });
         
         canvas.addEventListener('mousedown', (e) => {
             if (e.button === 0) isPouring = true;
@@ -4722,6 +5415,268 @@
                 // --- END: New Right-Click Logic ---
             }
         });
+
+        // --- START OF REPLACEMENT (Final mousedown listener with Correct Attunement Logic) ---
+        canvas.addEventListener('mousedown', (e) => {
+            // This listener only runs when the Grimoire UI is visible.
+            if (!GrimoireManager.isVisible) return;
+            
+            // Only respond to left-clicks (e.button === 0)
+            if (e.button !== 0) return;
+
+            // Prevent normal gameplay actions (like pouring/drawing) while the UI is open.
+            e.preventDefault();
+            e.stopPropagation();
+
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = (e.clientX - rect.left) / scale;
+            const mouseY = (e.clientY - rect.top) / scale;
+
+            const boxW = renderWidth - 40;
+            const boxH = renderHeight - 60;
+            const boxX = (renderWidth - boxW) / 2;
+            const boxY = (renderHeight - boxH) / 2;
+
+            const contentX = boxX;
+            const contentY = boxY + 20;
+            const contentW = boxW;
+            const contentH = boxH - 20;
+
+            // --- Priority 1: Handle Active Pop-ups (ORDER IS IMPORTANT) ---
+            if (GrimoireManager.isSelectingEssence) {
+                const popW = 250, popH = 180;
+                const popX = contentX + (contentW - popW) / 2;
+                const popY = contentY + (contentH - popH) / 2;
+                if (mouseX < popX || mouseX > popX + popW || mouseY < popY || mouseY > popY + popH) {
+                    GrimoireManager.isSelectingEssence = false; return;
+                }
+
+                let yOff = popY + 30;
+                const { pageIndex, slotIndex } = GrimoireManager.essenceSelectionContext;
+                const page = player.grimoire.pages[pageIndex];
+                if (!page) return;
+
+                const allDiscovered = new Set();
+                player.discoveredEssences.forEach(set => set.forEach(e => allDiscovered.add(e)));
+                const sortedEssences = Array.from(allDiscovered).sort();
+
+                for (const essenceId of sortedEssences) {
+                    if (mouseY >= yOff && mouseY < yOff + 15) {
+                        page.runes[slotIndex] = { id: 'extract_essence', target: essenceId };
+                        GrimoireManager.isSelectingEssence = false;
+                        return;
+                    }
+                    yOff += 15;
+                }
+                return;
+            }
+            
+            if (GrimoireManager.isAwaitingAttunement) {
+                const popW = 200; const popH = 150;
+                const popX = contentX + (contentW - popW) / 2;
+                const popY = contentY + (contentH - popH) / 2;
+
+                if (mouseX > popX && mouseX < popX + popW && mouseY > popY && mouseY < popY + popH) {
+                    let yOff = popY + 30;
+                    const sortedMaterials = Array.from(player.discoveredMaterials).sort((a,b)=>MATERIAL_NAME[a].localeCompare(MATERIAL_NAME[b]));
+                    for (const matId of sortedMaterials) {
+                        if (mouseY >= yOff && mouseY < yOff + 12) {
+                            const { pageIndex, slotIndex, runeId } = GrimoireManager.attunementContext;
+                            const page = player.grimoire.pages[pageIndex];
+                            if (page) {
+                                page.runes[slotIndex] = { id: runeId, target: matId };
+                                if (runeId === 'filter_by') {
+                                    player.runeInventory.blank_filter_runes--;
+                                    player.runeInventory.known_filters.add(matId);
+                                }
+                            }
+                            GrimoireManager.isAwaitingAttunement = false;
+                            GrimoireManager.attunementContext = null;
+                            return;
+                        }
+                        yOff += 12;
+                    }
+                }
+                GrimoireManager.isAwaitingAttunement = false;
+                GrimoireManager.attunementContext = null;
+                return;
+            }
+
+            if (GrimoireManager.isSelectingRune) {
+                const popW = 250; const popH = 180;
+                const popX = contentX + (contentW - popW) / 2;
+                const popY = contentY + (contentH - popH) / 2;
+                if (mouseX < popX || mouseX > popX + popW || mouseY < popY || mouseY > popY + popH) {
+                    GrimoireManager.isSelectingRune = false; return;
+                }
+
+                const { pageIndex, slotIndex } = GrimoireManager.runeSelectionContext;
+
+                // --- THE FIX: A new, smarter helper function that centralizes the logic ---
+                const placeRune = (runeData) => {
+                    const page = player.grimoire.pages[pageIndex];
+                    if (!page) return;
+
+                    const runeId = runeData.id;
+
+                    // Case 1: The rune is a variable type that is NOT yet configured.
+                    if ((runeId === 'filter_by' || runeId === 'batch') && runeData.target === undefined) {
+                        GrimoireManager.isAwaitingAttunement = true;
+                        GrimoireManager.attunementContext = { pageIndex, slotIndex, runeId };
+                    } 
+                    // Case 2: The 'extract_essence' rune needs its own selection UI.
+                    else if (runeId === 'extract_essence') {
+                        GrimoireManager.isSelectingEssence = true;
+                        GrimoireManager.essenceSelectionContext = { pageIndex, slotIndex };
+                    } 
+                    // Case 3: The rune is simple, or a variable rune that is already fully defined.
+                    else {
+                        page.runes[slotIndex] = runeData;
+                    }
+                    GrimoireManager.isSelectingRune = false;
+                };
+
+                let yOff = popY + 30;
+
+                // Loop through all known rune types and call the helper
+                for (const runeId of player.runeInventory.knownRunes) {
+                    if (mouseY >= yOff && mouseY < yOff + 15) {
+                        placeRune({ id: runeId });
+                        return;
+                    }
+                    yOff += 15;
+                }
+                for (const transformInstance of player.runeInventory.transform) {
+                    if (mouseY >= yOff && mouseY < yOff + 15) {
+                        placeRune({ id: 'transform', ...transformInstance });
+                        return;
+                    }
+                    yOff += 15;
+                }
+                for (const matId of player.runeInventory.known_filters) {
+                    if (mouseY >= yOff && mouseY < yOff + 15) {
+                        placeRune({ id: 'filter_by', target: matId });
+                        return;
+                    }
+                    yOff += 15;
+                }
+                if (player.runeInventory.blank_filter_runes > 0) {
+                     if (mouseY >= yOff && mouseY < yOff + 15) {
+                        placeRune({ id: 'filter_by' }); // This is a blank, so target is undefined
+                        return;
+                     }
+                }
+                return;
+            }
+
+            // --- Priority 2: Handle Tab Clicks ---
+            const tabs = ['compendium', 'runes', 'recipes'];
+            const tabWidth = boxW / tabs.length;
+            if (mouseY >= boxY && mouseY <= boxY + 20) {
+                for (let i = 0; i < tabs.length; i++) {
+                    const tabX = boxX + i * tabWidth;
+                    if (mouseX >= tabX && mouseX <= tabX + tabWidth) {
+                        GrimoireManager.activeTab = tabs[i];
+                        return;
+                    }
+                }
+            }
+
+            // --- Priority 3: Handle Clicks within the Active Tab ---
+            switch (GrimoireManager.activeTab) {
+                case 'compendium': {
+                    const listWidth = 150;
+                    if (mouseX >= contentX && mouseX <= contentX + listWidth) {
+                        let yOff = contentY + 10;
+                        const sortedMaterials = Array.from(player.discoveredMaterials).sort((a,b)=>MATERIAL_NAME[a].localeCompare(MATERIAL_NAME[b]));
+                        for (const matId of sortedMaterials) {
+                            if (mouseY >= yOff && mouseY < yOff + 12) {
+                                GrimoireManager.selectedMaterial = matId;
+                                return;
+                            }
+                            yOff += 12;
+                        }
+                    }
+                    break;
+                }
+                case 'runes': {
+                    // This tab is read-only, no click actions.
+                    break;
+                }
+                case 'recipes': {
+                    const listWidth = 120;
+                    // --- A. Recipe Page List and Buttons ---
+                    if (mouseX >= contentX && mouseX < contentX + listWidth) {
+                        const buttonH = 20;
+                        const buttonY = contentY + contentH - buttonH - 5;
+                        if (mouseY >= buttonY && mouseY < buttonY + buttonH) {
+                            const buttonW = (listWidth - 20) / 3;
+                            let buttonX = contentX + 5;
+                            // New Button
+                            if (mouseX >= buttonX && mouseX < buttonX + buttonW) {
+                                const emptyPageIndex = player.grimoire.pages.findIndex(p => p === null);
+                                if (emptyPageIndex !== -1 && emptyPageIndex < player.grimoire.maxPages) {
+                                    player.grimoire.pages[emptyPageIndex] = { name: `New Recipe`, maxRunes: 4, runes: [] };
+                                    GrimoireManager.selectedRecipeIndex = emptyPageIndex;
+                                }
+                                return;
+                            }
+                            buttonX += buttonW + 5;
+                            const selectedPage = player.grimoire.pages[GrimoireManager.selectedRecipeIndex];
+                            // Rename Button
+                            if (selectedPage && mouseX >= buttonX && mouseX < buttonX + buttonW) {
+                                const newName = prompt("Enter new recipe name:", selectedPage.name);
+                                if (newName) selectedPage.name = newName.substring(0, 15);
+                                return;
+                            }
+                            buttonX += buttonW + 5;
+                            // Delete Button
+                            if (selectedPage && mouseX >= buttonX && mouseX < buttonX + buttonW) {
+                                if (confirm(`Are you sure you want to delete "${selectedPage.name}"?`)) {
+                                    player.grimoire.pages[GrimoireManager.selectedRecipeIndex] = null;
+                                }
+                                return;
+                            }
+                        }
+
+                        // Check for page selection clicks
+                        let yOff = contentY + 10;
+                        for (let i = 0; i < player.grimoire.maxPages; i++) {
+                            if (mouseY >= yOff && mouseY < yOff + 15) {
+                                GrimoireManager.selectedRecipeIndex = i;
+                                return;
+                            }
+                            yOff += 15;
+                        }
+                    } 
+                    // --- B. Recipe Editor Rune Slots ---
+                    else {
+                        const selectedRecipe = player.grimoire.pages[GrimoireManager.selectedRecipeIndex];
+                        if (selectedRecipe) {
+                            const editorX = contentX + listWidth;
+                            let yOff = contentY + 45;
+                            const maxSlots = selectedRecipe.maxRunes;
+                            const slotHeight = 22, slotPadding = 5;
+
+                            for (let i = 0; i < maxSlots; i++) {
+                                const slotY = yOff + i * (slotHeight + slotPadding);
+                                if (mouseX > editorX && mouseY >= slotY && mouseY < slotY + slotHeight) {
+                                    // CLICKED ON A SLOT!
+                                    GrimoireManager.isSelectingRune = true;
+                                    GrimoireManager.runeSelectionContext = {
+                                        pageIndex: GrimoireManager.selectedRecipeIndex,
+                                        slotIndex: i
+                                    };
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                    break;
+                }
+            }
+        });
+        // --- END OF REPLACEMENT ---
 
         canvas.addEventListener('mouseup', (e) => {
             if (e.button === 0) isPouring = false;
@@ -4856,7 +5811,7 @@
                 return;
             }
 
-            if (isAlchemyUIVisible) {
+            if (isAlembicUIVisible) {
                 player.body.setLinearVelocity(pl.Vec2(0, 0));
                 return;
             }
@@ -6276,9 +7231,10 @@
             renderToolbar();
             renderDialogueUI();
             renderPlayerStatsUI();
-            renderAlchemyUI();
             renderTradeUI();
             renderFloatingArrow();
+            renderAlembicUI();
+            renderGrimoire();
             renderMessageUI();
 
             if (debugMode)
@@ -6576,6 +7532,539 @@
                 if(body.pendingStructuralDelta>=SPLIT_DELTA_THRESHOLD&&(now-body.lastSplitTime)>SPLIT_COOLDOWN_MS){body.needsShapeUpdate=true;body.pendingStructuralDelta=0;body.lastSplitTime=now;}
             }
         }
+
+        function renderAlembicUI() {
+            if (!isAlembicUIVisible) return;
+
+            const boxW = 220, boxH = 150; // Increased height for new buttons
+            const boxX = (renderWidth - boxW) / 2;
+            const boxY = (renderHeight - boxH) / 2;
+
+            ctx.fillStyle = 'rgba(20, 25, 35, 0.95)';
+            ctx.fillRect(boxX, boxY, boxW, boxH);
+            ctx.strokeStyle = '#a0a0c0';
+            ctx.strokeRect(boxX, boxY, boxW, boxH);
+
+            ctx.fillStyle = 'white';
+            ctx.font = 'bold 12px monospace';
+            ctx.textAlign = 'left';
+            ctx.fillText("Alembic Interface", boxX + 10, boxY + 10);
+
+            let yOff = boxY + 35;
+            
+            // --- "Analyze Material" Button ---
+            ctx.fillStyle = 'white';
+            ctx.font = '10px monospace';
+            ctx.fillText(`[1] Analyze Material`, boxX + 15, yOff);
+            yOff += 20;
+
+            // --- "Open Grimoire" Button ---
+            ctx.fillText("[2] Open Grimoire", boxX + 15, yOff);
+            yOff += 20;
+
+            // --- "Load/Start Recipe" Button ---
+            if (AlembicManager.isRecipeLoaded) {
+                ctx.fillStyle = '#90ee90'; // Green text for "Start"
+                ctx.fillText(`[3] START REACTION:`, boxX + 15, yOff);
+                ctx.fillStyle = '#a0a0c0';
+                ctx.fillText(`    ${AlembicManager.loadedRecipeName}`, boxX + 15, yOff + 12);
+            } else {
+                ctx.fillStyle = 'white';
+                ctx.fillText("[3] Load Selected Recipe", boxX + 15, yOff);
+            }
+            
+            ctx.fillStyle = '#aaa';
+            ctx.font = '8px monospace';
+            ctx.fillText("Press [ESC] to close.", boxX + 10, boxY + boxH - 15);
+        }
+        // --- END OF REPLACEMENT ---
+
+        // --- START OF REPLACEMENT ---
+        function drawRuneInSlot(rune, x, y, w, h) {
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+
+            if (rune) {
+                const runeDef = RUNE_DEFINITIONS[rune.id];
+                if (!runeDef) return;
+
+                ctx.fillStyle = '#2d3748';
+                ctx.fillRect(x, y, w, h);
+                ctx.strokeStyle = '#a0a0c0';
+                ctx.strokeRect(x, y, w, h);
+
+                // --- NEW LOGIC: Use rune.id for special text formatting ---
+                let runeText = runeDef.name;
+                switch (rune.id) {
+                    case 'transform':
+                        if (rune.from !== undefined && rune.to !== undefined) {
+                            runeText = `Transform: ${MATERIAL_NAME[rune.from]} -> ${MATERIAL_NAME[rune.to]}`;
+                        }
+                        break;
+                    case 'extract_essence':
+                        runeText = `Extract: [${rune.target ? rune.target.replace(/_/g, ' ') : 'Not Set'}]`;
+                        break;
+                    case 'filter_by':
+                        runeText = `Filter By: ${rune.target !== undefined ? MATERIAL_NAME[rune.target] : '[Not Set]'}`;
+                        break;
+                    case 'batch':
+                        // Future implementation for batch display
+                        break;
+                }
+
+                ctx.fillStyle = 'white';
+                ctx.font = '10px monospace';
+                ctx.fillText(runeText, x + w / 2, y + h / 2);
+
+            } else {
+                ctx.strokeStyle = '#4a5568';
+                ctx.strokeRect(x, y, w, h);
+                ctx.fillStyle = '#666';
+                ctx.font = '10px monospace';
+                ctx.fillText('[ Empty Slot ]', x + w / 2, y + h / 2);
+            }
+        }
+
+        // --- ADD THIS NEW RENDER FUNCTION ---
+        /**
+         * Renders the pop-up for selecting a discovered essence for the Extract Essence rune.
+         */
+        function renderEssenceSelectorPopup(x, y, w, h) {
+            ctx.fillStyle = "rgba(0, 0, 0, 0.5)";
+            ctx.fillRect(x, y, w, h);
+
+            const popW = 250;
+            const popH = 180;
+            const popX = x + (w - popW) / 2;
+            const popY = y + (h - popH) / 2;
+
+            ctx.fillStyle = '#2d3748';
+            ctx.fillRect(popX, popY, popW, popH);
+            ctx.strokeStyle = '#a0a0c0';
+            ctx.strokeRect(popX, popY, popW, popH);
+
+            ctx.fillStyle = 'white';
+            ctx.font = 'bold 10px monospace';
+            ctx.textAlign = 'center';
+            ctx.fillText("Select an Essence to Extract", popX + popW / 2, popY + 15);
+
+            let yOff = popY + 30;
+            ctx.font = '10px monospace';
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'top';
+
+            // Create a unique set of all discovered essence IDs
+            const allDiscovered = new Set();
+            player.discoveredEssences.forEach(setOfEssences => {
+                setOfEssences.forEach(essenceId => allDiscovered.add(essenceId));
+            });
+
+            if (allDiscovered.size === 0) {
+                ctx.fillStyle = '#ff6b6b';
+                ctx.textAlign = 'center';
+                ctx.fillText("You haven't discovered any essences yet!", popX + popW / 2, popY + popH / 2);
+            } else {
+                const sortedEssences = Array.from(allDiscovered).sort();
+                for (const essenceId of sortedEssences) {
+                    if (yOff > popY + popH - 15) break; // Prevent overflow
+                    const essenceName = essenceId.replace(/_/g, ' ');
+                    ctx.fillText(`- [${essenceName}]`, popX + 15, yOff);
+                    yOff += 15;
+                }
+            }
+
+            ctx.textBaseline = 'alphabetic';
+        }
+
+        // --- END OF REPLACEMENT ---
+
+        /**
+         * Renders the pop-up menu for selecting a target for a variable rune.
+         */
+        function renderAttunementPopup(x, y, w, h) {
+            // Draw a semi-transparent overlay to focus the player's attention
+            ctx.fillStyle = "rgba(0, 0, 0, 0.5)";
+            ctx.fillRect(x, y, w, h);
+
+            const popW = 200;
+            const popH = 150;
+            const popX = x + (w - popW) / 2;
+            const popY = y + (h - popH) / 2;
+
+            // Draw pop-up background
+            ctx.fillStyle = '#2d3748';
+            ctx.fillRect(popX, popY, popW, popH);
+            ctx.strokeStyle = '#a0a0c0';
+            ctx.strokeRect(popX, popY, popW, popH);
+
+            // Draw title
+            ctx.fillStyle = 'white';
+            ctx.font = 'bold 10px monospace';
+            ctx.textAlign = 'center';
+            ctx.fillText("Select a Material to Attune", popX + popW / 2, popY + 15);
+
+            // List discovered materials
+            let yOff = popY + 30;
+            ctx.font = '10px monospace';
+            const sortedMaterials = Array.from(player.discoveredMaterials).sort((a,b)=>MATERIAL_NAME[a].localeCompare(MATERIAL_NAME[b]));
+
+            ctx.textBaseline = 'top';
+
+            for (const matId of sortedMaterials) {
+                if (yOff > popY + popH - 15) {
+                     ctx.fillText("...", popX + popW / 2, yOff);
+                     break; // Don't overflow the box
+                }
+                ctx.fillText(MATERIAL_NAME[matId], popX + popW / 2, yOff);
+                yOff += 12;
+            }
+        }
+
+        /**
+         * Draws the action buttons for the recipe page list.
+         */
+        function drawRecipePageButtons(x, y, w, h) {
+            const buttonW = (w - 20) / 3;
+            const buttonH = 20;
+            const buttonY = y + h - buttonH - 5;
+            let buttonX = x + 5;
+            
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.font = '10px monospace';
+
+            // New Recipe Button
+            ctx.fillStyle = '#2d3748';
+            ctx.fillRect(buttonX, buttonY, buttonW, buttonH);
+            ctx.strokeStyle = '#a0a0c0';
+            ctx.strokeRect(buttonX, buttonY, buttonW, buttonH);
+            ctx.fillStyle = 'white';
+            ctx.fillText("New", buttonX + buttonW / 2, buttonY + buttonH / 2);
+            buttonX += buttonW + 5;
+
+            // Rename Button
+            ctx.fillStyle = '#2d3748';
+            ctx.fillRect(buttonX, buttonY, buttonW, buttonH);
+            ctx.strokeRect(buttonX, buttonY, buttonW, buttonH);
+            ctx.fillStyle = player.grimoire.pages[GrimoireManager.selectedRecipeIndex] ? 'white' : '#666';
+            ctx.fillText("Rename", buttonX + buttonW / 2, buttonY + buttonH / 2);
+            buttonX += buttonW + 5;
+            
+            // Delete Button
+            ctx.fillStyle = '#452020';
+            ctx.fillRect(buttonX, buttonY, buttonW, buttonH);
+            ctx.strokeStyle = '#c06060';
+            ctx.strokeRect(buttonX, buttonY, buttonW, buttonH);
+            ctx.fillStyle = player.grimoire.pages[GrimoireManager.selectedRecipeIndex] ? '#ffc0c0' : '#805050';
+            ctx.fillText("Delete", buttonX + buttonW / 2, buttonY + buttonH / 2);
+        }
+
+        function renderGrimoire() {
+            if (!GrimoireManager.isVisible) return;
+
+            // Main background
+            const boxW = renderWidth - 40;
+            const boxH = renderHeight - 60;
+            const boxX = (renderWidth - boxW) / 2;
+            const boxY = (renderHeight - boxH) / 2;
+
+            ctx.fillStyle = 'rgba(20, 25, 35, 0.95)';
+            ctx.fillRect(boxX, boxY, boxW, boxH);
+            ctx.strokeStyle = '#a0a0c0';
+            ctx.lineWidth = 1;
+            ctx.strokeRect(boxX, boxY, boxW, boxH);
+
+            // --- Render Tabs ---
+            const tabs = ['Compendium', 'Runes', 'Recipes'];
+            const tabWidth = boxW / tabs.length;
+            tabs.forEach((tabName, index) => {
+                const tabX = boxX + index * tabWidth;
+                const isActive = GrimoireManager.activeTab.toLowerCase() === tabName.toLowerCase();
+                
+                ctx.fillStyle = isActive ? '#4a5568' : '#2d3748';
+                ctx.fillRect(tabX, boxY, tabWidth, 20);
+                ctx.strokeStyle = '#a0a0c0';
+                ctx.strokeRect(tabX, boxY, tabWidth, 20);
+
+                ctx.fillStyle = isActive ? 'white' : '#a0a0c0';
+                ctx.font = 'bold 10px monospace';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(tabName, tabX + tabWidth / 2, boxY + 10);
+            });
+
+            // --- Render Active Tab Content ---
+            const contentX = boxX;
+            const contentY = boxY + 20;
+            const contentW = boxW;
+            const contentH = boxH - 20;
+
+            if (GrimoireManager.activeTab === 'compendium') {
+                renderGrimoireCompendium(contentX, contentY, contentW, contentH);
+            } else if (GrimoireManager.activeTab === 'runes') {
+                renderGrimoireRunes(contentX, contentY, contentW, contentH);
+            } else if (GrimoireManager.activeTab === 'recipes') {
+                renderGrimoireRecipes(contentX, contentY, contentW, contentH);
+            }
+
+            if (GrimoireManager.isSelectingEssence) {
+                renderEssenceSelectorPopup(contentX, contentY, contentW, contentH);
+            }
+
+            if (GrimoireManager.isSelectingRune) {
+                renderRuneSelectorPopup(contentX, contentY, contentW, contentH);
+            }
+
+            if (GrimoireManager.isAwaitingAttunement) {
+                renderAttunementPopup(contentX, contentY, contentW, contentH);
+            }
+        }
+
+        function renderGrimoireCompendium(x, y, w, h) {
+            const listWidth = 150;
+            const detailX = x + listWidth + 10;
+            const detailW = w - listWidth - 10;
+
+            // --- Draw Material List (Left Panel) ---
+            ctx.fillStyle = '#2d3748';
+            ctx.fillRect(x, y, listWidth, h);
+
+            let yOff = y + 10;
+            ctx.font = '8px monospace';
+            const sortedMaterials = Array.from(player.discoveredMaterials).sort((a, b) => MATERIAL_NAME[a].localeCompare(MATERIAL_NAME[b]));
+
+            sortedMaterials.forEach(matId => {
+                const matName = MATERIAL_NAME[matId];
+                const isSelected = GrimoireManager.selectedMaterial === matId;
+                ctx.fillStyle = isSelected ? '#ffd966' : '#a0a0c0';
+                ctx.fillText(matName, x + 10, yOff);
+                yOff += 12;
+            });
+            // TODO: Add mouse click handling to select materials
+
+            // --- Draw Details (Right Panel) ---
+            if (GrimoireManager.selectedMaterial !== null) {
+                const matId = GrimoireManager.selectedMaterial;
+                const matName = MATERIAL_NAME[matId];
+                const matColor = COLORS[matId];
+
+                // Draw Name and Icon
+                ctx.fillStyle = `rgb(${matColor[0]}, ${matColor[1]}, ${matColor[2]})`;
+                ctx.fillRect(detailX, y + 10, 24, 24);
+                ctx.fillStyle = 'white';
+                ctx.font = 'bold 12px monospace';
+                ctx.textAlign = 'left';
+                ctx.textBaseline = 'top';
+                ctx.fillText(matName, detailX + 30, y + 15);
+
+                // Draw Essences List
+                yOff = y + 50;
+                ctx.font = '10px monospace';
+                const allEssences = MATERIAL_ESSENCES[matId] || [];
+
+                if (allEssences.length > 0) {
+                    ctx.fillStyle = '#a0a0c0';
+                    ctx.fillText("Contains Essences:", detailX, yOff);
+                    yOff += 15;
+
+                    // --- START OF MODIFICATION ---
+                    const knownEssencesForThisMaterial = player.discoveredEssences.get(matId) || new Set();
+
+                    allEssences.forEach(essenceId => {
+                        if (knownEssencesForThisMaterial.has(essenceId)) {
+                            // Player has discovered this essence FOR THIS SPECIFIC MATERIAL
+                            ctx.fillStyle = 'white';
+                            ctx.fillText(`- [${essenceId.replace(/_/g, ' ')}]`, detailX + 10, yOff);
+                        } else {
+                            // Player has not discovered this essence yet for this material
+                            ctx.fillStyle = '#666';
+                            ctx.fillText(`- [Undiscovered Essence]`, detailX + 10, yOff);
+                        }
+                        yOff += 12;
+                    });
+                    // --- END OF MODIFICATION ---
+                } else {
+                    ctx.fillStyle = '#666';
+                    ctx.fillText("No discernible essences found.", detailX, yOff);
+                }
+            } else {
+                ctx.fillStyle = '#666';
+                ctx.font = '10px monospace';
+                ctx.textAlign = 'center';
+                ctx.fillText("Select a material to view its properties.", x + listWidth + detailW / 2, y + h / 2);
+            }
+        }
+
+        // --- START OF REPLACEMENT (Final Renderers) ---
+
+        /**
+         * Renders the Rune Repertoire tab (a read-only encyclopedia of learned knowledge).
+         */
+        function renderGrimoireRunes(x, y, w, h) {
+            let yOff = y + 10;
+            ctx.font = 'bold 12px monospace';
+            ctx.fillStyle = 'white';
+            ctx.textAlign = 'left';
+            ctx.fillText("Rune Repertoire (Knowledge)", x + 10, yOff);
+            yOff += 20;
+
+            ctx.font = '10px monospace';
+            
+            // Display learned simple runes
+            player.runeInventory.knownRunes.forEach(runeId => {
+                const runeDef = RUNE_DEFINITIONS[runeId];
+                if (runeDef) {
+                    ctx.fillStyle = 'white';
+                    ctx.fillText(`- ${runeDef.name}`, x + 15, yOff);
+                    yOff += 15;
+                }
+            });
+
+            // Display learned transformations
+            player.runeInventory.transform.forEach(transformInstance => {
+                const fromName = MATERIAL_NAME[transformInstance.from];
+                const toName = MATERIAL_NAME[transformInstance.to];
+                ctx.fillStyle = 'white';
+                ctx.fillText(`- Transform: ${fromName} -> ${toName}`, x + 15, yOff);
+                yOff += 15;
+            });
+
+            // Display known filters
+            ctx.fillStyle = '#a0a0c0';
+            ctx.fillText(`Known Filters:`, x + 15, yOff);
+            yOff += 15;
+            player.runeInventory.known_filters.forEach(matId => {
+                ctx.fillStyle = 'white';
+                ctx.fillText(`  - Filter By: ${MATERIAL_NAME[matId]}`, x + 25, yOff);
+                yOff += 15;
+            });
+
+            ctx.fillStyle = '#ffd966';
+            ctx.fillText(`Blank Filter Runes available: ${player.runeInventory.blank_filter_runes}`, x+15, y+h-20);
+        }
+
+        /**
+         * Renders the pop-up menu for selecting a known rune to place in a recipe.
+         */
+        function renderRuneSelectorPopup(x, y, w, h) {
+            ctx.fillStyle = "rgba(0, 0, 0, 0.5)";
+            ctx.fillRect(x, y, w, h);
+
+            const popW = 250; const popH = 180;
+            const popX = x + (w - popW) / 2; const popY = y + (h - popH) / 2;
+
+            ctx.fillStyle = '#2d3748';
+            ctx.fillRect(popX, popY, popW, popH);
+            ctx.strokeStyle = '#a0a0c0';
+            ctx.strokeRect(popX, popY, popW, popH);
+
+            ctx.fillStyle = 'white';
+            ctx.font = 'bold 10px monospace';
+            ctx.textAlign = 'center';
+            ctx.fillText("Select a Rune", popX + popW / 2, popY + 15);
+
+            let yOff = popY + 30;
+            ctx.font = '10px monospace';
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'top';
+
+            // --- Draw all known runes in a single, clickable list ---
+
+            // Simple Runes
+            player.runeInventory.knownRunes.forEach(runeId => {
+                ctx.fillText(`- ${RUNE_DEFINITIONS[runeId].name}`, popX + 15, yOff);
+                yOff += 15;
+            });
+
+            // Transform Runes
+            player.runeInventory.transform.forEach(t => {
+                ctx.fillText(`- Transform: ${MATERIAL_NAME[t.from]} -> ${MATERIAL_NAME[t.to]}`, popX + 15, yOff);
+                yOff += 15;
+            });
+
+            // Filter Runes (Known)
+            player.runeInventory.known_filters.forEach(matId => {
+                ctx.fillText(`- Filter By: ${MATERIAL_NAME[matId]}`, popX + 15, yOff);
+                yOff += 15;
+            });
+
+            // Filter Runes (Create New)
+            if (player.runeInventory.blank_filter_runes > 0) {
+                ctx.fillStyle = '#ffd966'; // Highlight this option
+                ctx.fillText(`- Create New Filter... (x${player.runeInventory.blank_filter_runes})`, popX + 15, yOff);
+                ctx.fillStyle = 'white';
+            }
+
+            ctx.textBaseline = 'alphabetic'; 
+        }
+
+        // --- END OF REPLACEMENT ---
+
+        // --- START OF REPLACEMENT (with click position fix) ---
+        function renderGrimoireRecipes(x, y, w, h) {
+            const listWidth = 120;
+            const editorX = x + listWidth;
+            const editorW = w - listWidth;
+
+            // --- Draw Page List (Left Panel) ---
+            ctx.fillStyle = '#2d3748';
+            ctx.fillRect(x, y, listWidth, h);
+
+            let yOff = y + 10;
+            ctx.font = '10px monospace';
+            ctx.textAlign = 'left';
+            
+            // *** THE FIX: Set the text baseline to 'top' to align text with its clickable area. ***
+            ctx.textBaseline = 'top';
+
+            for (let i = 0; i < player.grimoire.maxPages; i++) {
+                const page = player.grimoire.pages[i];
+                const isSelected = GrimoireManager.selectedRecipeIndex === i;
+
+                ctx.fillStyle = isSelected ? '#ffd966' : page ? 'white' : '#666';
+                ctx.fillText(`Page ${i + 1}: ${page ? page.name : '[Empty]'}`, x + 10, yOff);
+                yOff += 15;
+            }
+
+            // Reset baseline for other renderers (good practice)
+            ctx.textBaseline = 'alphabetic';
+
+            // --- Draw the vertical divider line ---
+            ctx.strokeStyle = '#a0a0c0';
+            ctx.beginPath();
+            ctx.moveTo(editorX, y);
+            ctx.lineTo(editorX, y + h);
+            ctx.stroke();
+
+            // Draw the action buttons at the bottom of the page list panel
+            drawRecipePageButtons(x, y, listWidth, h);
+            
+            // --- Draw Recipe Editor (Right Panel) ---
+            const selectedRecipe = player.grimoire.pages[GrimoireManager.selectedRecipeIndex];
+            if (selectedRecipe) {
+                yOff = y + 15;
+                ctx.fillStyle = 'white';
+                ctx.font = 'bold 12px monospace';
+                ctx.fillText(selectedRecipe.name, editorX + 15, yOff);
+                yOff += 30;
+
+                const maxSlots = selectedRecipe.maxRunes;
+                const slotHeight = 22;
+                const slotPadding = 5;
+
+                for (let i = 0; i < maxSlots; i++) {
+                    const rune = selectedRecipe.runes[i];
+                    const slotY = yOff + i * (slotHeight + slotPadding);
+                    drawRuneInSlot(rune, editorX + 15, slotY, editorW - 30, slotHeight);
+                }
+            } else {
+                ctx.fillStyle = '#666';
+                ctx.font = '10px monospace';
+                ctx.textAlign = 'center';
+                ctx.fillText("Select a page or create a new one.", editorX + editorW / 2, y + h / 2);
+            }
+        }
+        // --- END OF REPLACEMENT ---
 
         // --- START OF REPLACEMENT ---
         function renderToolbar() {
@@ -7064,164 +8553,6 @@
                 }
             }
         }
-        const ALCHEMY_REACTIONS = {
-            'filter_material': {
-                name: "Filter Material",
-                execute: function(station) {
-                    const filterMat = getDominantMaterialInSemicircle(station.sampler);
-
-                    if (filterMat === null) {
-                        console.log("filterMat empty");
-                        return;
-                    }
-
-                    const source = station.cauldrons.left,
-                        target = station.cauldrons.right,
-                        manifest = [];
-
-                    forEachInDownwardSemicircle(source, (x, y) => {
-                        if (getGrid(x, y) === filterMat) {
-                            manifest.push({
-                                type: filterMat
-                            });
-                            setGrid(x, y, MAT.EMPTY);
-                            activateChunkAt(x, y, MAT.EMPTY);
-                        }
-                    });
-
-                    if (manifest.length === 0) return;
-                    alchemyJobs.push({
-                        manifest: manifest,
-                        target: target
-                    });
-
-                    const areas = [station.cauldrons.left, station.cauldrons.right];
-                    const filterSprite = SpriteManager.sprites.get('filter_shape');
-                    for (const area of areas) {
-                        createShapeDissolveEffect({
-                            x: area.cx,
-                            y: area.cy,
-                            shapeImage: filterSprite,
-                            color: [200, 200, 200],
-                            shapeSize: 64,
-                            particleCount: 3000
-                        });
-                    }
-                }
-            },
-            'heat_material': {
-                name: "Heat Material",
-                execute: function(station) {
-                    const source = station.cauldrons.left;
-                    const heatSprite = SpriteManager.sprites.get('heat_shape');
-                    
-                    createShapeDissolveEffect({
-                        x: source.cx,
-                        y: source.cy,
-                        shapeImage: heatSprite,
-                        color: [255, 200, 180],
-                        shapeSize: 64,
-                        particleCount: 3000,
-                        bloomIntensity: 5.0
-                    });
-
-                    forEachInDownwardSemicircle(source, (x, y) => {
-                        let changed = true;
-                        switch (getGrid(x, y)) {
-                            case MAT.SAND:
-                                setGrid(x, y, MAT.GLASS);
-                                break;
-                            case MAT.WOOD:
-                                setGrid(x, y, MAT.FIRE);
-                                break;
-                            case MAT.OIL:
-                                setGrid(x, y, MAT.OIL_BURNING);
-                                break;
-                            case MAT.COAL:
-                                setGrid(x, y, MAT.COAL_BURNING);
-                                break;
-                            case MAT.GUNPOWDER:
-                                setGrid(x, y, MAT.GUNPOWDER_IGNITED);
-                                setAuxData(etcChunkMap, x, y, 8 + Math.floor(Math.random() * 6));
-                                break;
-                            case MAT.WATER:
-                                setGrid(x, y, MAT.STEAM);
-                                break;
-                            default:
-                                changed = false;
-                                break;
-                        }
-                        if (changed) activateChunkAt(x, y, getGrid(x, y));
-                    });
-                }
-            },
-            'clear_cauldrons': {
-                name: "Clear Cauldrons",
-                execute: function(station) {
-                    const areas = [station.cauldrons.left, station.cauldrons.right, station.sampler];
-                    for (const area of areas) {
-                        spawnMagicParticles(30, area.cx, area.cy, [200, 200, 255]);
-                        forEachInDownwardSemicircle(area, (x, y) => {
-                            const type = getGrid(x, y);
-                            if (type !== MAT.ADAMANTIUM && type !== MAT.RUNE_WALL) {
-                                setGrid(x, y, MAT.EMPTY);
-                                activateChunkAt(x, y, MAT.EMPTY);
-                            }
-                        });
-                    }
-                }
-            }
-        };
-
-        function forEachInDownwardSemicircle(area, fn) {
-            const cx = area.cx,
-                cy = area.cy,
-                r = area.r,
-                r2 = r * r,
-                minX = Math.floor(cx - r),
-                maxX = Math.ceil(cx + r),
-                minY = Math.floor(cy),
-                maxY = Math.ceil(cy + r);
-            for (let y = minY; y <= maxY; y++) {
-                const dy = y - cy,
-                    dy2 = dy * dy;
-                for (let x = minX; x <= maxX; x++) {
-                    const dx = x - cx;
-                    if (dx * dx + dy2 <= r2) fn(x, y);
-                }
-            }
-        }
-
-        function getDominantMaterialInSemicircle(area) {
-            const counts = new Map();
-            forEachInDownwardSemicircle(area, (x, y) => {
-                const t = getGrid(x, y);
-                if (t === MAT.EMPTY || t === MAT.ADAMANTIUM || t === MAT.RUNE_WALL) return;
-                counts.set(t, (counts.get(t) || 0) + 1);
-            });
-            let bestType = null,
-                bestCount = 0;
-            for (const [t, c] of counts)
-                if (c > bestCount) {
-                    bestType = t;
-                    bestCount = c;
-                } return bestType;
-        }
-        
-        function generateAlchemyStation() {
-            const width=600,height=200,startX=0,startY=-200,floorY=startY+height-20;
-            for(let y=startY;y<startY+height;y++)for(let x=startX;x<startX+width;x++)setGrid(x,y,MAT.EMPTY);
-            for(let y=floorY;y<startY+height;y++)for(let x=startX;x<startX+width;x++)setGrid(x,y,MAT.ADAMANTIUM);
-            const slabH=15,slabW=70,slabY=floorY-slabH,slabX=startX+130;
-            generateRunicSlab(slabX,slabY,slabW,slabH,MAT.ADAMANTIUM,MAT.RUNE_WALL);
-            const leftX=startX+260,rightX=startX+390,samplerX=startX+325,rimY=floorY-15,cauldronR=32,cauldronT=4,cauldronInnerR=cauldronR-cauldronT,samplerR=16,samplerT=4,samplerInnerR=samplerR-samplerT;
-            createCauldron(leftX,rimY,cauldronR,cauldronT,MAT.ADAMANTIUM,MAT.RUNE_WALL);
-            createCauldron(rightX,rimY,cauldronR,cauldronT,MAT.ADAMANTIUM,MAT.RUNE_WALL);
-            createCauldron(samplerX,floorY-10,samplerR,samplerT,MAT.ADAMANTIUM,MAT.RUNE_WALL);
-            const stationGeo={cauldrons:{left:{cx:leftX,cy:rimY,r:cauldronInnerR},right:{cx:rightX,cy:rimY,r:cauldronInnerR}},sampler:{cx:samplerX,cy:floorY-10,r:samplerInnerR}};
-            createTrigger({x:slabX,y:slabY,width:slabW,height:slabH,onEnter:function(t){const eId=createMagicEmitter({spawnType:'line',x1:slabX,y1:slabY,x2:slabX+slabW,y2:slabY,mainColor:[255,230,100],spawnRate:0.5});t.associatedData.emitterId=eId;},onLeave:function(t){if(t.associatedData.emitterId!=null){removeMagicEmitter(t.associatedData.emitterId);t.associatedData.emitterId=null;}},onInteract:function(){isAlchemyUIVisible=true;},associatedData:{stationGeometry:stationGeo}});
-        }
-        function createCauldron(cx,rimY,radius,thickness,material,edgeMaterial){const r2=radius*radius,orInner=radius-1,orInner2=orInner*orInner,ir=radius-thickness,ir2=ir*ir;for(let dy=0;dy<=radius;dy++)for(let dx=-radius;dx<=radius;dx++){const d2=dx*dx+dy*dy;if(d2<=r2)setGrid(cx+dx,rimY+dy,d2>orInner2?edgeMaterial:material);}for(let dy=0;dy<ir;dy++)for(let dx=-ir;dx<=ir;dx++)if(dx*dx+dy*dy<=ir2)setGrid(cx+dx,rimY+dy,MAT.EMPTY);}
 
         /**
          * Generic helper to prioritize and limit a list of chunks.
@@ -7773,30 +9104,6 @@
             ctx.fillText("Press [ESC] to close.", boxX + 10, boxY + boxH - 25);
         }
 
-        function renderAlchemyUI() {
-            if(!isAlchemyUIVisible)return;
-            ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(0,0,renderWidth,renderHeight);
-            const boxW=300,boxH=150,boxX=(renderWidth-boxW)/2,boxY=(renderHeight-boxH)/2;
-            ctx.fillStyle='#222';ctx.fillRect(boxX,boxY,boxW,boxH);ctx.strokeStyle='#888';ctx.strokeRect(boxX,boxY,boxW,boxH);
-            ctx.fillStyle='white';ctx.font='16px monospace';ctx.textAlign='left';ctx.textBaseline='top';ctx.fillText("Select a Reaction:",boxX+10,boxY+10);
-            let yOff=40;
-
-            if (player.unlockedReactions.length === 0) {
-                ctx.fillStyle='#aaa';
-                ctx.fillText("No reactions unlocked.", boxX+20, boxY+yOff);
-            } else {
-                player.unlockedReactions.forEach((reactionKey, idx) => {
-                    const r = ALCHEMY_REACTIONS[reactionKey];
-                    if (r) {
-                        ctx.fillText(`[${idx + 1}] ${r.name}`, boxX+20, boxY+yOff);
-                        yOff += 20;
-                    }
-                });
-            }
-
-            ctx.fillStyle='#aaa';ctx.fillText("Press [ESC] to close.",boxX+10,boxY+boxH-25);
-        }
-
         function updateLoadingStatus(message) { document.getElementById('loading-status').innerText=message; }
 
         async function mainLoader() {
@@ -8104,34 +9411,48 @@
         }
         // --- END OF REPLACEMENT ---
         
+        // --- START OF REPLACEMENT ---
         function renderPlayerStatsUI() {
             const barW = 75,
                 barH = 8,
                 x = 16;
             let y = 8;
+            const textYOffset = barH / 2; // Center text vertically
             ctx.imageSmoothingEnabled = false;
+            ctx.font = '8px monospace';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+
+            // --- Health Bar ---
             ctx.fillStyle = 'rgba(0,0,0,0.7)';
             ctx.fillRect(x, y, barW, barH);
             const hpP = player.hp / player.maxHp;
             ctx.fillStyle = '#d14242';
             ctx.fillRect(x, y, barW * hpP, barH);
             ctx.fillStyle = 'white';
-            ctx.font = '8px monospace';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText(`${player.hp}/${player.maxHp}`, x + barW / 2, y + barH / 2);
+            ctx.fillText(`${player.hp}/${player.maxHp}`, x + barW / 2, y + textYOffset);
             y += barH + 5;
+
+            // --- Hover Energy Bar ---
             ctx.fillStyle = 'rgba(0,0,0,0.7)';
             ctx.fillRect(x, y, barW, barH);
             const enP = player.hoverEnergy / player.maxHoverEnergy;
             ctx.fillStyle = '#DDED64';
             ctx.fillRect(x, y, barW * enP, barH);
             ctx.fillStyle = 'white';
-            ctx.font = '8px monospace';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText(`${Math.round(player.hoverEnergy)}/${player.maxHoverEnergy}`, x + barW / 2, y + barH / 2);
+            ctx.fillText(`${Math.round(player.hoverEnergy)}/${player.maxHoverEnergy}`, x + barW / 2, y + textYOffset);
+            y += barH + 5;
+            
+            // --- NEW: Aether Bar ---
+            ctx.fillStyle = 'rgba(0,0,0,0.7)';
+            ctx.fillRect(x, y, barW, barH);
+            const aetherP = player.aether / player.maxAether;
+            ctx.fillStyle = '#8b5cf6'; // A vibrant purple
+            ctx.fillRect(x, y, barW * aetherP, barH);
+            ctx.fillStyle = 'white';
+            ctx.fillText(`${player.aether}/${player.maxAether}`, x + barW / 2, y + textYOffset);
         }
+        // --- END OF REPLACEMENT ---
 
         window.onload = function() {
             const loadingStatus = document.getElementById('loading-status');
