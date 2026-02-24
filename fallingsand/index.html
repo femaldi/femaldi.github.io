@@ -2864,87 +2864,100 @@
         }
         // --- END OF REPLACEMENT ---
 
-        // --- START OF REPLACEMENT: parseSetPieceImage ---
+        // --- START OF REPLACEMENT (v5.1 - FINAL & COMPLETE PARSER) ---
         /**
-         * Parses image data into a format the game can use, now with rigid body detection.
+         * Parses image data into a format the game can use, detecting functional areas,
+         * rigid body definitions, and storing pixel-perfect coordinates. This is the definitive parser.
          * @param {ImageData} imageData - The raw pixel data from a canvas.
-         * @returns {object} An object containing parsed data for terrain, treasures, and rigid bodies.
+         * @returns {object} An object containing parsed pixels, functional areas, and rigid body definitions.
          */
         function parseSetPieceImage(imageData) {
-            console.log("--- Starting Set Piece Image Parsing (v2) ---");
-            const unmatchedColors = new Set();
+            console.log("--- Starting Set Piece Image Parsing (v5.1 - Final & Complete) ---");
+
+            const emptyColor = { r: 255, g: 255, b: 255 };
+            const MARKER_COLORS = {
+                // Main Interactive Areas
+                inputCrucible:    { r: 200, g: 254, b: 200 },
+                retort:           { r: 200, g: 253, b: 200 },
+                outputCrucible:   { r: 200, g: 252, b: 200 },
+                vessel:           { r: 200, g: 251, b: 200 },
+                athanor:          { r: 200, g: 250, b: 200 },
+                catalyst:         { r: 200, g: 249, b: 200 },
+                stationControls:  { r: 200, g: 200, b: 254 },
+                masterAlchemist:  { r: 200, g: 200, b: 253 },
+                // Apparatus "Slots"
+                furnaceSlot:      { r: 252, g: 200, b: 200 },
+                pressureSlot:     { r: 253, g: 200, b: 200 },
+                coolerSlot:       { r: 254, g: 200, b: 200 },
+                // General Markers
+                treasureMarker:   { r: 1, g: 1, b: 1 },
+                rigidBodyMarker:  { r: 100, g: 100, b: 0 },
+            };
 
             const colorToMaterialMap = new Map();
             for (const matId in COLORS) {
                 const color = COLORS[matId];
-                const key = `${color[0]},${color[1]},${color[2]}`;
-                colorToMaterialMap.set(key, parseInt(matId));
+                colorToMaterialMap.set(`${color[0]},${color[1]},${color[2]}`, parseInt(matId));
             }
-            console.log(`Built color-to-material map with ${colorToMaterialMap.size} entries.`);
 
             const { width, height, data } = imageData;
-            // Use a signed array to allow for a special value (-1) for "transparent"
             const pixels = new Int16Array(width * height).fill(-1);
+            
+            const functionalAreas = {};
+            const areaPoints = {};
+            for (const key in MARKER_COLORS) { areaPoints[key] = []; }
+
             const rigidBodies = [];
-            let treasureCoords = null;
-            
-            // --- Define special colors ---
-            const treasureColor = { r: 1, g: 1, b: 1 };
-            const emptyColor = { r: 255, g: 255, b: 255 };
-            const rigidBodyMarkerColor = { r: 100, g: 100, b: 0 };
-            
-            const visited = new Uint8Array(width * height); // Prevents reprocessing pixels for rigid bodies
+            const visited = new Uint8Array(width * height);
 
             for (let y = 0; y < height; y++) {
                 for (let x = 0; x < width; x++) {
-                    const idx = y * width + x;
-                    if (visited[idx]) continue; // Skip if already part of a processed rigid body
+                    const pixelArrayIndex = y * width + x;
+                    if (visited[pixelArrayIndex]) continue;
 
-                    const i = idx * 4;
-                    const r = data[i], g = data[i + 1], b = data[i + 2], a = data[i + 3];
+                    const dataIndex = pixelArrayIndex * 4;
+                    const r = data[dataIndex], g = data[dataIndex + 1], b = data[dataIndex + 2], a = data[dataIndex + 3];
 
-                    // Rule: Transparent pixels are ignored (-1), letting the biome show through.
+                    // 1. Transparency
                     if (a < 128) {
-                        pixels[idx] = -1; // -1 means "do not touch the world"
+                        pixels[pixelArrayIndex] = -1;
                         continue;
                     }
+                    // 2. White is Empty
+                    if (r === emptyColor.r && g === emptyColor.g && b === emptyColor.b) {
+                        pixels[pixelArrayIndex] = MAT.EMPTY;
+                        continue;
+                    }
+                    
+                    // 3. Special Logic for Rigid Body Marker
+                    const rbMarker = MARKER_COLORS.rigidBodyMarker;
+                    if (r === rbMarker.r && g === rbMarker.g && b === rbMarker.b) {
+                        visited[pixelArrayIndex] = 1;
+                        pixels[pixelArrayIndex] = MAT.EMPTY;
 
-                    // Rule: Check for rigid body marker (100, 100, 0)
-                    if (r === rigidBodyMarkerColor.r && g === rigidBodyMarkerColor.g && b === rigidBodyMarkerColor.b) {
-                        visited[idx] = 1;
-                        pixels[idx] = MAT.EMPTY; // The marker itself isn't drawn
-
-                        // The body's material is the color of the pixel to the immediate right
                         const bodyPixelIndex = (y * width + (x + 1)) * 4;
-                        const bodyR = data[bodyPixelIndex], bodyG = data[bodyPixelIndex + 1], bodyB = data[bodyPixelIndex + 2];
-                        const bodyColorKey = `${bodyR},${bodyG},${bodyB}`;
-                        
-                        if (colorToMaterialMap.has(bodyColorKey)) {
-                            const bodyMaterial = colorToMaterialMap.get(bodyColorKey);
+                        if (x + 1 < width) {
+                            const bodyR = data[bodyPixelIndex], bodyG = data[bodyPixelIndex + 1], bodyB = data[bodyPixelIndex + 2];
+                            const bodyColorKey = `${bodyR},${bodyG},${bodyB}`;
                             
-                            // Scan to find the bounds of this single-color rectangle
-                            let endX = x + 1;
-                            while (endX < width && data[(y * width + endX) * 4] === bodyR && data[(y * width + endX) * 4 + 1] === bodyG && data[(y * width + endX) * 4 + 2] === bodyB) {
-                                endX++;
-                            }
-                            let endY = y;
-                            while (endY < height && data[(endY * width + x + 1) * 4] === bodyR && data[(endY * width + x + 1) * 4 + 1] === bodyG && data[(endY * width + x + 1) * 4 + 2] === bodyB) {
-                                endY++;
-                            }
-
-                            const rbWidth = endX - (x + 1);
-                            const rbHeight = endY - y;
-
-                            if (rbWidth > 0 && rbHeight > 0) {
-                                console.log(`Found Rigid Body definition: Material ${bodyMaterial}, Size ${rbWidth}x${rbHeight}`);
-                                rigidBodies.push({ x: x + 1, y: y, width: rbWidth, height: rbHeight, material: bodyMaterial });
+                            if (colorToMaterialMap.has(bodyColorKey)) {
+                                const bodyMaterial = colorToMaterialMap.get(bodyColorKey);
                                 
-                                // Mark the entire area as visited and set pixels to MAT.EMPTY
-                                for (let ry = y; ry < endY; ry++) {
-                                    for (let rx = x; rx < endX; rx++) {
-                                        const rIdx = ry * width + rx;
-                                        visited[rIdx] = 1;
-                                        pixels[rIdx] = MAT.EMPTY;
+                                let endX = x + 1;
+                                while (endX < width && data[(y * width + endX) * 4] === bodyR && data[(y * width + endX) * 4 + 1] === bodyG && data[(y * width + endX) * 4 + 2] === bodyB) { endX++; }
+                                let endY = y;
+                                while (endY < height && data[(endY * width + x + 1) * 4] === bodyR && data[(endY * width + x + 1) * 4 + 1] === bodyG && data[(endY * width + x + 1) * 4 + 2] === bodyB) { endY++; }
+
+                                const rbWidth = endX - (x + 1);
+                                const rbHeight = endY - y;
+
+                                if (rbWidth > 0 && rbHeight > 0) {
+                                    rigidBodies.push({ x: x + 1, y: y, width: rbWidth, height: rbHeight, material: bodyMaterial });
+                                    for (let ry = y; ry < endY; ry++) {
+                                        for (let rx = x; rx < endX; rx++) {
+                                            visited[ry * width + rx] = 1;
+                                            pixels[ry * width + rx] = MAT.EMPTY;
+                                        }
                                     }
                                 }
                             }
@@ -2952,38 +2965,47 @@
                         continue;
                     }
 
-                    // Rule: Treasure marker (1, 1, 1)
-                    if (r === treasureColor.r && g === treasureColor.g && b === treasureColor.b) {
-                        treasureCoords = { x, y };
-                        pixels[idx] = -1; // Marker is not drawn
-                        console.log(`Found treasure marker at local coords: {x: ${x}, y: ${y}}`);
-                        continue;
-                    }
-                    
-                    // Rule: Explicit empty (255, 255, 255)
-                    if (r === emptyColor.r && g === emptyColor.g && b === emptyColor.b) {
-                        pixels[idx] = MAT.EMPTY; // Explicitly carve empty space
-                        continue;
-                    }
-
-                    // Standard color lookup
-                    const colorKey = `${r},${g},${b}`;
-                    if (colorToMaterialMap.has(colorKey)) {
-                        pixels[idx] = colorToMaterialMap.get(colorKey);
-                    } else {
-                        pixels[idx] = -1; // Default to transparent if color is not found
-                        if (!unmatchedColors.has(colorKey)) {
-                            console.warn(`Unmatched color found in image: rgb(${r}, ${g}, ${b}). Treating as transparent.`);
-                            unmatchedColors.add(colorKey);
+                    // 4. Other Functional Markers
+                    let isMarker = false;
+                    for (const key in MARKER_COLORS) {
+                        if (key === 'rigidBodyMarker') continue; 
+                        const marker = MARKER_COLORS[key];
+                        if (r === marker.r && g === marker.g && b === marker.b) {
+                            areaPoints[key].push({ x, y });
+                            pixels[pixelArrayIndex] = MAT.EMPTY;
+                            isMarker = true;
+                            break;
                         }
                     }
+                    if (isMarker) continue;
+
+                    // 5. Standard Terrain
+                    const colorKey = `${r},${g},${b}`;
+                    pixels[pixelArrayIndex] = colorToMaterialMap.has(colorKey) ? colorToMaterialMap.get(colorKey) : -1;
                 }
             }
             
-            console.log("Image parsing complete. Result:", { width, height, treasureCoords, rigidBodies });
-            console.log("--- Finished Set Piece Image Parsing ---");
-            
-            return { width, height, pixels, treasureCoords, rigidBodies };
+            // Post-process functional area points into bounding boxes AND point lists
+            for (const key in areaPoints) {
+                const points = areaPoints[key];
+                if (points.length === 0) continue;
+
+                let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+                for (const p of points) {
+                    minX = Math.min(minX, p.x); minY = Math.min(minY, p.y);
+                    maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y);
+                }
+                functionalAreas[key] = {
+                    x: minX,
+                    y: minY,
+                    width: maxX - minX + 1,
+                    height: maxY - minY + 1,
+                    points: points 
+                };
+            }
+
+            console.log(`--- Finished Parsing. Found ${Object.keys(functionalAreas).length} functional areas and ${rigidBodies.length} rigid body definitions. ---`);
+            return { width, height, pixels, functionalAreas, rigidBodies };
         }
         // --- END OF REPLACEMENT ---
 
@@ -3426,145 +3448,144 @@
             setPieces: [
                 {
                     name: "AlchemistStation",
-                    
-                    getBounds: () => {
-                        const stationHeight = 200;
-                        const stationWidth = SECTOR_SIZE * 2;
-                        const stationTopY = STATION_FLOOR_Y - 188;
-                        const stationTopX = 0;
-                        return { x: stationTopX, y: stationTopY, width: stationWidth, height: stationHeight };
-                    },
-
-                    stationGeometry: {
-                        cauldrons: {
-                            left:  { cx: 260, cy: 160, r: 32 - 4 },
-                            right: { cx: 390, cy: 160, r: 32 - 4 }
-                        },
-                        sampler: { cx: 325, cy: 177, r: 16 - 4 }
-                    },
-                    
-                    postGenerationHook: function(piece) {
-                        const slabBounds = {
-                            x: piece.bounds.x + 130,
-                            y: piece.bounds.y + (piece.bounds.height - 20) - 8,
-                            width: 70,
-                            height: 15
-                        };
-
-                        // --- START OF MODIFICATION ---
-                        const hookData = {
-                            stationGeometry: {
-                                cauldrons: {
-                                    left:  { cx: piece.bounds.x + this.stationGeometry.cauldrons.left.cx,  cy: piece.bounds.y + this.stationGeometry.cauldrons.left.cy,  r: this.stationGeometry.cauldrons.left.r },
-                                    right: { cx: piece.bounds.x + this.stationGeometry.cauldrons.right.cx, cy: piece.bounds.y + this.stationGeometry.cauldrons.right.cy, r: this.stationGeometry.cauldrons.right.r }
-                                },
-                                sampler: { cx: piece.bounds.x + this.stationGeometry.sampler.cx, cy: piece.bounds.y + this.stationGeometry.sampler.cy, r: this.stationGeometry.sampler.r }
-                            }
-                        };
-                        
-                        // Pass this calculated, world-space data to the trigger
-                        createTrigger({
-                            name: 'alchemy_slab',
-                            x: slabBounds.x,
-                            y: slabBounds.y,
-                            width: slabBounds.width,
-                            height: slabBounds.height,
-                            onEnter: function(t) {
-                                const eId = createMagicEmitter({ spawnType: 'line', x1: t.x, y1: t.y, x2: t.x + t.width, y2: t.y, mainColor: [255, 230, 100], spawnRate: 0.5 });
-                                t.associatedData.emitterId = eId;
-                            },
-                            onLeave: function(t) {
-                                if (t.associatedData.emitterId != null) {
-                                    removeMagicEmitter(t.associatedData.emitterId);
-                                    t.associatedData.emitterId = null;
-                                }
-                            },
-                            
-                            onInteract: function(trigger) { 
-                                isAlchemyUIVisible = true;
-                                player.activeStationGeometry = trigger.associatedData.stationGeometry;
-                            },
-                            
-                            associatedData: hookData // Use the calculated data here
-                        });
-
-                        return hookData; // Return the data so other systems can use it
-                    }
-                },
-                {
-                    name: "ForgottenShrine",
-                    imagePath: 'assets/wood_puzzle.png',
-                    spawnLocalX: 256, // World X-coordinate for the center
-                    spawnLocalY: 256, // World Y-coordinate for the center
-                    targetSectorOffsetX: 2,  // Spawn 2 sectors to the right
-                    targetSectorOffsetY: 0,  // Spawn in the same horizontal layer
-                    bounds: null,      // This will be calculated by the loader
-                    parsedData: null,  // This will be filled by the loader
-                    postGenerationHook: function(piece) {
-                        // Safety check to ensure the image was parsed correctly before proceeding.
-                        if (!piece.parsedData) {
-                            console.warn(`postGenerationHook for '${piece.name}' was called, but no parsedData was found.`);
+                    imagePath: 'assets/alembic.png',
+                    targetSectorOffsetX: 0,
+                    targetSectorOffsetY: 0,
+                    spawnLocalX: SECTOR_SIZE / 2,
+                    spawnLocalY: SECTOR_SIZE / 2,
+                    parsedData: null,
+                    postGenerationHook: function(pieceInfo) {
+                        if (!pieceInfo.parsedData || !pieceInfo.parsedData.functionalAreas) {
+                            console.error("AlchemistStation postGenerationHook failed: No functional areas parsed!");
                             return;
                         }
 
-                        // --- Part 1: Spawn Treasure ---
-                        // Check if the parser found treasure coordinates in the image.
-                        if (piece.parsedData.treasureCoords) {
-                            // Calculate the absolute world coordinates of the treasure marker.
-                            const treasureWorldX = piece.bounds.x + piece.parsedData.treasureCoords.x;
-                            const treasureWorldY = piece.bounds.y + piece.parsedData.treasureCoords.y;
-                            
-                            console.log(`Spawning treasure for '${piece.name}' at:`, treasureWorldX, treasureWorldY);
-                            
-                            // Call the function to create the treasure item at that location.
+                        const worldX = (x, w = 0) => pieceInfo.bounds.x + x + Math.floor(w / 2);
+                        const worldY = (y, h = 0) => pieceInfo.bounds.y + y + Math.floor(h / 2);
+                        const areas = pieceInfo.parsedData.functionalAreas;
+
+                        const stationGeometry = {};
+
+                        // Loop through all parsed areas to build the complete station geometry object
+                        for (const key in areas) {
+                            const area = areas[key];
+                            const worldPoints = [];
+                            // Convert each local point from the image into a world coordinate
+                            for (const localPoint of area.points) {
+                                worldPoints.push({
+                                    x: pieceInfo.bounds.x + localPoint.x,
+                                    y: pieceInfo.bounds.y + localPoint.y
+                                });
+                            }
+
+                            // Store the bounding box and the pixel-perfect world points
+                            stationGeometry[key] = {
+                                x: pieceInfo.bounds.x + area.x,
+                                y: pieceInfo.bounds.y + area.y,
+                                width: area.width,
+                                height: area.height,
+                                worldPoints: worldPoints
+                            };
+
+                            // Create the main interaction trigger for the station's controls
+                            if (key === 'stationControls') {
+                                createTrigger({
+                                    name: 'alembic_controls',
+                                    x: stationGeometry[key].x,
+                                    y: stationGeometry[key].y,
+                                    width: stationGeometry[key].width,
+                                    height: stationGeometry[key].height,
+                                    onInteract: function(trigger) { 
+                                        console.log("Interacting with Alembic!");
+                                        player.activeStationGeometry = trigger.associatedData.stationGeometry;
+                                    },
+                                    associatedData: { stationGeometry } // Pass the entire geometry object to the trigger
+                                });
+                            }
+                        }
+
+                        // Spawn the Master Alchemist NPC if its location was parsed
+                        if (areas.masterAlchemist) {
+                            const npcArea = areas.masterAlchemist;
+                            createNpc({
+                                name: 'Ylialkemisti',
+                                // Spawn him centered and at the bottom of the marker area
+                                x: worldX(npcArea.x, npcArea.width),
+                                y: worldY(npcArea.y, npcArea.height) - player.height / 2,
+                                dialogueTreeId: 'ylialkemisti_main',
+                                associatedData: { stationGeometry } // Link him to this station instance
+                            });
+                        }
+                        
+                        // Set the player's spawn location if the output crucible area was parsed
+                        if (areas.outputCrucible) {
+                            const spawnArea = stationGeometry.outputCrucible; // Use the processed geometry
+                            playerSpawnLocation = {
+                                // Spawn centered in the output crucible area
+                                x: spawnArea.x + Math.floor(spawnArea.width / 2),
+                                y: spawnArea.y + Math.floor(spawnArea.height / 2)
+                            };
+                            console.log("Player spawn location set to:", playerSpawnLocation);
+                        }
+                    }
+                },
+                // --- END OF REPLACEMENT ---
+                {
+                    name: "ForgottenShrine",
+                    imagePath: 'assets/wood_puzzle.png',
+                    spawnLocalX: 256,
+                    spawnLocalY: 256,
+                    targetSectorOffsetX: 2,
+                    targetSectorOffsetY: 0,
+                    parsedData: null,
+                    postGenerationHook: function(piece) {
+                        if (!piece.parsedData) return;
+                        
+                        // Handle treasure
+                        const areas = piece.parsedData.functionalAreas;
+                        if (areas && areas.treasureMarker) {
+                            const treasureArea = areas.treasureMarker;
+                            const treasureWorldX = piece.bounds.x + treasureArea.x;
+                            const treasureWorldY = piece.bounds.y + treasureArea.y;
                             createMagicTablet(treasureWorldX, treasureWorldY, 'increase_tool_slots');
                         }
                         
-                        // --- Part 2: Spawn Rigid Bodies ---
-                        // Check if the parser found a list of rigid body definitions.
+                        // Handle rigid bodies
                         if (piece.parsedData.rigidBodies) {
                             console.log(`Spawning ${piece.parsedData.rigidBodies.length} rigid body/bodies for '${piece.name}'.`);
-
-                            // Loop through each rigid body definition found in the image.
                             for (const rbDef of piece.parsedData.rigidBodies) {
-                                // Calculate the absolute world coordinates for the top-left corner of the rigid body.
                                 const worldX = piece.bounds.x + rbDef.x;
                                 const worldY = piece.bounds.y + rbDef.y;
-
-                                // Call the helper function to create the rectangular rigid body in the world.
                                 createRigidBodyRectangle(worldX, worldY, rbDef.width, rbDef.height, rbDef.material, 'iron_door_27x33', 'Iron door');
                             }
                         }
                     }
                 },
+                // --- START OF REPLACEMENT ---
                 {
                     name: "PhysicsScale",
                     imagePath: 'assets/scale_base.png',
-                    spawnLocalX: 256, // X-coordinate within the target sector
-                    spawnLocalY: 256, // Y-coordinate within the target sector
-                    targetSectorOffsetX: -1, // Spawn 2 sectors to the left of the player's start
-                    targetSectorOffsetY: 0,  // Spawn in the same horizontal layer
+                    spawnLocalX: 256,
+                    spawnLocalY: 256,
+                    targetSectorOffsetX: -1,
+                    targetSectorOffsetY: 0,
                     postGenerationHook: function(piece) {
-                        // The hook's job is to calculate the final world coordinates and call our creation function.
                         if (!piece.parsedData) return;
 
-                        // --- Part 1: Spawn Treasure ---
-                        // Check if the parser found treasure coordinates in the image.
-                        if (piece.parsedData.treasureCoords) {
-                            // Calculate the absolute world coordinates of the treasure marker.
-                            const treasureWorldX = piece.bounds.x + piece.parsedData.treasureCoords.x;
-                            const treasureWorldY = piece.bounds.y + piece.parsedData.treasureCoords.y;
+                        const areas = piece.parsedData.functionalAreas;
+                        
+                        // --- THE FIX: Look inside functionalAreas for treasure ---
+                        if (areas && areas.treasureMarker) {
+                            const treasureArea = areas.treasureMarker;
+                            const treasureWorldX = piece.bounds.x + treasureArea.x;
+                            const treasureWorldY = piece.bounds.y + treasureArea.y;
                             
                             console.log(`Spawning treasure for '${piece.name}' at:`, treasureWorldX, treasureWorldY);
-                            
-                            // Call the function to create the treasure item at that location.
-                            createMagicTablet(treasureWorldX, treasureWorldY, 'increase_tool_slots');
+                            createMagicTablet(treasureWorldX, treasureWorldY, 'increase_structure_slots'); // Example treasure
                         }
                         
-                        // The set piece image stamps the static base. Now we build the physics parts on top.
-                        // We use the image center as the reference point for the scale's base.
                         const worldX = piece.bounds.x + (piece.parsedData.width / 2);
-                        const worldY = piece.bounds.y + piece.parsedData.height; // Place at the bottom of the image bounds
+                        const worldY = piece.bounds.y + piece.parsedData.height;
 
                         createPhysicsScale(worldX, worldY);
                     }
@@ -3837,12 +3858,13 @@
             return tempCanvas;
         }
 
+        let playerSpawnLocation = null;
         // --- PLAYER AND CAMERA ---
         const player = {
-            x: 391, y: STATION_FLOOR_Y - 12, vx: 0, vy: 0,
+            x: 0, y: 0, vx: 0, vy: 0,
             width: 8, height: 16, speed: 1, onGround: false,
-            spawnX: 391,
-            spawnY: STATION_FLOOR_Y - 12,
+            spawnX: 0,
+            spawnY: 0,
             body: null,
             isSpawning: true, // ADD: Start in spawning state
             spawnAnimationTimer: 0, // ADD: Timer for animation speed
@@ -7498,45 +7520,52 @@
             ctx.fillStyle='#ffd966';ctx.fillText(`${hudMaterial}`,renderWidth-6,6+10);
         }
 
+        // --- START OF REPLACEMENT (with label position fix) ---
+        /**
+         * Renders a pixel-perfect debug overlay for all functional areas of the Alchemist Station.
+         * Includes special case positioning for awkwardly shaped area labels.
+         */
         function renderStationGeometryDebug() {
-            const slabTrigger = triggers.find(t => t.name === 'alchemy_slab');
-            if (!slabTrigger || !slabTrigger.associatedData || !slabTrigger.associatedData.stationGeometry) {
+            const alembicTrigger = triggers.find(t => t.name === 'alembic_controls');
+            if (!alembicTrigger || !alembicTrigger.associatedData || !alembicTrigger.associatedData.stationGeometry) {
                 return;
             }
 
-            const stationGeo = slabTrigger.associatedData.stationGeometry;
-            
-            ctx.fillStyle = 'rgba(0, 255, 0, 0.3)';
-            ctx.strokeStyle = 'rgba(0, 255, 0, 0.7)';
-            ctx.lineWidth = 1;
+            const stationGeo = alembicTrigger.associatedData.stationGeometry;
 
-            // Draw left cauldron
-            const leftCauldron = stationGeo.cauldrons.left;
-            const screenLeftX = leftCauldron.cx - camera.x;
-            const screenLeftY = leftCauldron.cy - camera.y;
-            ctx.beginPath();
-            ctx.arc(screenLeftX, screenLeftY, leftCauldron.r, 0, Math.PI);
-            ctx.fill();
-            ctx.stroke();
+            const fillStyle = 'rgba(0, 255, 255, 0.3)';
+            const textStyle = 'white';
+            ctx.font = 'bold 8px monospace';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
 
-            // Draw right cauldron
-            const rightCauldron = stationGeo.cauldrons.right;
-            const screenRightX = rightCauldron.cx - camera.x;
-            const screenRightY = rightCauldron.cy - camera.y;
-            ctx.beginPath();
-            ctx.arc(screenRightX, screenRightY, rightCauldron.r, 0, Math.PI);
-            ctx.fill();
-            ctx.stroke();
-            
-            // Draw sampler
-            const sampler = stationGeo.sampler;
-            const screenSamplerX = sampler.cx - camera.x;
-            const screenSamplerY = sampler.cy - camera.y;
-            ctx.beginPath();
-            ctx.arc(screenSamplerX, screenSamplerY, sampler.r, 0, Math.PI);
-            ctx.fill();
-            ctx.stroke();
+            for (const key in stationGeo) {
+                const area = stationGeo[key];
+
+                if (area.worldPoints) {
+                    ctx.fillStyle = fillStyle;
+                    for (const point of area.worldPoints) {
+                        const screenX = Math.round(point.x - camera.x);
+                        const screenY = Math.round(point.y - camera.y);
+                        ctx.fillRect(screenX, screenY, 1, 1);
+                    }
+                }
+
+                // Calculate the default label position at the center of the bounding box.
+                let labelScreenX = Math.round(area.x - camera.x + area.width / 2);
+                let labelScreenY = Math.round(area.y - camera.y + area.height / 2);
+
+                // *** THE FIX: Add a special case for the 'pressureSlot' label ***
+                if (key === 'pressureSlot') {
+                    // Manually offset the label to the left to prevent overlap.
+                    labelScreenX -= 25; 
+                }
+
+                ctx.fillStyle = textStyle;
+                ctx.fillText(key, labelScreenX, labelScreenY);
+            }
         }
+        // --- END OF REPLACEMENT ---
 
         function renderDebugUI() {
             // --- 1. Calculate derived stats ---
@@ -7922,27 +7951,20 @@
             updateLoadingStatus('Populating World...');
             await yieldToBrowser();
             
-            // Spawn 'Ylialkemisti' in the alchemy station
-            createNpc({
-                name: 'Ylialkemisti',
-                x: 450, // Positioned to the right of the cauldrons
-                y: STATION_FLOOR_Y - 16,
-                dialogueTreeId: 'ylialkemisti_main'
-            });
-
-            createWoodenBox(750,STATION_FLOOR_Y - 100, 32, 32);
-
-            const stationPieceDef = SetPieceManager.setPieces.find(p => p.name === 'AlchemistStation');
-            if (stationPieceDef) {
-                const pieceInfo = { name: "AlchemistStation", bounds: stationPieceDef.getBounds() };
-                const npcObject = npcs.find(n => n.name === 'Ylialkemisti');
-                if(npcObject) {
-                    npcObject.associatedData.stationGeometry = stationPieceDef.postGenerationHook.call(stationPieceDef, pieceInfo).stationGeometry;
-                }
+            if (playerSpawnLocation) {
+                player.x = playerSpawnLocation.x;
+                player.y = playerSpawnLocation.y;
+                // Also set the respawn point
+                player.spawnX = playerSpawnLocation.x;
+                player.spawnY = playerSpawnLocation.y;
+            } else {
+                // Fallback if no spawn point was defined by a set piece
+                player.x = 391;
+                player.y = STATION_FLOOR_Y - 12;
+                player.spawnX = 391;
+                player.spawnY = STATION_FLOOR_Y - 12;
+                console.warn("No player spawn location set by any set piece. Using default coordinates.");
             }
-
-            //createObjectInWorld('stone_pick', 480, STATION_FLOOR_Y - 16);
-            //createObjectInWorld('wooden_barrel', 520, STATION_FLOOR_Y - 16);
 
             updateLoadingStatus('Finalizing...');
             await yieldToBrowser();
