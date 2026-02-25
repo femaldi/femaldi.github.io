@@ -553,8 +553,17 @@
             const userData = body.body.getUserData();
             const ringSprite = SpriteManager.sprites.get('pickup_shape');
 
-            // Handle new dynamic upgrades which have an onPickup function attached directly
-            if (userData.onPickup) {
+            if (userData.isPotion) {
+                if (player.structurePocket.length < player.maxStructureSlots) {
+                    world.destroyBody(body.body);
+                    body.body = null;
+                    player.structurePocket.push(body);
+                    pickedUp = true; // SET the flag instead of returning
+                } else {
+                    displayMessage("Inventory Full", "Cannot pick up the potion.", 240);
+                }
+                // NOTE: The 'return' statement that was here is now REMOVED.
+            } else if (userData.onPickup) {
                 userData.onPickup(player);
                 body.isDestroyed = true; // Mark for cleanup
                 // Add a small visual effect for feedback
@@ -586,31 +595,32 @@
                 }
 
                 return;
-            }
+            } else {
 
-            // Handle old definition-based objects
-            const def = OBJECT_DEFINITIONS[userData.definitionId];
-            
-            if (!def) return;
+                // Handle old definition-based objects
+                const def = OBJECT_DEFINITIONS[userData.definitionId];
+                
+                if (!def) return;
 
-            let pickedUp = false;
-            switch (def.type) {
-                case 'tool':
-                    if (player.toolPocket.length < player.maxToolSlots) {
-                        player.toolPocket.push(def.name);
-                        pickedUp = true;
-                    }
-                    break;
-                case 'structure':
-                    if (player.structurePocket.length < player.maxStructureSlots) {
-                        player.structurePocket.push(body); 
-                        pickedUp = true;
-                    }
-                    break;
-                case 'upgrade':
-                    if (def.onPickup) def.onPickup(player);
-                    pickedUp = true; // Upgrades are always consumed
-                    break;
+                let pickedUp = false;
+                switch (def.type) {
+                    case 'tool':
+                        if (player.toolPocket.length < player.maxToolSlots) {
+                            player.toolPocket.push(def.name);
+                            pickedUp = true;
+                        }
+                        break;
+                    case 'structure':
+                        if (player.structurePocket.length < player.maxStructureSlots) {
+                            player.structurePocket.push(body); 
+                            pickedUp = true;
+                        }
+                        break;
+                    case 'upgrade':
+                        if (def.onPickup) def.onPickup(player);
+                        pickedUp = true; // Upgrades are always consumed
+                        break;
+                }
             }
 
             if (pickedUp) {
@@ -701,6 +711,44 @@
             timer: 0,
             maxTime: 0
         };
+
+        function renderBuffsUI() {
+            if (player.activeBuffs.length === 0) return;
+
+            let x = renderWidth - 110; // Position on the top right
+            let y = 10;
+            const boxW = 100;
+            const boxH = 20;
+            const spacing = 5;
+
+            ctx.font = '8px monospace';
+            ctx.textBaseline = 'top';
+
+            for (const buff of player.activeBuffs) {
+                // Find the potion definition to get its name
+                const potionDef = Object.values(POTION_DEFINITIONS).find(p => p.buffId === buff.id);
+                const name = potionDef ? potionDef.name : buff.id;
+                const remainingSeconds = (buff.duration / 60).toFixed(1);
+
+                // Background
+                ctx.fillStyle = 'rgba(0,0,0,0.7)';
+                ctx.fillRect(x, y, boxW, boxH);
+                
+                // Duration bar
+                const durationPercent = buff.duration / buff.maxDuration;
+                ctx.fillStyle = 'rgba(200, 200, 255, 0.5)';
+                ctx.fillRect(x, y + boxH - 4, boxW * durationPercent, 4);
+
+                // Text
+                ctx.fillStyle = 'white';
+                ctx.textAlign = 'left';
+                ctx.fillText(name, x + 5, y + 2);
+                ctx.textAlign = 'right';
+                ctx.fillText(`${remainingSeconds}s`, x + boxW - 5, y + 2);
+
+                y += boxH + spacing;
+            }
+        }
 
         /**
          * Displays a message at the top of the screen.
@@ -1122,6 +1170,28 @@
             [MAT.ADAMANTIUM]: 50.0 // Make it extremely heavy
         };
 
+        const ALCHEMY_COMBINATIONS = [
+            // Tier 2 Synthetics
+            { inputs: [MAT.SAND, MAT.VOID_SALTS].sort(), output: MAT.CRYSTAL_GLASS, condition: 'heat' },
+            { inputs: [MAT.IRON, MAT.COAL].sort(), output: MAT.STEEL, condition: 'heat' },
+            { inputs: [MAT.WATER, MAT.ICE].sort(), output: MAT.CRYO_STATIC_DUST, condition: 'cold' },
+            { inputs: [MAT.SOIL, MAT.FUNGAL_SPORES].sort(), output: MAT.MYCELIAL_BRICK, condition: 'fertility_essence' },
+            { inputs: [MAT.WOOD, MAT.OIL].sort(), output: MAT.RESIN, condition: 'pressure' },
+            { inputs: [MAT.GUNPOWDER, MAT.OIL].sort(), output: MAT.BLASTING_JELLY, condition: 'viscosity_essence' },
+            { inputs: [MAT.ACID, MAT.COPPER].sort(), output: MAT.COPPER_SALTS, condition: null },
+            { inputs: [MAT.QUICKSILVER, MAT.GOLD].sort(), output: MAT.PHILOSOPHERS_AMALGAM, condition: 'purity_essence' },
+            { inputs: [MAT.QUARTZ, MAT.GLOW_MOSS].sort(), output: MAT.LUMINITE_CRYSTAL, condition: 'aetheric_resonance' },
+            { inputs: [MAT.VOID_SALTS, MAT.RUNE_WALL].sort(), output: MAT.NULL_CHALK, condition: 'aetheric_resonance' },
+
+            // Tier 3 Advanced
+            { inputs: [MAT.STEEL, MAT.RESIN].sort(), output: MAT.REINFORCED_COMPOSITE, condition: 'durability_essence' },
+            { inputs: [MAT.CRYSTAL_GLASS, MAT.LUMINITE_CRYSTAL].sort(), output: MAT.SCRYING_LENS, condition: 'focused_light_essence' },
+            { inputs: [MAT.CRYO_STATIC_DUST, MAT.NULL_CHALK].sort(), output: MAT.ABSOLUTE_ZERO_DUST, condition: 'platinum_catalyst' },
+            { inputs: [MAT.MYCELIAL_BRICK, MAT.PHILOSOPHERS_AMALGAM].sort(), output: MAT.LIVING_CIRCUITRY, condition: 'connectivity_essence' },
+            { inputs: [MAT.BLASTING_JELLY, MAT.COPPER_SALTS].sort(), output: MAT.HEX_CHARGE, condition: 'catalysis_essence' },
+            { inputs: [MAT.STEEL, MAT.OBSIDIAN].sort(), output: MAT.VOLCANIC_ADAMANT, condition: 'heat_hardness' },
+        ];
+
         const MATERIALS_TO_WEIGH = {
             [MAT.SAND]: 0.7,
             [MAT.SOIL]: 0.7,
@@ -1188,7 +1258,7 @@
         const MATERIAL_ESSENCES = {
             // Natural Materials
             [MAT.WATER]: [ESSENCES.FLUIDITY, ESSENCES.DAMPENING],
-            [MAT.LAVA]: [ESSENCES.INTENSE_HEAT, ESSENCES.ILLUMINATION],
+            [MAT.LAVA]: [ESSENCES.INTENSE_HEAT, ESSENCES.VISCOSITY],
             [MAT.SOIL]: [ESSENCES.STABILITY, ESSENCES.FERTILITY],
             [MAT.STEAM]: [ESSENCES.VAPOR],
             [MAT.SANDSTONE_WALL]: [ESSENCES.PERMEABILITY],
@@ -1200,7 +1270,7 @@
             [MAT.OBSIDIAN]: [ESSENCES.HARDNESS, ESSENCES.HEAT_RESISTANCE],
             [MAT.METHANE]: [ESSENCES.LEVITY, ESSENCES.VOLATILITY],
             [MAT.SMOKE]: [ESSENCES.OBSCURITY],
-            [MAT.OIL]: [ESSENCES.VISCOSITY, ESSENCES.SLOW_BURN],
+            [MAT.OIL]: [ESSENCES.SLOW_BURN],
             [MAT.GUNPOWDER]: [ESSENCES.RAPID_EXPANSION, ESSENCES.VOLATILITY],
             [MAT.COAL]: [ESSENCES.CARBON, ESSENCES.SLOW_BURN],
             [MAT.ACID]: [ESSENCES.SEPARATION],
@@ -1344,7 +1414,29 @@
                         }
                     }
                 }
-            }
+            },
+            'empty_potion': {
+                name: 'Empty Potion',
+                type: 'structure', // It's a placeable object
+                spritePath: 'assets/magic_tablet.png', // Placeholder, you can create a real sprite later
+                width: 8,
+                height: 12,
+                isVessel: true, // A new flag to identify it as a container for potions/oils etc.
+                pixels: [ /* Pixel art for a small glass flask */
+                    0,0,0,1,1,0,0,0,
+                    0,0,0,1,1,0,0,0,
+                    0,0,0,1,1,0,0,0,
+                    0,0,1,1,1,1,0,0,
+                    0,1,0,0,0,0,1,0,
+                    0,1,0,0,0,0,1,0,
+                    1,0,0,0,0,0,0,1,
+                    1,0,0,0,0,0,0,1,
+                    1,0,0,0,0,0,0,1,
+                    1,0,0,0,0,0,0,1,
+                    1,1,1,1,1,1,1,1,
+                    1,1,1,1,1,1,1,1,
+                ].map(p => p === 1 ? MAT.GLASS_WALL : MAT.EMPTY)
+            },
         };
 
         const TradeManager = {
@@ -3769,22 +3861,32 @@
             }
         }
 
+        // in index.html
+
         /**
-         * Spawns a specific quantity of a material into empty spaces within a defined area.
+         * Spawns a collection of materials into empty spaces within a defined area.
          * @param {Array<{x, y}>} areaPoints - The world coordinates to spawn materials into.
-         * @param {number} materialToSpawn - The MAT ID of the material to spawn.
-         * @param {number} quantity - The number of pixels to spawn.
+         * @param {Map<number, number>} materialsToSpawn - A map where keys are MAT IDs and values are quantities.
          */
-        function spawnMaterialsInArea(areaPoints, materialToSpawn, quantity) {
-            if (!areaPoints) return;
+        function spawnMaterialsInArea(areaPoints, materialsToSpawn) {
+            if (!areaPoints || materialsToSpawn.size === 0) return;
             
             const emptyPoints = areaPoints.filter(p => getGrid(p.x, p.y) === MAT.EMPTY);
             const shuffledEmptyPoints = emptyPoints.sort(() => 0.5 - Math.random());
 
-            const spawnCount = Math.min(quantity, shuffledEmptyPoints.length);
-            for (let i = 0; i < spawnCount; i++) {
-                const point = shuffledEmptyPoints[i];
-                setGrid(point.x, point.y, materialToSpawn, true);
+            let spawnIndex = 0;
+            // Iterate through each material type in the map
+            for (const [matId, quantity] of materialsToSpawn.entries()) {
+                // Spawn the requested quantity of that material
+                for (let i = 0; i < quantity; i++) {
+                    if (spawnIndex >= shuffledEmptyPoints.length) {
+                        // We've run out of empty space in the target area
+                        console.warn("Ran out of space spawning materials in area.");
+                        return;
+                    }
+                    const point = shuffledEmptyPoints[spawnIndex++];
+                    setGrid(point.x, point.y, matId, true);
+                }
             }
         }
 
@@ -3842,12 +3944,142 @@
                         break;
                     }
 
+                    case 'infuse_from_input':
+                    case 'infuse_from_retort': {
+                        const sourceArea = (rune.id === 'infuse_from_input') 
+                            ? stationGeometry.inputCrucible.worldPoints 
+                            : stationGeometry.retort.worldPoints;
+                        
+                        const sourceName = (rune.id === 'infuse_from_input') ? "Input Crucible" : "Retort";
+
+                        const sourceMaterials = getMaterialsInArea(sourceArea);
+                        
+                        // Separate essences from base liquids
+                        const essences = new Map();
+                        let baseLiquid = null;
+                        let baseLiquidQuantity = 0;
+
+                        for (const [matId, quantity] of sourceMaterials.entries()) {
+                            if (matId >= 200) { // All unstable essences have ID >= 200
+                                essences.set(matId, quantity);
+                            } else if (isLiquid(matId) && matId !== MAT.LAVA) { // Assume the first non-essence liquid is the base
+                                baseLiquid = matId;
+                                baseLiquidQuantity = quantity;
+                            }
+                        }
+
+                        if (essences.size === 0) {
+                            displayMessage("Infusion Failed", `No unstable essences found in the ${sourceName}.`, 300);
+                            processingBatch.clear();
+                            break;
+                        }
+                        if (baseLiquid === null) {
+                            displayMessage("Infusion Failed", `No base liquid (like water or oil) found in the ${sourceName}.`, 300);
+                            processingBatch.clear();
+                            break;
+                        }
+
+                        // Consume the materials from the source
+                        removeMaterialsFromArea(sourceArea, sourceMaterials);
+
+                        // The new processing batch is a special object representing the potion's ingredients
+                        processingBatch = {
+                            isPotionBatch: true,
+                            essences: essences,
+                            base: baseLiquid,
+                            baseQuantity: baseLiquidQuantity
+                        };
+
+                        break;
+                    }
+
+                    // in index.html, inside executeRecipe's switch statement
+
+                    // in index.html, inside executeRecipe's switch statement
+
+                    case 'forma_potion': {
+                        if (!processingBatch.isPotionBatch) {
+                            displayMessage("Creation Failed", "[Forma: Potion] requires an infused liquid from an [Infuse] rune.", 400);
+                            processingBatch.clear();
+                            break;
+                        }
+
+                        const vesselBody = getRigidBodyAt(stationGeometry.vessel.x + stationGeometry.vessel.width / 2, stationGeometry.vessel.y + stationGeometry.vessel.height / 2);
+
+                        if (!vesselBody || vesselBody.body.getUserData().definitionId !== 'empty_potion') {
+                             displayMessage("Creation Failed", "[Forma: Potion] requires an Empty Potion in the Vessel Slot.", 400);
+                             processingBatch.clear();
+                             break;
+                        }
+                        
+                        // --- START: REVISED POTION SPAWNING LOGIC ---
+                        
+                        let potionId = null;
+                        if (processingBatch.essences.has(ESSENCE_TO_MAT[ESSENCES.INTENSE_HEAT])) {
+                            potionId = 'ashen_skin';
+                        }
+                        // Add `else if` for other potions later
+
+                        if (!potionId) {
+                            displayMessage("Creation Failed", "The combination of essences did not produce a known potion.", 300);
+                            processingBatch.clear();
+                            break;
+                        }
+
+                        // Consume the empty potion vessel
+                        vesselBody.isDestroyed = true; 
+                        
+                        // Calculate duration
+                        let totalEssence = 0;
+                        for (const quantity of processingBatch.essences.values()) { totalEssence += quantity; }
+                        const multiplier = BASE_LIQUID_MULTIPLIERS[processingBatch.base] || 1.0;
+                        const durationInFrames = Math.round(totalEssence * multiplier * 60);
+
+                        // Get the position of the vessel slot to spawn the new potion
+                        const spawnX = stationGeometry.vessel.x + stationGeometry.vessel.width / 2;
+                        const spawnY = stationGeometry.vessel.y + stationGeometry.vessel.height / 2;
+                        const potionDef = POTION_DEFINITIONS[potionId];
+
+                        // Create a new RigidBody for the finished potion
+                        const finishedPotion = new RigidBody(spawnX, spawnY, 8, 12, MAT.GLASS, potionDef.name);
+                        finishedPotion.pixels = new Uint8Array(OBJECT_DEFINITIONS.empty_potion.pixels); // Reuse pixel art for now
+                        
+                        // Fill the potion visually (simple version for now)
+                        for(let y = 5; y < 10; y++) {
+                            for(let x = 2; x < 6; x++) {
+                                finishedPotion.pixels[y * 8 + x] = MAT.ADAMANTIUM; // Color it with the primary essence
+                            }
+                        }
+                        
+                        finishedPotion.rebuildFixtures();
+                        
+                        // Store the potion's data in the RigidBody's UserData
+                        const userData = finishedPotion.body.getUserData();
+                        userData.isPickup = true;
+                        userData.isPotion = true; // Flag it as a potion
+                        userData.potionData = {
+                            definitionId: potionId,
+                            charges: 1,
+                            duration: durationInFrames,
+                        };
+                        rigidBodies.push(finishedPotion); // Add it to the world
+
+                        // --- END: REVISED POTION SPAWNING LOGIC ---
+
+                        displayMessage("Potion Created!", `You brewed a "${potionDef.name}". Pick it up from the vessel slot.`, 480);
+                        
+                        const vesselCenter = { x: stationGeometry.vessel.x + stationGeometry.vessel.width / 2, y: stationGeometry.vessel.y + stationGeometry.vessel.height / 2 };
+                        createShapeDissolveEffect({ x: vesselCenter.x, y: vesselCenter.y, shapeImage: SpriteManager.sprites.get('pickup_shape'), color: [220, 180, 255], shapeSize: 48, particleCount: 1500 });
+                        
+                        return; // End the recipe
+                    }
+
                     case 'extract_essence': {
                         const essenceToExtract = rune.target;
                         if (!essenceToExtract) {
                             displayMessage("Reaction Failed", "Extract Essence rune is not set.", 300);
                             processingBatch.clear();
-                            break;
+                            return;
                         }
 
                         let sourceMaterial = -1;
@@ -3870,6 +4102,7 @@
                         } else {
                             displayMessage("Reaction Fizzled", `No material containing [${essenceToExtract.replace(/_/g, ' ')}] was found.`, 300);
                             processingBatch.clear();
+                            return;
                         }
                         break;
                     }
@@ -3885,15 +4118,42 @@
                         break;
                     }
 
+                    case 'yield_to_retort': {
+                        if (processingBatch.size === 0) {
+                            // If the batch is empty, there's nothing to move. Just continue.
+                            break;
+                        }
+
+                        // Physically move the materials from the input crucible to the retort
+                        removeMaterialsFromArea(stationGeometry.inputCrucible.worldPoints, processingBatch);
+                        spawnMaterialsInArea(stationGeometry.retort.worldPoints, processingBatch);
+
+                        // Provide some visual feedback for the transfer
+                        const inputCenter = { x: stationGeometry.inputCrucible.x + stationGeometry.inputCrucible.width / 2, y: stationGeometry.inputCrucible.y + stationGeometry.inputCrucible.height / 2 };
+                        createShapeDissolveEffect({ x: inputCenter.x, y: inputCenter.y, shapeImage: SpriteManager.sprites.get('filter_shape'), color: [255, 180, 180], shapeSize: 32, particleCount: 500, wispDuration: 40 });
+                        
+                        const retortCenter = { x: stationGeometry.retort.x + stationGeometry.retort.width / 2, y: stationGeometry.retort.y + stationGeometry.retort.height / 2 };
+                        createShapeDissolveEffect({ x: retortCenter.x, y: retortCenter.y, shapeImage: SpriteManager.sprites.get('filter_shape'), color: [180, 255, 180], shapeSize: 32, particleCount: 500, appearDuration: 15 });
+
+                        // *** CRITICAL STEP ***
+                        // Reset the processing batch to what is now LEFT in the input crucible.
+                        // This allows the next rune in the recipe to operate on the remaining materials.
+                        processingBatch = getMaterialsInArea(stationGeometry.inputCrucible.worldPoints);
+
+                        break; // Continue to the next rune in the recipe
+                    }
+
                     case 'yield_to_output': {
+                        if (processingBatch.isPotionBatch) {
+                            displayMessage("Reaction Failed", "An infused liquid cannot be yielded to the output. Use a [Forma] rune instead.", 400);
+                            processingBatch.clear();
+                            break;
+                        }
+
                         const originalContents = getMaterialsInArea(stationGeometry.inputCrucible.worldPoints);
                         removeMaterialsFromArea(stationGeometry.inputCrucible.worldPoints, originalContents);
 
-                        for (const [key, value] of processingBatch.entries()) {
-                            if (typeof key === 'number') {
-                                spawnMaterialsInArea(stationGeometry.outputCrucible.worldPoints, key, value);
-                            }
-                        }
+                        spawnMaterialsInArea(stationGeometry.outputCrucible.worldPoints, processingBatch);
                         
                         const outputCenter = { x: stationGeometry.outputCrucible.x + stationGeometry.outputCrucible.width / 2, y: stationGeometry.outputCrucible.y + stationGeometry.outputCrucible.height / 2 };
                         createShapeDissolveEffect({ x: outputCenter.x, y: outputCenter.y, shapeImage: SpriteManager.sprites.get('filter_shape'), color: [220, 255, 220], shapeSize: 48, particleCount: 1000 });
@@ -4402,6 +4662,20 @@
             return tempCanvas;
         }
 
+        const BASE_LIQUID_MULTIPLIERS = {
+            [MAT.WATER]: 1.0,
+            [MAT.OIL]: 1.1, // Example of a better base liquid
+        };
+
+        const POTION_DEFINITIONS = {
+            'ashen_skin': {
+                name: 'Potion of Ashen Skin',
+                buffId: 'ashen_skin',
+                description: 'Grants immunity to fire and lava damage.'
+            },
+            // Add other potions here later
+        };
+
         let playerSpawnLocation = null;
         // --- PLAYER AND CAMERA ---
         const player = {
@@ -4429,6 +4703,7 @@
             deathAnimationProgress: -1,
             toolPocket: [],
             structurePocket: [],
+            activeBuffs: [],
             unlockedReactions: ['clear_cauldrons'],
             maxToolSlots: 1,
             maxStructureSlots: 1,
@@ -4442,11 +4717,13 @@
                 knownRunes: new Set([
                     'from_input_crucible',
                     'yield_to_output',
+                    'yield_to_retort',
                     'combine',
-                    'separate',
+                    'forma_potion',
                     'extract_essence',
                     'infuse_from_retort',
                     'infuse_from_input',
+                    'separate',
                     // etc. for all non-variable runes
                 ]),
 
@@ -4467,10 +4744,10 @@
                 pages: [
                     { 
                         name: "Glass Recipe",
-                        maxRunes: 4,
+                        maxRunes: 5,
                         runes: [
                             { id: 'from_input_crucible' },
-                            { id: 'filter_by', target: MAT.SAND },
+                            { id: 'filter_by', target: MAT.GLASS },
                             { id: 'transform', from: MAT.SAND, to: MAT.GLASS },
                             { id: 'yield_to_output' },
                         ]
@@ -4619,6 +4896,10 @@
                 case 'Digit3': activeContainer = 'tool'; break;
                 case 'Digit4': activeContainer = 'structure'; break;
                 
+                case 'KeyR': // R for "dRink"
+                    consumePotion();
+                    break;
+
                 case 'KeyG':
                     if (GrimoireManager.isVisible) {
                         GrimoireManager.isVisible = false;
@@ -4659,6 +4940,71 @@
         });
 
         window.addEventListener('keyup', (e) => keys[e.code] = false);
+
+        // in index.html
+
+        // in index.html, replace the entire consumePotion function
+
+        function consumePotion() {
+            // Find the index of the first item in the general inventory that is a potion.
+            // We now check the properties directly on the 'item' object itself.
+            const potionIndex = player.structurePocket.findIndex(item => item.isPotion === true);
+
+            if (potionIndex === -1) {
+                // No potions found in the inventory.
+                return;
+            }
+
+            // Get the potion's data directly from the RigidBody object.
+            const potionObject = player.structurePocket[potionIndex];
+            const potionData = potionObject.potionData; // <<<< THE FIX IS HERE
+            const potionDef = POTION_DEFINITIONS[potionData.definitionId];
+
+            // Add the buff to the player's active list
+            player.activeBuffs.push({
+                id: potionDef.buffId,
+                duration: potionData.duration,
+                maxDuration: potionData.duration,
+            });
+
+            displayMessage("Buff Active!", `You feel the effects of ${potionDef.name}.`, 240);
+            
+            // Decrement charges (for future use) and remove the item from inventory
+            potionData.charges--;
+            if (potionData.charges <= 0) {
+                // Remove the consumed potion from the inventory
+                player.structurePocket.splice(potionIndex, 1);
+                
+                // After using the last potion, we might want to cycle the selected tool/structure index
+                // to prevent an out-of-bounds error if it was the last item.
+                if (player.structureIndex >= player.structurePocket.length) {
+                    player.structureIndex = 0;
+                }
+            }
+        }
+
+        function updateBuffs() {
+            // Light effect for Ashen Skin
+            if (player.activeBuffs.some(b => b.id === 'ashen_skin')) {
+                const playerCX = Math.floor((player.x + player.width / 2) / CHUNK_SIZE);
+                const playerCY = Math.floor((player.y + player.height / 2) / CHUNK_SIZE);
+                // Force lighting updates in a 3x3 chunk area around the player
+                for (let cy = playerCY - 1; cy <= playerCY + 1; cy++) {
+                    for (let cx = playerCX - 1; cx <= playerCX + 1; cx++) {
+                        lightingDirtyChunks.add(coordToKey(cx, cy));
+                    }
+                }
+            }
+            
+            // Tick down duration for all buffs
+            for (let i = player.activeBuffs.length - 1; i >= 0; i--) {
+                const buff = player.activeBuffs[i];
+                buff.duration--;
+                if (buff.duration <= 0) {
+                    player.activeBuffs.splice(i, 1); // Remove expired buff
+                }
+            }
+        }
 
         // --- START OF NEW CODE: ARROW FUNCTIONS ---
         function spawnFloatingArrow(worldX, worldY) {
@@ -5144,6 +5490,8 @@
         function updatePlayerDamage() {
             if (!player.body || player.isSpawning || player.hp <= 0) return;
 
+            const hasAshenSkin = player.activeBuffs.some(b => b.id === 'ashen_skin');
+
             const now = performance.now();
             
             const DAMAGE_MAP = {
@@ -5174,6 +5522,9 @@
                     const gridMaterial = getGrid(Math.floor(worldPos.x * B2_SCALE), Math.floor(worldPos.y * B2_SCALE));
                     
                     if (DAMAGE_MAP[gridMaterial]) {
+                        if (hasAshenSkin && (gridMaterial === MAT.LAVA || gridMaterial === MAT.FIRE || gridMaterial === MAT.OIL_BURNING || gridMaterial === MAT.COAL_BURNING)) {
+                            continue; // Skip this damage point
+                        }
                         // We go back to accumulating damage based on how many points are in contact.
                         potentialDamage += DAMAGE_MAP[gridMaterial] / (samplePointsX.length * samplePointsY.length);
                         contactPoints++;
@@ -7235,6 +7586,7 @@
             renderFloatingArrow();
             renderAlembicUI();
             renderGrimoire();
+            renderBuffsUI();
             renderMessageUI();
 
             if (debugMode)
@@ -7482,7 +7834,7 @@
             // --- END OF NEW CONSTANTS ---
 
             for (const body of rigidBodies) {
-                if (body.isDestroyed) continue;
+                if (body.isDestroyed || !body.body) continue;
                 body.lastSplitTime=body.lastSplitTime??0; body.pendingStructuralDelta=body.pendingStructuralDelta??0;
                 let pixelsChanged=false, structuralEditsThisTick=0;
                 
@@ -8673,7 +9025,7 @@
             const newBodiesFromSplits = [];
             for (let i = rigidBodies.length - 1; i >= 0; i--) {
                 const body = rigidBodies[i];
-                if (body.isDestroyed) continue;
+                if (body.isDestroyed || !body.body)
 
                 if (body.needsShapeUpdate && (now - body.lastRebuildTime > REBUILD_COOLDOWN)) {
                     const newBodies = checkForSplits(body);
@@ -8698,6 +9050,7 @@
             updateInteractions();
             updateActiveToolEffects();
             updateMessageSystem();
+            updateBuffs();
 
             Profiler.stop('UpdateLogic');
 
@@ -9278,6 +9631,16 @@
             activateInitialChunks();
             //createPlayerBody();
             //createWoodenBox(150, -150, 24, 64);
+
+            const startingPotion = new RigidBody(0, 0, 8, 12, MAT.GLASS, "Empty Potion");
+            startingPotion.pixels = new Uint8Array(OBJECT_DEFINITIONS.empty_potion.pixels);
+            startingPotion.rebuildFixtures();
+            const userData = startingPotion.body.getUserData();
+            userData.isPickup = true;
+            userData.definitionId = 'empty_potion';
+            world.destroyBody(startingPotion.body); // Remove from physics world until placed
+            startingPotion.body = null;
+            player.structurePocket.push(startingPotion);
 
             updateLoadingStatus('Done!');
             await new Promise(resolve => setTimeout(resolve, 100));
