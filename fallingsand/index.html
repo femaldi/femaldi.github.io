@@ -552,6 +552,7 @@
 
             const userData = body.body.getUserData();
             const ringSprite = SpriteManager.sprites.get('pickup_shape');
+            let pickedUp = false;
 
             if (userData.isPotion) {
                 if (player.structurePocket.length < player.maxStructureSlots) {
@@ -601,8 +602,7 @@
                 const def = OBJECT_DEFINITIONS[userData.definitionId];
                 
                 if (!def) return;
-
-                let pickedUp = false;
+                
                 switch (def.type) {
                     case 'tool':
                         if (player.toolPocket.length < player.maxToolSlots) {
@@ -715,13 +715,13 @@
         function renderBuffsUI() {
             if (player.activeBuffs.length === 0) return;
 
-            let x = renderWidth - 110; // Position on the top right
-            let y = 10;
-            const boxW = 100;
+            let x = 10; // Position on the top right
+            let y = 50;
+            const boxW = 120;
             const boxH = 20;
             const spacing = 5;
 
-            ctx.font = '8px monospace';
+            ctx.font = '6px monospace';
             ctx.textBaseline = 'top';
 
             for (const buff of player.activeBuffs) {
