@@ -6396,8 +6396,39 @@
                 }
             }
 
-            // If we looped through all points and found no solid ground, we are not grounded.
-            return false;
+            // --- Phase 2: Check for DYNAMIC Rigid Bodies Only ---
+            const bodyPos = player.body.getPosition();
+            const halfWidth = (player.width / 2) / B2_SCALE;
+            const playerBottomY = bodyPos.y + (player.height / 2 / B2_SCALE);
+            const sensorHeight = 1 / B2_SCALE;
+
+            const aabb = new pl.AABB(
+                pl.Vec2(bodyPos.x - 0.1, playerBottomY),
+                pl.Vec2(bodyPos.x + 0.1, playerBottomY + sensorHeight)
+            );
+
+            let dynamicBodyFound = false;
+
+            world.queryAABB(aabb, (fixture) => {
+                const body = fixture.getBody();
+                if (body === player.body) {
+                    return true; // Continue searching, ignore ourself.
+                }
+                
+                // --- START OF THE FIX ---
+                // Only consider the body "ground" if its type is 'dynamic'.
+                if (body.getType() === 'dynamic') {
+                    dynamicBodyFound = true;
+                    return false; // Stop searching, we found a dynamic body.
+                }
+                // --- END OF THE FIX ---
+                
+                // If it's not the player and not dynamic (i.e., it's static terrain),
+                // we ignore it because the grid check should have already handled it.
+                return true; // Continue searching.
+            });
+
+            return dynamicBodyFound;
         }
         
         function syncPlayerWithBody() {
