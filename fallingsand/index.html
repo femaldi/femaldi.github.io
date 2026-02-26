@@ -3634,9 +3634,14 @@
 
                     for (let cy = minCY; cy <= maxCY; cy++) {
                         for (let cx = minCX; cx <= maxCX; cx++) {
-                            const key = coordToKey(cx, cy);
-                            nextActiveSolidChunks.add(key);
-                            nextActiveLiquidChunks.add(key);
+                            const sectorX = Math.floor(cx * CHUNK_SIZE / SECTOR_SIZE);
+                            const sectorY = Math.floor(cy * CHUNK_SIZE / SECTOR_SIZE);
+                            const sector = sectorGrid.get(coordToKey(sectorX, sectorY));
+                            if (sector && sector.state === 'ready') {
+                                const key = coordToKey(cx, cy);
+                                nextActiveSolidChunks.add(key);
+                                nextActiveLiquidChunks.add(key);
+                            }
                         }
                     }
 
