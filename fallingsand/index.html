@@ -547,62 +547,43 @@
         }
 
 
+        // in index.html, replace the entire pickupObject function
+
         function pickupObject(body) {
-            if (body.isDestroyed) return;
+            if (body.isDestroyed || !body.body) return; // Added a safety check here too
 
             const userData = body.body.getUserData();
             const ringSprite = SpriteManager.sprites.get('pickup_shape');
             let pickedUp = false;
+            
+            // --- START OF THE FIX ---
+            // Get the position BEFORE doing anything that might destroy the body.
+            const pickupPos = body.body.getPosition();
+            // --- END OF THE FIX ---
 
+            // Handle picking up finished potions
             if (userData.isPotion) {
                 if (player.structurePocket.length < player.maxStructureSlots) {
                     world.destroyBody(body.body);
                     body.body = null;
                     player.structurePocket.push(body);
-                    pickedUp = true; // SET the flag instead of returning
+                    pickedUp = true;
                 } else {
                     displayMessage("Inventory Full", "Cannot pick up the potion.", 240);
                 }
-                // NOTE: The 'return' statement that was here is now REMOVED.
-            } else if (userData.onPickup) {
+            }
+            // Handle special "onPickup" items like upgrade tablets
+            else if (userData.onPickup) {
                 userData.onPickup(player);
-                body.isDestroyed = true; // Mark for cleanup
-                // Add a small visual effect for feedback
-                const pos = body.body.getPosition();
-                createShapeDissolveEffect({
-                    x: pos.x * B2_SCALE,
-                    y: pos.y * B2_SCALE - 64,
-                    shapeImage: ringSprite,
-                    color: [255, 220, 100],
-                    shapeSize: 128,
-                    particleCount: 3000
-                });
-
-                switch (userData.upgradeType) {
-                    case 'increase_tool_slots':
-                        displayMessage("Tool Pouch Expanded!", "You can now carry one additional tool.");
-                        break;
-                    case 'increase_structure_slots':
-                        displayMessage("Structure Bag Expanded!", "You can now carry one additional placeable structure.");
-                        break;
-                    case 'unlock_reaction':
-                        const key = userData.data.reactionKey;
-                        if (key === 'filter_material') {
-                            displayMessage("Reaction Unlocked: Filter", "Separates impurities. Place a mixture in the LEFT cauldron and activate. The least common material will move to the RIGHT cauldron.");
-                        } else if (key === 'heat_material') {
-                            displayMessage("Reaction Unlocked: Heat", "Applies intense heat to materials in the LEFT cauldron, causing transmutation.");
-                        }
-                        break;
-                }
-
+                body.isDestroyed = true; 
+                createShapeDissolveEffect({ x: pickupPos.x * B2_SCALE, y: pickupPos.y * B2_SCALE, shapeImage: ringSprite, /* ... */ });
                 return;
-            } else {
-
-                // Handle old definition-based objects
+            }
+            // Handle all other defined objects (tools, empty potions, barrels, etc.)
+            else {
                 const def = OBJECT_DEFINITIONS[userData.definitionId];
-                
                 if (!def) return;
-                
+
                 switch (def.type) {
                     case 'tool':
                         if (player.toolPocket.length < player.maxToolSlots) {
@@ -612,27 +593,25 @@
                         break;
                     case 'structure':
                         if (player.structurePocket.length < player.maxStructureSlots) {
+                            world.destroyBody(body.body);
+                            body.body = null;
                             player.structurePocket.push(body); 
                             pickedUp = true;
                         }
                         break;
-                    case 'upgrade':
-                        if (def.onPickup) def.onPickup(player);
-                        pickedUp = true; // Upgrades are always consumed
-                        break;
                 }
             }
-
+            
             if (pickedUp) {
-                body.isDestroyed = true; // Mark for cleanup
-                const pos = body.body.getPosition();
-                createShapeDissolveEffect({
-                    x: pos.x * B2_SCALE,
-                    y: pos.y * B2_SCALE - 64,
+                body.isDestroyed = true;
+                // Use the saved position for the particle effect.
+                 createShapeDissolveEffect({
+                    x: pickupPos.x * B2_SCALE,
+                    y: pickupPos.y * B2_SCALE,
                     shapeImage: ringSprite,
-                    color: [255, 220, 100],
-                    shapeSize: 128,
-                    particleCount: 3000
+                    color: [180, 220, 255],
+                    shapeSize: 32,
+                    particleCount: 800
                 });
             }
         }
@@ -1051,7 +1030,7 @@
             [MAT.UNSTABLE_ESSENCE_WEIGHT]: [140, 140, 150], [MAT.UNSTABLE_ESSENCE_GRANULARITY]: [230, 210, 180], [MAT.UNSTABLE_ESSENCE_ABRASION]: [200, 180, 160],
             [MAT.UNSTABLE_ESSENCE_STRUCTURE]: [160, 120, 90], [MAT.UNSTABLE_ESSENCE_BUOYANCY]: [200, 255, 230], [MAT.UNSTABLE_ESSENCE_CLARITY]: [240, 240, 255],
             [MAT.UNSTABLE_ESSENCE_BRITTLENESS]: [190, 190, 220], [MAT.UNSTABLE_ESSENCE_HEAT_RESISTANCE]: [255, 180, 150], [MAT.UNSTABLE_ESSENCE_LEVITY]: [220, 255, 200],
-            [MAT.UNSTABLE_ESSENCE_OBSCURITY]: [100, 100, 100], [MAT.UNSTABLE_ESSENCE_VISCOSITY]: [200, 170, 100], [MAT.UNSTABLE_ESSENCE_RAPID_EXPANSION]: [255, 200, 100],
+            [MAT.UNSTABLE_ESSENCE_OBSCURITY]: [80, 80, 80], [MAT.UNSTABLE_ESSENCE_VISCOSITY]: [200, 170, 100], [MAT.UNSTABLE_ESSENCE_RAPID_EXPANSION]: [255, 200, 100],
             [MAT.UNSTABLE_ESSENCE_VOLATILITY]: [240, 100, 100], [MAT.UNSTABLE_ESSENCE_SLOW_BURN]: [150, 90, 70], [MAT.UNSTABLE_ESSENCE_CARBON]: [80, 80, 80],
             [MAT.UNSTABLE_ESSENCE_SEPARATION]: [100, 255, 180], [MAT.UNSTABLE_ESSENCE_CONDUCTION]: [220, 210, 180], [MAT.UNSTABLE_ESSENCE_OXIDATION]: [210, 130, 90],
             [MAT.UNSTABLE_ESSENCE_INERTIA]: [130, 130, 130], [MAT.UNSTABLE_ESSENCE_PURITY]: [255, 255, 220], [MAT.UNSTABLE_ESSENCE_CATALYSIS]: [255, 220, 180],
@@ -1651,7 +1630,7 @@
         const MAX_STEP_HEIGHT = 2;
         const GRAVITY = 0.1;
         const MAX_FALL_SPEED = 4;
-        const MAX_HOVER_SPEED = 4;
+        const MAX_HOVER_SPEED = 3.5;
 
         const PLAYER_DEFAULT_DAMPING = 0.5;
         const PLAYER_SUBMERGED_DAMPING = 5.0;
@@ -1677,7 +1656,50 @@
             [MAT.ACID]: { color: [0, 255, 0], intensity: 1.0, radius: 8 },
         };
 
+        // Add this new constant
+        const LIQUID_EMITTER_MATERIALS = {
+            [MAT.LAVA]: {
+                color: [255, 100, 0],
+                colorVariance: 50,
+                vy: { min: -1.2, max: -0.6 },
+                vx: { min: -0.5, max: 0.5 },
+                lifespan: { min: 5, max: 50 },
+                gravity: 0.04, // Small gravity to make them arc and fall
+                particleType: 'ember',
+                spawnChangeDivisor: 128
+            },
+            [MAT.ACID]: {
+                color: [100, 255, 100],
+                colorVariance: 40,
+                vy: { min: -0.5, max: -0.2 },
+                vx: { min: -0.1, max: 0.1 },
+                lifespan: { min: 10, max: 20 },
+                gravity: 0, // No gravity, just drifts up
+                particleType: 'bubble',
+                spawnChangeDivisor: 64
+            },
+        };
+
+        // Add all the unstable essences to this object programmatically
+        for (const matIdString in COLORS) {
+            const matId = parseInt(matIdString);
+            if (matId >= 200 && matId < 255) { // Unstable Essence ID range
+                LIQUID_EMITTER_MATERIALS[matId] = {
+                    color: COLORS[matId],
+                    colorVariance: 30,
+                    vy: { min: -1, max: -0.7 },
+                    vx: { min: 0, max: 0 },
+                    lifespan: { min: 10, max: 10 },
+                    gravity: 0,
+                    particleType: 'wisp',
+                    spawnChangeDivisor: 16
+                };
+            }
+        }
+
         const GENERIC_SPRITES = [
+            { id: 'player_frame_1', path: 'assets/player_1.png' },
+            { id: 'player_frame_2', path: 'assets/player_2.png' },
             { id: 'wooden_box_16x16', path: 'assets/wooden_box.png' },
             { id: 'wooden_box_32x32', path: 'assets/wooden_box_large.png' },
             { id: 'iron_door_27x33', path: 'assets/iron_door.png' },
@@ -1738,6 +1760,7 @@
         let hudFPS = 0;
         let hudMaterial = '--';
         let hudTimer = 0;
+        let chunksWithLightingChanges = new Set();
 
         // ADD these new variables:
         let cacheCanvas = null;
@@ -1785,6 +1808,7 @@
             if (type === MAT.SMOKE) return 100;
             if (type === MAT.STEAM) return 80;
             if (type === MAT.METHANE) return 40;
+            if (type === MAT.LAVA) return 200;
             if (LIQUIDS.has(type)) return 140;
             return 255;
         }
@@ -2317,6 +2341,11 @@
             }
 
             rebuildFixtures() {
+                if (!this.body) {
+                    this.needsShapeUpdate = false; // Also reset the flag to prevent repeated calls
+                    return;
+                }
+
                 // 1. Save the body's current state (type and velocity).
                 const oldType = this.body.getType();
                 const oldLinVel = this.body.getLinearVelocity();
@@ -3427,7 +3456,8 @@
         };
         // --- END OF NEW CODE ---
 
-        // --- REPLACEMENT for the SpriteManager.loadAll function ---
+        // in index.html, replace the entire SpriteManager.loadAll function
+
         const SpriteManager = {
             sprites: new Map(),
 
@@ -3453,8 +3483,44 @@
                     const promise = new Promise((resolve) => {
                         const img = new Image();
                         img.onload = () => {
-                            this.sprites.set(item.id, img);
-                            console.log(`Successfully loaded sprite: ${item.id}`);
+                            // --- START OF THE FIX: WHITE-TO-TRANSPARENT PROCESSING ---
+
+                            // 1. Create a temporary canvas with the same dimensions as the loaded image.
+                            const tempCanvas = document.createElement('canvas');
+                            tempCanvas.width = img.width;
+                            tempCanvas.height = img.height;
+                            const tempCtx = tempCanvas.getContext('2d');
+
+                            // 2. Draw the loaded image onto the canvas.
+                            tempCtx.drawImage(img, 0, 0);
+
+                            // 3. Get the raw pixel data (RGBA values).
+                            const imageData = tempCtx.getImageData(0, 0, img.width, img.height);
+                            const data = imageData.data;
+
+                            // 4. Loop through every pixel.
+                            for (let i = 0; i < data.length; i += 4) {
+                                const r = data[i];
+                                const g = data[i + 1];
+                                const b = data[i + 2];
+
+                                // If the pixel is pure white (or very close to it)...
+                                if (r >= 250 && g >= 250 && b >= 250) {
+                                    // ...set its alpha value to 0 (fully transparent).
+                                    data[i + 3] = 0;
+                                }
+                            }
+
+                            // 5. Put the modified pixel data back onto the canvas.
+                            tempCtx.putImageData(imageData, 0, 0);
+                            
+                            // 6. Store the canvas itself instead of the original image.
+                            // The canvas can be drawn just like an image but now has the correct transparency.
+                            this.sprites.set(item.id, tempCanvas);
+                            
+                            // --- END OF THE FIX ---
+
+                            console.log(`Successfully loaded and processed sprite: ${item.id}`);
                             resolve();
                         };
                         img.onerror = () => {
@@ -3469,8 +3535,6 @@
                 await Promise.all(promises);
             }
         };
-
-        // --- ADD THIS NEW PROFILER OBJECT ---
 
         const Profiler = {
             timings: new Map(),
@@ -4047,7 +4111,7 @@
                         // Fill the potion visually (simple version for now)
                         for(let y = 5; y < 10; y++) {
                             for(let x = 2; x < 6; x++) {
-                                finishedPotion.pixels[y * 8 + x] = MAT.ADAMANTIUM; // Color it with the primary essence
+                                finishedPotion.pixels[y * 8 + x] = ESSENCE_TO_MAT[ESSENCES.INTENSE_HEAT]; // Color it with the primary essence
                             }
                         }
                         
@@ -4362,6 +4426,27 @@
                                 const worldY = piece.bounds.y + rbDef.y;
                                 createRigidBodyRectangle(worldX, worldY, rbDef.width, rbDef.height, rbDef.material, 'iron_door_27x33', 'Iron door');
                             }
+                        }
+                    }
+                },
+                {
+                    name: "HollowMountain",
+                    imagePath: 'assets/levitation_challenge.png',
+                    spawnLocalX: 256,
+                    spawnLocalY: 256,
+                    targetSectorOffsetX: 1,
+                    targetSectorOffsetY: 0,
+                    parsedData: null,
+                    postGenerationHook: function(piece) {
+                        if (!piece.parsedData) return;
+                        
+                        // Handle treasure
+                        const areas = piece.parsedData.functionalAreas;
+                        if (areas && areas.treasureMarker) {
+                            const treasureArea = areas.treasureMarker;
+                            const treasureWorldX = piece.bounds.x + treasureArea.x;
+                            const treasureWorldY = piece.bounds.y + treasureArea.y;
+                            createMagicTablet(treasureWorldX, treasureWorldY, 'increase_structure_slots');
                         }
                     }
                 },
@@ -4692,8 +4777,8 @@
             activeStationGeometry: null,
             maxHoverEnergy: 100,
             hoverEnergy: 100,
-            hoverForce: 0.25,
-            hoverDrainRate: 0.5,
+            hoverForce: 0.1,
+            hoverDrainRate: 1,
             hoverRechargeRate: 1,
             maxHp: 100,
             hp: 100,
@@ -4941,9 +5026,93 @@
 
         window.addEventListener('keyup', (e) => keys[e.code] = false);
 
-        // in index.html
+        /**
+         * Checks if a given rectangular area is free of solid materials and has stable ground beneath it.
+         * @param {RigidBody} body - The body to check the placement for (used for its dimensions).
+         * @param {number} targetX - The desired center X coordinate of the placement.
+         * @param {number} targetY - The desired center Y coordinate of the placement.
+         * @returns {boolean} - True if the location is valid for placement.
+         */
+        function isValidPlacement(body, targetX, targetY) {
+            const halfW = Math.ceil(body.width / 2);
+            const halfH = Math.ceil(body.height / 2);
 
-        // in index.html, replace the entire consumePotion function
+            const isPassable = (type) => (type === MAT.EMPTY || GASES.has(type));
+
+            // 1. Check if the object's own area is clear of solids.
+            for (let y = -halfH; y < halfH; y++) {
+                for (let x = -halfW; x < halfW; x++) {
+                    const checkX = Math.floor(targetX + x);
+                    const checkY = Math.floor(targetY + y);
+                    if (!isPassable(getGrid(checkX, checkY))) {
+                        return false; // Obstructed
+                    }
+                }
+            }
+
+            // 2. Check for stable ground directly underneath the object's footprint.
+            const groundCheckY = Math.floor(targetY + halfH) + 1;
+            let groundFound = false;
+            // Check 3 points along the bottom for support (left, middle, right)
+            for (let i = -1; i <= 1; i++) {
+                const groundCheckX = Math.floor(targetX + i * (halfW * 0.5));
+                if (isSolidForPlayer(getGrid(groundCheckX, groundCheckY))) {
+                    groundFound = true;
+                    break; // Found at least one support point
+                }
+            }
+
+            return groundFound;
+        }
+
+        /**
+         * Searches in an expanding radius around an initial point to find a valid placement spot for a structure.
+         * @param {RigidBody} bodyToPlace - The RigidBody object from the player's inventory.
+         * @param {number} initialX - The initial mouse world X coordinate.
+         * @param {number} initialY - The initial mouse world Y coordinate.
+         * @returns {boolean} - True if the object was successfully placed, false otherwise.
+         */
+        function findAndPlaceStructure(bodyToPlace, initialX, initialY) {
+            const SEARCH_RADIUS = 16; // How far in pixels to search for a valid spot.
+
+            // Check the initial mouse position first.
+            if (isValidPlacement(bodyToPlace, initialX, initialY)) {
+                bodyToPlace.reintroduceToWorld(initialX, initialY);
+                rigidBodies.push(bodyToPlace);
+                return true;
+            }
+
+            // If initial spot fails, search in an expanding square radius.
+            for (let r = 1; r <= SEARCH_RADIUS; r++) {
+                for (let i = -r; i <= r; i++) {
+                    // Check horizontal edges of the search square
+                    if (isValidPlacement(bodyToPlace, initialX + i, initialY - r)) {
+                        bodyToPlace.reintroduceToWorld(initialX + i, initialY - r);
+                        rigidBodies.push(bodyToPlace);
+                        return true;
+                    }
+                    if (isValidPlacement(bodyToPlace, initialX + i, initialY + r)) {
+                        bodyToPlace.reintroduceToWorld(initialX + i, initialY + r);
+                        rigidBodies.push(bodyToPlace);
+                        return true;
+                    }
+                    // Check vertical edges of the search square
+                    if (isValidPlacement(bodyToPlace, initialX - r, initialY + i)) {
+                        bodyToPlace.reintroduceToWorld(initialX - r, initialY + i);
+                        rigidBodies.push(bodyToPlace);
+                        return true;
+                    }
+                    if (isValidPlacement(bodyToPlace, initialX + r, initialY + i)) {
+                        bodyToPlace.reintroduceToWorld(initialX + r, initialY + i);
+                        rigidBodies.push(bodyToPlace);
+                        return true;
+                    }
+                }
+            }
+
+            // If no spot was found after searching the full radius
+            return false;
+        }
 
         function consumePotion() {
             // Find the index of the first item in the general inventory that is a potion.
@@ -5141,44 +5310,35 @@
             }
         }
 
+        // in index.html, replace the renderSpawnAnimation function
+
         function renderSpawnAnimation() {
             if (!player.isSpawning) return;
 
-            const baseScreenX = Math.round(player.x - camera.x);
-            const baseScreenY = Math.round(player.y - camera.y);
-            const cloak = [0x4a, 0x2d, 0x5e];
-            const face = [0x21, 0x1e, 0x20];
-            const sprite = PLAYER_SPRITE[0]; // Use a static sprite frame for spawning
+            const spriteImg = SpriteManager.sprites.get('player_frame_1');
+            if (!spriteImg) return;
 
+            const screenX = Math.round(player.x - camera.x);
+            const screenY = Math.round(player.y - camera.y);
+
+            // Number of vertical pixel rows to draw
             const materializedRows = player.spawnAnimationProgress;
 
-            // Iterate from the bottom of the sprite upwards
-            for (let y = 15; y >= 0; y--) {
-                const rowProgress = 16 - y;
-                if (rowProgress > materializedRows) continue; // Don't draw rows that haven't appeared yet
-
-                const row = sprite[y];
-                for (let x = 0; x < 8; x++) {
-                    const ch = row[x];
-                    if (ch === '.') continue;
-
-                    const sx = baseScreenX + x - 4;
-                    const sy = baseScreenY + y - 8;
-                    let r, g, b;
-
-                    // If this is the active row being drawn, make it glow
-                    if (rowProgress === materializedRows) {
-                        const flicker = Math.random() * 55;
-                        r = 200 + flicker;
-                        g = 180 + flicker;
-                        b = 255;
-                    } else { // Otherwise, draw the final sprite color
-                        [r, g, b] = (ch === 'F') ? face : cloak;
-                    }
-                    
-                    ctx.fillStyle = `rgb(${r|0},${g|0},${b|0})`;
-                    ctx.fillRect(sx, sy, 1, 1);
-                }
+            if (materializedRows > 0) {
+                ctx.drawImage(
+                    spriteImg,
+                    0, 0, // Source X, Y
+                    spriteImg.width, materializedRows, // Source Width, Height (clipping)
+                    screenX, screenY, // Destination X, Y
+                    spriteImg.width, materializedRows // Destination Width, Height
+                );
+            }
+            
+            // Draw the glowing line at the edge of materialization
+            if (materializedRows < spriteImg.height) {
+                const glowY = screenY + materializedRows;
+                ctx.fillStyle = `rgba(220, 220, 255, ${0.8 + Math.random() * 0.2})`;
+                ctx.fillRect(screenX, glowY, spriteImg.width, 1);
             }
         }
 
@@ -5371,25 +5531,18 @@
                 filterMaskBits: MASK_PLAYER});
         }
 
-        // --- START OF REPLACEMENT ---
-        /**
-         * Updates the player's death animation, progressing the random dissolve.
-         */
+        // in index.html, replace the updateDeathAnimation function
+
         function updateDeathAnimation() {
-            // Stop if the animation is over
-            if (!isPlayerDead || player.deathAnimationProgress >= player.deathPixelShuffle.length) return;
+            if (!isPlayerDead) return;
+            // The animation is "over" when the fade is complete.
+            const DEATH_ANIM_DURATION = 60;
+            if (player.deathAnimationProgress >= DEATH_ANIM_DURATION) return;
 
-            // Increment progress, removing a few pixels each time for speed.
-            player.deathAnimationProgress += 1; // Dissolve 1 pixels per update
-
-            // On the first frame of the animation, make the physics body static.
-            // if (player.body && player.body.getType() !== 'static') {
-            //     player.body.setType('static'); // Freezes the body in place
-            // }
+            // Simply increment a timer. The rendering function will use this value.
+            player.deathAnimationProgress++;
         }
-        // --- END OF REPLACEMENT ---
 
-        // --- START OF REPLACEMENT ---
         /**
          * Handles player death by preparing the random dissolve animation.
          */
@@ -5400,25 +5553,6 @@
 
             // --- Setup for the Random Dissolve Animation ---
             
-            // 1. Get the player's current sprite frame at the moment of death.
-            const anim = getPlayerAnimFrame();
-            const sprite = PLAYER_SPRITE[anim.frameIdx & 1];
-            
-            // 2. Create a list of all visible pixel coordinates {x, y}.
-            const pixelCoords = [];
-            for (let y = 0; y < 16; y++) {
-                const row = sprite[y];
-                for (let x = 0; x < 8; x++) {
-                    if (row[x] !== '.') {
-                        pixelCoords.push({ x, y });
-                    }
-                }
-            }
-            
-            // 3. Shuffle this list to get a random order of disappearance.
-            shuffleArray(pixelCoords);
-            player.deathPixelShuffle = pixelCoords;
-
             // 4. Kick off the animation.
             player.deathAnimationProgress = 0;
 
@@ -5721,7 +5855,23 @@
         });
         
         canvas.addEventListener('mousedown', (e) => {
-            if (e.button === 0) isPouring = true;
+            if (e.button === 0) {
+                // Left Click: Check what the active container is.
+                switch (activeContainer) {
+                    case 'tool':
+                    case 'structure':
+                        // If holding a tool or structure, throw it.
+                        throwHeldItem();
+                        break;
+                    
+                    case 'pouch':
+                    case 'flask':
+                    default:
+                        // Otherwise, pour materials.
+                        isPouring = true;
+                        break;
+                }
+            }
             else if (e.button === 1) { isDrawing = true; draw(mouse.worldX, mouse.worldY); e.preventDefault(); }
             else if (e.button === 2) {
                 // --- START: New Right-Click Logic ---
@@ -5747,20 +5897,24 @@
                         }
                         break;
                     case 'structure':
-                         if (player.structurePocket.length > 0) {
-                             const bodyToPlace = player.structurePocket.splice(player.structureIndex, 1)[0];
-                             
-                             // Reset index if it's now out of bounds
-                             if (player.structureIndex >= player.structurePocket.length) {
-                                 player.structureIndex = 0;
-                             }
-                             
-                             // Re-create its physics body at the mouse cursor location
-                             bodyToPlace.reintroduceToWorld(mouse.worldX, mouse.worldY);
+                        if (player.structurePocket.length > 0) {
+                            // Take the item out of the pocket first.
+                            const bodyToPlace = player.structurePocket.splice(player.structureIndex, 1)[0];
+                            
+                            // Try to find a valid spot and place it.
+                            const placedSuccessfully = findAndPlaceStructure(bodyToPlace, mouse.worldX, mouse.worldY);
 
-                             // Add it back to the main simulation array
-                             rigidBodies.push(bodyToPlace);
-                         }
+                            if (!placedSuccessfully) {
+                                // If we couldn't find a spot, put the item back in the inventory!
+                                player.structurePocket.splice(player.structureIndex, 0, bodyToPlace);
+                                //displayMessage("Placement Failed", "Cannot place structure here.", 180);
+                            } else {
+                                // If placed, reset the index if it's now out of bounds.
+                                if (player.structureIndex >= player.structurePocket.length) {
+                                    player.structureIndex = 0;
+                                }
+                            }
+                        }
                         break;
                 }
                 // --- END: New Right-Click Logic ---
@@ -6135,7 +6289,7 @@
                 const aim = computePlayerAim();
 
                 // Calculate the world position of the player's hand
-                const handLocalX = aim.facingRight ? 8 : -1;
+                const handLocalX = aim.facingRight ? 2 : 5;
                 const handLocalY = 9; // Base y-offset of hand from player origin
                 const handWorldX = player.x + handLocalX;
                 const handWorldY = player.y + handLocalY;
@@ -6189,11 +6343,11 @@
             if (keys['KeyA']) { targetVelX = -player.speed * 2.5; playerFacingRight = false; }
             else if (keys['KeyD']) { targetVelX = player.speed * 2.5; playerFacingRight = true; }
 
-            player.onGround = Math.abs(currentVel.y) < 0.1;
+            player.onGround = isPlayerOnGround();
             let newVelY = currentVel.y;
 
             if (keys['KeyW'] && player.hoverEnergy > 0) {
-                const jumpForce = isInLiquid ? MAX_HOVER_SPEED * 1.5 : MAX_HOVER_SPEED;
+                const jumpForce = isInLiquid ? MAX_HOVER_SPEED * 1.5 :  MAX_HOVER_SPEED;
                 newVelY = -jumpForce;
                 player.hoverEnergy = Math.max(0, player.hoverEnergy - player.hoverDrainRate);
                 if (!isInLiquid) spawnLevitationParticles(2);
@@ -6205,6 +6359,41 @@
 
             player.body.setLinearVelocity(pl.Vec2(targetVelX, newVelY));
         }
+
+        // in index.html, replace the entire isPlayerOnGround function
+
+        /**
+         * Accurately checks for ground beneath the player's feet by sampling the falling sand grid directly.
+         * @returns {boolean} - True if a solid surface is detected immediately beneath the player.
+         */
+        function isPlayerOnGround() {
+            if (!player.body) return false;
+
+            // Define the 3 horizontal points at the player's feet we want to check.
+            // These are in local space, relative to the player's top-left corner (player.x, player.y).
+            const footPositionsX = [
+                player.x + player.width / 2,      // Center
+                player.x + player.width / 2 - 1,
+                player.x + player.width / 2 + 1,
+            ];
+
+            // The Y level to check is just below the player's bounding box.
+            const groundCheckY = Math.floor(player.y + player.height) + 1;
+
+            for (const checkX of footPositionsX) {
+                // For each foot position, check the pixel directly below it.
+                const gridType = getGrid(Math.floor(checkX), groundCheckY);
+
+                // Use the existing helper function to determine if it's a solid surface.
+                if (isSolidForPlayer(gridType)) {
+                    // If we find solid ground under any of the check points, we are grounded.
+                    return true;
+                }
+            }
+
+            // If we looped through all points and found no solid ground, we are not grounded.
+            return false;
+        }
         
         function syncPlayerWithBody() {
             if (!player.body) return;
@@ -6213,8 +6402,195 @@
             player.y = (pos.y * B2_SCALE) - (player.height / 2);
         }
 
+        /**
+         * Creates visual particles that flow from a source point to the player.
+         * @param {number} sourceX - The world X coordinate of the material being stored.
+         * @param {number} sourceY - The world Y coordinate of the material being stored.
+         * @param {number} materialType - The type of material to get the color from.
+         */
+        function createStoreParticles(sourceX, sourceY, materialType) {
+            const count = 3; // Number of particles to spawn per stored pixel
+            const speed = 2.0;
+            const targetX = player.x + player.width / 2;
+            const targetY = player.y + player.height / 2;
+            const baseColor = COLORS[materialType] || [255, 255, 255];
+            let spawnedCount = 0;
+
+            for (let i = 0; i < MAX_MAGIC_PARTICLES; i++) {
+                if (spawnedCount >= count) break;
+                const p = magicParticlePool[i];
+                if (p.active) continue;
+
+                p.active = true;
+                p.isStoringParticle = true; // NEW FLAG for special behavior
+                p.gravity = 0;
+                p.lifespan = 40 + Math.random() * 20; // Give them about a second to live
+
+                // Start at the source with a tiny random offset
+                p.x = sourceX + Math.random() - 0.5;
+                p.y = sourceY + Math.random() - 0.5;
+
+                // Calculate velocity vector towards the player
+                const dx = targetX - p.x;
+                const dy = targetY - p.y;
+                const dist = Math.hypot(dx, dy);
+                
+                if (dist > 1) {
+                    const randomSpeed = speed + (Math.random() - 0.5) * 0.5;
+                    p.vx = (dx / dist) * randomSpeed;
+                    p.vy = (dy / dist) * randomSpeed;
+                } else {
+                    p.vx = 0; p.vy = 0; // Already at the target
+                }
+                
+                // Set color with variance
+                const v = 40;
+                p.color = [
+                    Math.max(0, Math.min(255, baseColor[0] + (Math.random() - 0.5) * v)),
+                    Math.max(0, Math.min(255, baseColor[1] + (Math.random() - 0.5) * v)),
+                    Math.max(0, Math.min(255, baseColor[2] + (Math.random() - 0.5) * v))
+                ];
+
+                spawnedCount++;
+            }
+        }
+
+        // in index.html, inside the main <script> tag
+
+        /**
+         * Checks for solid obstructions along a line between two points using Bresenham's algorithm.
+         * @param {number} x0 - Starting X coordinate.
+         * @param {number} y0 - Starting Y coordinate.
+         * @param {number} x1 - Ending X coordinate.
+         * @param {number} y1 - Ending Y coordinate.
+         * @returns {boolean} - True if the line is clear, false if it's blocked by a solid pixel.
+         */
+        function hasLineOfSight(x0, y0, x1, y1) {
+            let ix0 = Math.floor(x0);
+            let iy0 = Math.floor(y0);
+            const ix1 = Math.floor(x1);
+            const iy1 = Math.floor(y1);
+
+            const dx = Math.abs(ix1 - ix0);
+            const dy = -Math.abs(iy1 - iy0);
+            const sx = ix0 < ix1 ? 1 : -1;
+            const sy = iy0 < iy1 ? 1 : -1;
+            let err = dx + dy;
+
+            while (true) {
+                // Check the current pixel in the line
+                const type = getGrid(ix0, iy0);
+
+                // A wall blocks line of sight. We must also check that the obstacle is NOT the target pixel itself.
+                if (isSolidForPlayer(type) && (ix0 !== ix1 || iy0 !== iy1)) {
+                    return false; // Blocked
+                }
+
+                // Check if we've reached the destination
+                if (ix0 === ix1 && iy0 === iy1) {
+                    break;
+                }
+
+                // Bresenham's algorithm stepping logic
+                const e2 = 2 * err;
+                if (e2 >= dy) {
+                    err += dy;
+                    ix0 += sx;
+                }
+                if (e2 <= dx) {
+                    err += dx;
+                    iy0 += sy;
+                }
+            }
+
+            return true; // Line is clear
+        }
+
+        /**
+         * Removes the currently selected tool or structure from inventory and throws it into the world.
+         */
+        function throwHeldItem() {
+            const THROW_FORCE = 6.0; // The initial speed of the thrown object in meters/sec.
+
+            const isTool = activeContainer === 'tool';
+            const pocket = isTool ? player.toolPocket : player.structurePocket;
+            const index = isTool ? player.toolIndex : player.structureIndex;
+
+            if (pocket.length === 0) return;
+
+            // --- 1. Get the item and remove it from inventory ---
+            const itemRepresentation = pocket.splice(index, 1)[0];
+
+            // --- 2. Calculate spawn position and velocity ---
+            const aim = computePlayerAim();
+            // Spawn the object slightly in front of the player to avoid immediate collision
+            const spawnOffsetX = 12; 
+            const spawnOffsetY = 12;
+            const spawnX = player.x + player.width / 2 + Math.cos(aim.aimAngle) * spawnOffsetX;
+            const spawnY = player.y + player.height / 2 + Math.sin(aim.aimAngle) * spawnOffsetY;
+
+            const velX = Math.cos(aim.aimAngle) * THROW_FORCE;
+            const velY = Math.sin(aim.aimAngle) * THROW_FORCE;
+
+            let thrownBody = null;
+
+            // --- 3. Create the physical RigidBody in the world ---
+            if (isTool) {
+                // For tools, we only have the name. We need to find its definition and create a new body.
+                let toolDefId = null;
+                let toolDef = null;
+                for (const id in OBJECT_DEFINITIONS) {
+                    if (OBJECT_DEFINITIONS[id].name === itemRepresentation) {
+                        toolDefId = id;
+                        toolDef = OBJECT_DEFINITIONS[id];
+                        break;
+                    }
+                }
+
+                if (toolDef) {
+                    const newBody = new RigidBody(spawnX, spawnY, toolDef.width, toolDef.height, MAT.WOOD, toolDef.name);
+                    newBody.pixels = new Uint8Array(toolDef.pixels);
+                    newBody.rebuildFixtures();
+                    const userData = newBody.body.getUserData();
+                    userData.isPickup = true;
+                    userData.definitionId = toolDefId;
+                    rigidBodies.push(newBody);
+                    thrownBody = newBody;
+                } else {
+                    // Failsafe: if definition isn't found, put the item back.
+                    pocket.splice(index, 0, itemRepresentation);
+                    console.error("Could not find definition for tool:", itemRepresentation);
+                }
+            } else {
+                // For structures, we already have the RigidBody object. Just re-introduce it to the world.
+                const bodyToThrow = itemRepresentation;
+                bodyToThrow.reintroduceToWorld(spawnX, spawnY);
+                rigidBodies.push(bodyToThrow);
+                thrownBody = bodyToThrow;
+            }
+
+            // --- 4. Apply the throw velocity and update inventory index ---
+            if (thrownBody) {
+                thrownBody.body.setLinearVelocity(pl.Vec2(velX, velY));
+
+                // Update the selected index to prevent out-of-bounds errors
+                if (isTool) {
+                    if (player.toolIndex >= player.toolPocket.length) {
+                        player.toolIndex = 0;
+                    }
+                } else {
+                    if (player.structureIndex >= player.structurePocket.length) {
+                        player.structureIndex = 0;
+                    }
+                }
+            }
+        }
+
         function storeMaterial(worldX, worldY) {
+            const playerCenterX = player.x + player.width / 2;
+            const playerCenterY = player.y + player.height / 2;
             const storeRadius = 1;
+
             for (let dy = -storeRadius; dy <= storeRadius; dy++) {
                 for (let dx = -storeRadius; dx <= storeRadius; dx++) {
                     const wx = worldX + dx;
@@ -6226,21 +6602,26 @@
                         targetGrid = pouchGrid; targetW = pouchWidth; targetH = pouchHeight;
                     } else if (STORABLE_LIQUIDS.has(type)) {
                         targetGrid = flaskGrid; targetW = flaskWidth; targetH = flaskHeight;
-                    } else continue;
+                    } else {
+                        continue; // Not a storable material
+                    }
 
-                    let spotFound = false;
-                    for (let y=0;y<targetH;y++) {
-                        const xOffset = Math.floor(Math.random() * targetW);
-                        for (let i=0;i<targetW;i++) {
-                            const x = (i+xOffset)%targetW;
-                            const containerIdx = getIdx(x,y,targetW,targetH);
-                            if (containerIdx !== -1 && targetGrid[containerIdx] === MAT.EMPTY) {
-                                targetGrid[containerIdx] = type;
-                                setGrid(wx, wy, MAT.EMPTY);
-                                spotFound = true; break;
+                    if (hasLineOfSight(playerCenterX, playerCenterY, wx, wy)) {
+                        let spotFound = false;
+                        for (let y=0;y<targetH;y++) {
+                            const xOffset = Math.floor(Math.random() * targetW);
+                            for (let i=0;i<targetW;i++) {
+                                const x = (i+xOffset)%targetW;
+                                const containerIdx = getIdx(x,y,targetW,targetH);
+                                if (containerIdx !== -1 && targetGrid[containerIdx] === MAT.EMPTY) {
+                                    targetGrid[containerIdx] = type;
+                                    setGrid(wx, wy, MAT.EMPTY);
+                                    createStoreParticles(wx, wy, type);
+                                    spotFound = true; break;
+                                }
                             }
+                            if (spotFound) break;
                         }
-                        if (spotFound) break;
                     }
                 }
             }
@@ -6269,7 +6650,8 @@
                         pouredParticles.push({
                             x:finalSpawnX, y:finalSpawnY,
                             vx:Math.cos(finalAngle)*finalVelocity, vy:Math.sin(finalAngle)*finalVelocity,
-                            type:type
+                            type:type,
+                            lifespan: 60
                         });
                         
                         pouredCount++;
@@ -6292,42 +6674,87 @@
             return hit;
         }
         
+        // in index.html, replace the entire updatePouredParticles function
+
         function updatePouredParticles() {
             pouredParticles = pouredParticles.filter(p => {
-                p.vy += GRAVITY * 0.5;
-                const nextX = p.x + p.vx, nextY = p.y + p.vy;
-                const nextIX = Math.floor(nextX), nextIY = Math.floor(nextY);
-
-                const gridBlocked = getGrid(nextIX, nextIY) !== MAT.EMPTY && !GASES.has(getGrid(nextIX, nextIY));
-                const rigidBlocked = getAuxData(etcChunkMap, nextIX, nextIY) === 1; // 1 means rigid body
-                const isObstructed = gridBlocked || rigidBlocked;
-                const hasStopped = (p.vx*p.vx + p.vy*p.vy < 1.0);
-
-                if (isObstructed || hasStopped) {
-                    let placeX = Math.floor(p.x), placeY = Math.floor(p.y);
-                    while (true) {
-                        if (getGrid(placeX, placeY) === MAT.EMPTY || GASES.has(getGrid(placeX, placeY))) {
-                            setGrid(placeX, placeY, p.type);
-                            break;
-                        }
-                        placeY--;
-                        if (placeY < camera.y - 100) break; // Safety break
-                    }
-                    return false;
-                } else {
-                    p.x = nextX; p.y = nextY;
-                    return true;
+                p.lifespan--; // Decrement lifespan each frame
+                if (p.lifespan <= 0) {
+                    return false; // Remove particle if its time is up
                 }
+
+                p.vy += GRAVITY * 0.5; // Apply gravity first
+
+                const vx = p.vx;
+                const vy = p.vy;
+
+                // --- START: NEW COLLISION LOGIC ---
+
+                // 1. Determine how many small steps we need to check this frame.
+                // This is based on the longest distance the particle travels in either axis.
+                const steps = Math.ceil(Math.max(Math.abs(vx), Math.abs(vy)));
+
+                // If moving less than 1 pixel, we can use a single check (optimization).
+                if (steps <= 1) {
+                    const nextX = p.x + vx;
+                    const nextY = p.y + vy;
+                    const gridBlocked = getGrid(Math.floor(nextX), Math.floor(nextY)) !== MAT.EMPTY;
+                    const rigidBlocked = getAuxData(etcChunkMap, Math.floor(nextX), Math.floor(nextY)) === 1;
+
+                    if (gridBlocked || rigidBlocked) {
+                        // Collision detected, place the particle and stop it.
+                        setGrid(Math.floor(p.x), Math.floor(p.y), p.type, true);
+                        return false; // Remove from active particles
+                    } else {
+                        // No collision, update position and continue.
+                        p.x = nextX;
+                        p.y = nextY;
+                        return true; // Keep particle active
+                    }
+                }
+
+                // 2. If moving fast, check in small increments along the path.
+                const stepX = vx / steps;
+                const stepY = vy / steps;
+
+                for (let i = 1; i <= steps; i++) {
+                    const checkX = p.x + stepX * i;
+                    const checkY = p.y + stepY * i;
+                    const checkIX = Math.floor(checkX);
+                    const checkIY = Math.floor(checkY);
+
+                    const gridBlocked = getGrid(checkIX, checkIY) !== MAT.EMPTY;
+                    const rigidBlocked = getAuxData(etcChunkMap, checkIX, checkIY) === 1;
+
+                    if (gridBlocked || rigidBlocked) {
+                        // Collision detected! Settle the particle at its position just BEFORE the hit.
+                        const finalX = Math.floor(p.x + stepX * (i - 1));
+                        const finalY = Math.floor(p.y + stepY * (i - 1));
+                        
+                        // Use the existing "settle" logic to find an empty spot if the landing spot is taken.
+                        let placeX = finalX, placeY = finalY;
+                        let attempts = 0;
+                        while(getGrid(placeX, placeY) !== MAT.EMPTY && attempts < 5) {
+                            placeY--;
+                            attempts++;
+                        }
+                        
+                        setGrid(placeX, placeY, p.type, true);
+                        return false; // Remove particle from active list
+                    }
+                }
+                
+                // 3. If the loop completes, no collision was found along the path.
+                p.x += vx;
+                p.y += vy;
+                return true; // Keep particle active for the next frame
+
+                // --- END: NEW COLLISION LOGIC ---
             });
         }
         
-        // This group of functions can remain mostly as-is
-		function shootFire(){/*...no changes needed...*/};
-		function updateProjectiles(){/*...no changes needed...*/};
         const movedPouch = new Uint8Array(pouchWidth*pouchHeight);
         const movedFlask = new Uint8Array(flaskWidth*flaskHeight);
-        
-        
 
         function updateCamera() {
             const targetCamX = player.x - viewWidth/2;
@@ -6336,7 +6763,6 @@
             camera.y += (targetCamY - camera.y) * 0.1;
             // No more clamping
         }
-
         
         function isLiquid (type) {
             return LIQUIDS.has(type);
@@ -7048,111 +7474,32 @@
             const r2=radius*radius, inner=(radius-thickness)**2; for(let dy=-radius;dy<=radius;dy++) for(let dx=-radius;dx<=radius;dx++) {const d2=dx*dx+dy*dy; if(d2<=r2&&d2>=inner) setGrid(x+dx,y+dy,type);}
         }
 
+        // in index.html, inside the main <script> tag
+
         /**
-         * A unified, high-performance light propagation function.
-         * Takes a queue of initial light source coordinates and spreads light outwards.
-         * Returns a Set of neighboring chunk keys that were affected.
+         * Proactively marks the 3x3 grid of chunks around the player as dirty for a lighting update.
+         * This ensures that as the player moves into new areas, the lighting is calculated correctly.
          */
-        function propagateLightFromQueue(queue) {
-            const neighborsToActivate = new Set();
-            let head = 0;
-            const DIRS_4 = [{ x: -1, y: 0 }, { x: 1, y: 0 }, { x: 0, y: -1 }, { x: 0, y: 1 }];
+        function proactivelyUpdateLightingNearPlayer() {
+            if (!player.body) return;
 
-            while (head < queue.length) {
-                const current = queue[head++];
-                const currentLight = getAuxData(lightChunkMap, current.x, current.y);
-                if (currentLight <= 1) continue;
+            const playerCX = Math.floor((player.x + player.width / 2) / CHUNK_SIZE);
+            const playerCY = Math.floor((player.y + player.height / 2) / CHUNK_SIZE);
 
-                const currentChunkX = Math.floor(current.x / CHUNK_SIZE);
-                const currentChunkY = Math.floor(current.y / CHUNK_SIZE);
-
-                for (const dir of DIRS_4) {
-                    const nextX = current.x + dir.x;
-                    const nextY = current.y + dir.y;
-
-                    const nextSectorX = Math.floor(nextX / SECTOR_SIZE);
-                    const nextSectorY = Math.floor(nextY / SECTOR_SIZE);
-                    if (sectorGrid.get(coordToKey(nextSectorX, nextSectorY)) !== 'ready') continue;
-
-                    const lightLoss = WALL_TYPES.has(getGrid(nextX, nextY)) ? 3 : 0;
-                    const nextLight = currentLight - lightLoss;
-
-                    if (nextLight > getAuxData(lightChunkMap, nextX, nextY)) {
-                        setAuxData(lightChunkMap, nextX, nextY, nextLight);
-                        queue.push({ x: nextX, y: nextY });
-
-                        const nextChunkX = Math.floor(nextX / CHUNK_SIZE);
-                        const nextChunkY = Math.floor(nextY / CHUNK_SIZE);
-
-                        if (nextChunkX !== currentChunkX || nextChunkY !== currentChunkY) {
-                            neighborsToActivate.add(coordToKey(nextChunkX, nextChunkY));
-                        }
-                    }
+            // Add the player's current chunk and all 8 neighbors to the dirty set.
+            for (let cy = playerCY - 2; cy <= playerCY + 2; cy++) {
+                for (let cx = playerCX - 2; cx <= playerCX + 2; cx++) {
+                    lightingDirtyChunks.add(coordToKey(cx, cy));
                 }
             }
-            return neighborsToActivate;
         }
-
         
-        /**
-         * Performs an ADDITIVE lighting update on a "dirty" chunk.
-         * It re-evaluates the light level of all pixels in the chunk based on their neighbors,
-         * ensuring that both newly created empty spaces and existing walls are updated correctly.
-         */
-        function updateLocalLightingAndFindNeighbors(chunkKey) {
-            const chunk = chunkMap.get(chunkKey);
-            if (!chunk) return new Set();
-
-            const startX = chunk.cx * CHUNK_SIZE;
-            const startY = chunk.cy * CHUNK_SIZE;
-            const endX = startX + CHUNK_SIZE;
-            const endY = startY + CHUNK_SIZE;
-            const queue = [];
-
-            // Seeding Pass: Re-evaluate ALL pixels in the chunk
-            for (let y = startY; y < endY; y++) {
-                for (let x = startX; x < endX; x++) {
-                    let newLight = 0;
-                    
-                    if (getGrid(x, y) === MAT.EMPTY) {
-                        // For empty space, start with max light
-                        newLight = MAX_LIGHT_LEVEL;
-                    }
-
-                    // --- THIS IS THE FIX ---
-                    // For ALL pixels (empty or solid), check neighbors and pull in brighter light.
-                    const DIRS_4 = [{ x: -1, y: 0 }, { x: 1, y: 0 }, { x: 0, y: -1 }, { x: 0, y: 1 }];
-                    for (const dir of DIRS_4) {
-                        const nX = x + dir.x;
-                        const nY = y + dir.y;
-
-                        // Calculate how much light would be lost moving from the neighbor to the current pixel
-                        const lightLoss = WALL_TYPES.has(getGrid(x, y)) ? 3 : 1;
-                        
-                        // Find the brightest possible light level from any neighbor
-                        newLight = Math.max(newLight, getAuxData(lightChunkMap, nX, nY) - lightLoss);
-                    }
-                    // --- END OF FIX ---
-
-                    // If the newly calculated light is brighter than what's currently stored,
-                    // update it and add this pixel to the queue to propagate its new light outwards.
-                    if (newLight > getAuxData(lightChunkMap, x, y)) {
-                        setAuxData(lightChunkMap, x, y, newLight);
-                        queue.push({ x, y });
-                    }
-                }
-            }
-
-            // Propagation Pass: Use the unified function to spread the newly seeded light.
-            return propagateLightFromQueue(queue);
-        }
-
         function renderNpcs(anim) {
             for (const npc of npcs) {
                 // For now, we reuse the player rendering logic
                 const npcScreenX = Math.round(npc.x - camera.x);
                 const npcScreenY = Math.round(npc.y - camera.y);
-                drawPlayerBodyScreen(npcScreenX, npcScreenY, false, anim.bob, anim.frameIdx, true);
+                renderPlayerSprite(npcScreenX, npcScreenY, false, anim.frameIdx, false);
             }
         }
 
@@ -7382,7 +7729,8 @@
                     ...activeSolidChunks, 
                     ...activeLiquidChunks, 
                     ...activeGasChunks,
-                    ...persistentGlowingChunks // Add our static glowing chunks here
+                    ...persistentGlowingChunks,
+                    ...chunksWithLightingChanges // Add our static glowing chunks here
                 ]);
 
                 // Add rects for active simulation chunks
@@ -7398,6 +7746,18 @@
                     }
                 }
                 // --- END OF MODIFICATION ---
+            }
+
+            if (!player.isSpawning) {
+                const playerScreenX = player.x - startX;
+                const playerScreenY = player.y - startY;
+                const playerDirtyRadius = 16; // A 32x32 pixel box around the player's center
+                dirtyRects.push({
+                    x: playerScreenX + player.width / 2 - playerDirtyRadius,
+                    y: playerScreenY + player.height / 2 - playerDirtyRadius,
+                    w: playerDirtyRadius * 2,
+                    h: playerDirtyRadius * 2
+                });
             }
 
             // This is our main buffer for drawing new pixels for this frame
@@ -7524,6 +7884,10 @@
                 let alpha = 1.0;
                 let visible = true;
 
+                if (p.alpha !== undefined) {
+                    alpha = p.alpha;
+                }
+
                 if (p.isShapeParticle) {
                     // Check the particle's current phase to determine how it should be rendered.
                     switch(p.phase) {
@@ -7542,11 +7906,14 @@
                             
                         case 'wisp':
                             // Apply the final fade-out effect.
+                            const baseWispAlpha = p.alpha !== undefined ? p.alpha : 1.0;
                             const wispDuration = p.initialLifespan - p.holdTime - p.totalAppearTime;
                             const timeInWisp = wispDuration - p.lifespan;
                             const fadeStartRatio = 0.5;
                             if (timeInWisp > wispDuration * fadeStartRatio) {
-                               alpha = Math.max(0, 1.0 - (timeInWisp - wispDuration * fadeStartRatio) / (wispDuration * (1.0 - fadeStartRatio)));
+                               alpha = Math.max(0, baseWispAlpha - baseWispAlpha * ((timeInWisp - wispDuration * fadeStartRatio) / (wispDuration * (1.0 - fadeStartRatio))));
+                            } else {
+                               alpha = baseWispAlpha;
                             }
                             break;
                     }
@@ -7599,9 +7966,6 @@
             lastCameraY = startY;
             isRenderCacheInvalid = false;
         }
-        
-        // This group of functions can remain as-is
-		const PLAYER_SPRITE = [["....##..","...####.","..######","..##F##.","..##F##.","..######",".#######",".#######",".#######",".#######","..######","..######","...####.","..######",".######.","########"],["....##..","...####.","..######","..##F##.","..##F##.","..######",".#######",".#######",".#######",".#######","..######","...#####","..#####.","..######",".######.","########"]];
 		
         function drawPlayerBodyScreen(baseScreenX,baseScreenY,facingRight,bob,frameIdx,isNpc=false){
             const cloak=[0x4a,0x2d,0x5e],face=[0x21,0x1e,0x20],sprite=PLAYER_SPRITE[frameIdx&1];
@@ -7641,27 +8005,51 @@
         function getWorldTypeAtScreen(screenX,screenY){ const worldX=(screenX+camera.x)|0, worldY=(screenY+camera.y)|0; return getGrid(worldX, worldY); }
 		function playerAlphaAtScreen(screenX,screenY){const t=getWorldTypeAtScreen(screenX,screenY);if(!isFluid(t))return 1;const a=fluidAlpha(t)/255,minAlpha=0.20,strength=0.85,out=1-a*strength;return out<minAlpha?minAlpha:out;}
 		
-        function drawPlayerPx(screenX,screenY,r,g,b){
-            // --- START OF FIX ---
-            const a = playerAlphaAtScreen(screenX,screenY);
+        // in index.html, add this new function
 
-            // Always save the state before making any changes.
+        /**
+         * Renders the player sprite from an image file, handling animation, flipping, and effects.
+         * @param {number} centerX - The screen X coordinate for the center of the sprite.
+         * @param {number} centerY - The screen Y coordinate for the center of the sprite.
+         * @param {boolean} facingRight - Determines if the sprite should be flipped.
+         * @param {number} frameIdx - The current animation frame index (0 or 1).
+         * @param {boolean} isDead - Flag to trigger the death fade-out effect.
+         */
+        function renderPlayerSprite(centerX, centerY, facingRight, frameIdx, isDead) {
+            const frameId = `player_frame_${(frameIdx % 2) + 1}`;
+            const spriteImg = SpriteManager.sprites.get(frameId);
+            if (!spriteImg) return; // Don't draw if the sprite isn't loaded yet
+
             ctx.save();
-            
-            // Only change globalAlpha if the pixel needs to be transparent.
-            // If it's opaque, we'll just use the default alpha of 1.0.
-            if (a < 0.999) {
-                ctx.globalAlpha = a;
+            ctx.translate(Math.round(centerX), Math.round(centerY));
+
+            // Handle horizontal flipping
+            if (!facingRight) {
+                ctx.scale(-1, 1);
             }
             
-            // Draw the pixel.
-            ctx.fillStyle = `rgb(${r|0},${g|0},${b|0})`;
-            ctx.fillRect(screenX,screenY,1,1);
+            // Calculate alpha for submersion in liquids
+            let alpha = 1.0;
+            const worldY = centerY + camera.y;
+            const worldX = centerX + camera.x;
+            const typeAtFeet = getGrid(Math.floor(worldX), Math.floor(worldY + player.height / 2));
             
-            // Always restore the state to what it was before this function was called.
-            // This guarantees no transparency "leaks".
+            if (isFluid(typeAtFeet)) {
+                alpha = playerAlphaAtScreen(centerX, centerY + player.height / 2);
+            }
+
+            // Handle death animation fade-out
+            if (isDead) {
+                const DEATH_ANIM_DURATION = 60; // a 1-second fade
+                alpha = Math.max(0, 1.0 - (player.deathAnimationProgress / DEATH_ANIM_DURATION));
+            }
+
+            ctx.globalAlpha = alpha;
+            
+            // Draw the image centered on its anchor point
+            ctx.drawImage(spriteImg, -spriteImg.width / 2, -spriteImg.height / 2);
+
             ctx.restore();
-            // --- END OF FIX ---
         }
 
 		const PLAYER_SPRITE_SCALE=1.0;
@@ -7679,7 +8067,25 @@
         }
 
 		function getPlayerAnimFrame(){const moving=keys['KeyA']||keys['KeyD']||keys['KeyW']||Math.abs(player.vx)>0.05||Math.abs(player.vy)>0.05,rate=moving?6:14,frameIdx=((frameCount/rate)|0)&1;return{bob:frameIdx?1:0,armBob:frameIdx?1:0,frameIdx};}
-		function drawWand(ctx,baseScreenX,baseScreenY,facingRight,wandDir,bob,armBob){const handLocalX=facingRight?8:-1,handLocalY=9+bob-armBob,handX=baseScreenX+handLocalX,handY=baseScreenY+handLocalY,wandLen=3,dx=wandDir.x,dy=wandDir.y,mag=Math.max(Math.abs(dx),Math.abs(dy))||1;ctx.fillStyle='#bfa76a';for(let i=0;i<wandLen;i++)ctx.fillRect(handX+Math.round(dx*i/mag),handY+Math.round(dy*i/mag),1,1);ctx.fillStyle='#ffcc66';ctx.fillRect(handX+Math.round(dx*wandLen/mag),handY+Math.round(dy*wandLen/mag),1,1);return{wandOriginX:handX,wandOriginY:handY};}
+		
+        function drawWand(ctx, baseScreenX, baseScreenY, facingRight, wandDir, bob, armBob) {
+            const handLocalX = facingRight ? 2 : 5,
+                handLocalY = 10 + bob - armBob,
+                handX = baseScreenX + handLocalX,
+                handY = baseScreenY + handLocalY,
+                wandLen = 3,
+                dx = wandDir.x,
+                dy = wandDir.y,
+                mag = Math.max(Math.abs(dx), Math.abs(dy)) || 1;
+            ctx.fillStyle = '#4f4f4f';
+            for (let i = 0; i < wandLen; i++) ctx.fillRect(handX + Math.round(dx * i / mag), handY + Math.round(dy * i / mag), 1, 1);
+            ctx.fillStyle = '#efe5b0';
+            ctx.fillRect(handX + Math.round(dx * wandLen / mag), handY + Math.round(dy * wandLen / mag), 1, 1);
+            return {
+                wandOriginX: handX,
+                wandOriginY: handY
+            };
+        }
 		
         function renderPlayer(aim, anim){
 			const baseW=8,baseH=16,playerScreenX=Math.round(player.x-camera.x),playerScreenY=Math.round(player.y-camera.y);
@@ -7693,12 +8099,14 @@
 			ctx.restore();
 			const scaledBaseX=Math.round(anchorX+localX*PLAYER_SPRITE_SCALE),scaledBaseY=Math.round(anchorY+localY*PLAYER_SPRITE_SCALE);
 			
-            drawPlayerBodyScreen(scaledBaseX,scaledBaseY,aim.facingRight,anim.bob,anim.frameIdx);
+            const centerX = scaledBaseX + player.width / 2;
+            const centerY = scaledBaseY + player.height / 2;
+            renderPlayerSprite(centerX, centerY, aim.facingRight, anim.frameIdx, isPlayerDead);
             
             // --- START OF REPLACEMENT LOGIC ---
 
             // Calculate the hand's position, which is the anchor for any held item.
-            const handLocalX = aim.facingRight ? 8 : -1;
+            const handLocalX = aim.facingRight ? 2 : 5;
             const handLocalY = 9 + anim.bob - anim.armBob;
             const handX = scaledBaseX + handLocalX;
             const handY = scaledBaseY + handLocalY;
@@ -8684,6 +9092,63 @@
             magicEmitters = magicEmitters.filter(e => e.id !== id);
         }
 
+        // in index.html, somewhere near your other update/logic functions
+
+        function updateLiquidSurfaceEmitters() {
+
+            const startX = Math.floor(camera.x);
+            const startY = Math.floor(camera.y);
+            const endX = startX + viewWidth;
+            const endY = startY + viewHeight;
+
+            for (let y = startY; y < endY; y++) {
+                for (let x = startX; x < endX; x++) {
+                    const type = getGrid(x, y);
+                    const emitterDef = LIQUID_EMITTER_MATERIALS[type];
+
+                    // Is this a liquid that should emit particles?
+                    if (emitterDef) {
+                        const aboveType = getGrid(x, y - 1);
+                        // Is the pixel above it empty or a gas? (i.e., is this a surface pixel?)
+                        if (aboveType === MAT.EMPTY || GASES.has(aboveType)) {
+                            // Use a hash to decide if we should spawn a particle from this pixel this frame.
+                            // This creates a consistent, random-looking bubbling effect.
+                            if (hashCell(x, y, frameCount) < 255 / emitterDef.spawnChangeDivisor) {
+                                
+                                // Find an available particle in the pool
+                                for (let i = 0; i < MAX_MAGIC_PARTICLES; i++) {
+                                    const p = magicParticlePool[i];
+                                    if (!p.active) {
+                                        p.active = true;
+                                        p.x = x + 0.5; // Start in the middle of the pixel
+                                        p.y = y;
+
+                                        // Set properties from the definition
+                                        p.alpha = fluidAlpha(type) / 255.0;
+                                        p.gravity = emitterDef.gravity;
+                                        p.lifespan = emitterDef.lifespan.min + Math.random() * (emitterDef.lifespan.max - emitterDef.lifespan.min);
+                                        p.vx = emitterDef.vx.min + Math.random() * (emitterDef.vx.max - emitterDef.vx.min);
+                                        p.vy = emitterDef.vy.min + Math.random() * (emitterDef.vy.max - emitterDef.vy.min);
+
+                                        // Set color with variance
+                                        const v = emitterDef.colorVariance;
+                                        p.color = [
+                                            Math.max(0, Math.min(255, emitterDef.color[0] + (Math.random() - 0.5) * v)),
+                                            Math.max(0, Math.min(255, emitterDef.color[1] + (Math.random() - 0.5) * v)),
+                                            Math.max(0, Math.min(255, emitterDef.color[2] + (Math.random() - 0.5) * v))
+                                        ];
+
+                                        // Stop searching for a particle and move to the next pixel
+                                        break; 
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         function updateMagicEmitters() {
             for (const emitter of magicEmitters) {
                 if (Math.random() < emitter.spawnRate) {
@@ -8807,7 +9272,32 @@
                             p.vy *= WISP_DRAG;
                             break;
                     }
-                } 
+                } else if (p.isStoringParticle) {
+                    const targetX = player.x + player.width / 2;
+                    const targetY = player.y + player.height / 2;
+                    const distSq = (targetX - p.x)**2 + (targetY - p.y)**2;
+
+                    if (distSq < 16) {
+                        p.lifespan = 0;
+                        continue;
+                    }
+                    
+                    // --- START OF THE FIX: Homing Logic ---
+                    const speed = Math.hypot(p.vx, p.vy); // Get the particle's current speed
+                    const dx = targetX - p.x;
+                    const dy = targetY - p.y;
+                    const dist = Math.sqrt(distSq); // We need the actual distance now for normalization
+
+                    // Re-calculate the velocity vector to always point at the player,
+                    // but maintain the particle's current speed.
+                    p.vx = (dx / dist) * speed;
+                    p.vy = (dy / dist) * speed;
+
+                    // Apply drag to make them slow down as they approach the player
+                    p.vx *= 0.95;
+                    p.vy *= 0.95;
+                    // --- END OF THE FIX ---
+                }
 
                 // --- Universal Updates (apply to all active particles) ---
                 p.x += p.vx;
@@ -8823,6 +9313,8 @@
                     // CRITICAL: Reset all custom flags when the particle is returned to the pool
                     p.isShapeParticle = false; 
                     p.bloomIntensity = 0;
+                    p.alpha = undefined;
+                    p.isStoringParticle = false;
                 }
             }
         }
@@ -9046,33 +9538,24 @@
             updatePouredParticles();
             processAlchemyJobs();
             updateMagicParticles();
+            updateLiquidSurfaceEmitters();
             updateMagicEmitters();
             updateInteractions();
             updateActiveToolEffects();
             updateMessageSystem();
             updateBuffs();
-
+            
             Profiler.stop('UpdateLogic');
 
-            Profiler.start('Lighting');
-            // The lightingQueue now starts ONLY with chunks where terrain was added or removed.
-            const lightingQueue = [...lightingDirtyChunks];
-            const processedChunks = new Set(lightingDirtyChunks); // Prevent re-processing initial chunks.
-            lightingDirtyChunks.clear(); // Clear the global set for the next frame.
+            // in index.html, inside the gameLoop function
 
-            let head = 0;
-            while (head < lightingQueue.length) {
-                const chunkToUpdate = lightingQueue[head++];
-                const newNeighbors = updateLocalLightingAndFindNeighbors(chunkToUpdate);
-                
-                for (const neighbor of newNeighbors) {
-                    if (!processedChunks.has(neighbor)) {
-                        processedChunks.add(neighbor);
-                        lightingQueue.push(neighbor);
-                    }
-                }
-            }
+            // ... after Profiler.stop('UpdateLogic');
+
+            Profiler.start('Lighting');
+            updateLighting();
             Profiler.stop('Lighting');
+            
+            // ... (rest of the gameLoop is unchanged) ...
 
             if (isPouring) pourFromContainer();
             if (isStoring) storeMaterial(mouse.worldX, mouse.worldY);
@@ -9110,7 +9593,7 @@
             drawHUD();
             tRenderMs = performance.now() - t2;
 
-            if (isPlayerDead && player.deathAnimationProgress >= player.deathPixelShuffle.length) {
+            if (isPlayerDead && player.deathAnimationProgress >= 60) {
                 renderDeathScreen();
             }
             
@@ -9141,6 +9624,102 @@
             }
 
             Profiler.stop('FrameTotal');
+        }
+
+        // in index.html, replace the ENTIRE updateLighting function
+
+        function updateLighting() {
+            // 1. Proactively mark chunks near the player as needing an update.
+            if (frameCount % 5 === 0) {
+                proactivelyUpdateLightingNearPlayer();
+            }
+
+            // 2. Only run if there's work to do.
+            if (lightingDirtyChunks.size > 0) {
+                // Initialize the queue with all chunks dirtied this frame.
+                const queue = [...lightingDirtyChunks];
+                // Use a Set to prevent processing the same chunk multiple times in one frame.
+                const processed = new Set(lightingDirtyChunks);
+                lightingDirtyChunks.clear();
+
+                let head = 0;
+                // Process the queue until all light propagation for this frame is complete.
+                while (head < queue.length) {
+                    const chunkKey = queue[head++];
+                    
+                    // 3. Process the current chunk and get its list of affected neighbors.
+                    const newNeighbors = updateLightingForChunk(chunkKey);
+                    
+                    // 4. Add any new, unprocessed neighbors to the queue to continue the cascade.
+                    for (const neighborKey of newNeighbors) {
+                        if (!processed.has(neighborKey)) {
+                            processed.add(neighborKey);
+                            queue.push(neighborKey);
+                        }
+                    }
+                }
+
+                chunksWithLightingChanges = processed;
+            }
+        }
+
+        // in index.html, add this new function
+
+        /**
+         * Updates the lighting for all pixels within a single chunk and identifies which
+         * neighboring chunks have been affected and now also need an update.
+         * @param {number} chunkKey - The unique key for the chunk to process.
+         * @returns {Set<number>} - A Set containing the keys of any neighboring chunks that need to be updated.
+         */
+        function updateLightingForChunk(chunkKey) {
+            const affectedNeighbors = new Set();
+            const chunk = chunkMap.get(chunkKey);
+            if (!chunk) return affectedNeighbors;
+
+            const startX = chunk.cx * CHUNK_SIZE;
+            const startY = chunk.cy * CHUNK_SIZE;
+
+            // A flag to see if any light level in this chunk actually changed.
+            let anyChange = false;
+
+            // Iterate through all pixels in this chunk to update their light levels by "pulling" from neighbors.
+            for (let ly = 0; ly < CHUNK_SIZE; ly++) {
+                for (let lx = 0; lx < CHUNK_SIZE; lx++) {
+                    const x = startX + lx;
+                    const y = startY + ly;
+
+                    const currentLight = getAuxData(lightChunkMap, x, y);
+                    let newLight = 0;
+                    const type = getGrid(x, y);
+
+                    if ([MAT.EMPTY, MAT.STEAM].includes(type)) {
+                        newLight = MAX_LIGHT_LEVEL;
+                    }
+
+                    const DIRS_4 = [{ x: -1, y: 0 }, { x: 1, y: 0 }, { x: 0, y: -1 }, { x: 0, y: 1 }];
+                    for (const dir of DIRS_4) {
+                        const nX = x + dir.x;
+                        const nY = y + dir.y;
+                        const lightLoss = WALL_TYPES.has(type) ? 3 : 0;
+                        newLight = Math.max(newLight, getAuxData(lightChunkMap, nX, nY) - lightLoss);
+                    }
+
+                    if (newLight > currentLight) {
+                        setAuxData(lightChunkMap, x, y, newLight);
+                        anyChange = true;
+                    }
+                }
+            }
+
+            // If any light level in this chunk was increased, its neighbors might now need an update.
+            if (anyChange) {
+                affectedNeighbors.add(coordToKey(chunk.cx + 1, chunk.cy));
+                affectedNeighbors.add(coordToKey(chunk.cx - 1, chunk.cy));
+                affectedNeighbors.add(coordToKey(chunk.cx, chunk.cy + 1));
+                affectedNeighbors.add(coordToKey(chunk.cx, chunk.cy - 1));
+            }
+
+            return affectedNeighbors;
         }
 
         // --- START OF NEW CODE ---
