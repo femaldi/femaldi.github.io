@@ -425,11 +425,6 @@
             userData.messageText = messageText;   // Store the message text
             userData.onPickup = (player) => {
                 switch (upgradeType) {
-                    case 'unlock_reaction':
-                        if (data.reactionKey && !player.unlockedReactions.includes(data.reactionKey)) {
-                            player.unlockedReactions.push(data.reactionKey);
-                        }
-                        break;
                     case 'increase_tool_slots':
                         player.maxToolSlots++;
                         break;
@@ -1293,9 +1288,11 @@
         const COLLIDER_UPDATE_INTERVAL = 100;
 
         const OBJECT_DEFINITIONS = {
+            // in index.html, inside the OBJECT_DEFINITIONS constant
+
             'stone_pick': {
                 name: 'Stone Pick',
-                type: 'tool', // 'tool', 'structure', or 'upgrade'
+                type: 'tool',
                 width: 16,
                 height: 16,
                 pixels: [ /* Pixel art for the pickaxe - simplified for now */
@@ -1315,19 +1312,79 @@
                     0,0,0,0,0,0,0,2,2,0,0,0,0,0,0,0,
                     0,0,0,0,0,0,0,2,2,0,0,0,0,0,0,0,
                     0,0,0,0,0,0,0,2,2,0,0,0,0,0,0,0,
-                ].map(p => p === 2 ? MAT.WOOD : p), // Helper to use a temp value
+                ].map(p => p === 2 ? MAT.WOOD : p),
                 onUse: (player, mouse) => {
-                    const useRadius = 12;
+                    const PICK_RANGE = 24; // How far the pick can reach, in pixels.
+                    const BREAK_RADIUS = 12; // How large the break area is.
+                    
                     const softMaterials = new Set([MAT.SAND, MAT.SOIL, MAT.SANDSTONE_WALL, MAT.COAL, MAT.GLASS, MAT.GLASS_WALL, MAT.GROUND]);
-                    for (let dy = -useRadius; dy <= useRadius; dy++) {
-                        for (let dx = -useRadius; dx <= useRadius; dx++) {
-                             if (dx*dx + dy*dy > useRadius*useRadius) continue;
-                             const wx = mouse.worldX + dx;
-                             const wy = mouse.worldY + dy;
-                             if (softMaterials.has(getGrid(wx, wy))) {
-                                 setGrid(wx, wy, MAT.EMPTY);
-                                 activateChunkAt(wx, wy,MAT.EMPTY);
-                             }
+                    
+                    // 1. Define Raycast Start and End Points
+                    const aim = computePlayerAim();
+                    const startX = player.x + player.width / 2;
+                    const startY = player.y + 9; // Player's hand/arm pivot point
+
+                    const endX = startX + Math.cos(aim.aimAngle) * PICK_RANGE;
+                    const endY = startY + Math.sin(aim.aimAngle) * PICK_RANGE;
+
+                    let hitPoint = null;
+                    let hitType = null;
+
+                    // 2. Perform a line-of-sight/raycast check from player to target.
+                    // We can reuse our hasLineOfSight function as a simple raycast.
+                    let ix0 = Math.floor(startX);
+                    let iy0 = Math.floor(startY);
+                    const ix1 = Math.floor(endX);
+                    const iy1 = Math.floor(endY);
+                    
+                    const dx = Math.abs(ix1 - ix0), dy = -Math.abs(iy1 - iy0);
+                    const sx = ix0 < ix1 ? 1 : -1, sy = iy0 < iy1 ? 1 : -1;
+                    let err = dx + dy;
+
+                    while (true) {
+                        const type = getGrid(ix0, iy0);
+                        if (type !== MAT.EMPTY && !GASES.has(type)) {
+                            // We've hit the first solid thing in the path.
+                            hitPoint = { x: ix0, y: iy0 };
+                            hitType = type;
+                            break; // Stop the raycast.
+                        }
+                        if (ix0 === ix1 && iy0 === iy1) break;
+                        const e2 = 2 * err;
+                        if (e2 >= dy) { err += dy; ix0 += sx; }
+                        if (e2 <= dx) { err += dx; iy0 += sy; }
+                    }
+
+                    // 3. Process the Hit
+                    if (hitPoint) {
+                        // Check if the material we hit is something the pick can break.
+                        if (softMaterials.has(hitType)) {
+                            // Success! Use the hitPoint as the center of destruction.
+                            for (let r_dy = -BREAK_RADIUS; r_dy <= BREAK_RADIUS; r_dy++) {
+                                for (let r_dx = -BREAK_RADIUS; r_dx <= BREAK_RADIUS; r_dx++) {
+                                    if (r_dx*r_dx + r_dy*r_dy > BREAK_RADIUS*BREAK_RADIUS) continue;
+                                    
+                                    const breakX = hitPoint.x + r_dx;
+                                    const breakY = hitPoint.y + r_dy;
+                                    const breakMaterialType = getGrid(breakX, breakY);
+
+                                    if (softMaterials.has(breakMaterialType)) {
+                                        setGrid(breakX, breakY, MAT.EMPTY);
+                                        activateChunkAt(breakX, breakY, MAT.EMPTY);
+                                        
+                                        // Spawn particles (reusing existing logic)
+                                        if (Math.random() < 0.25) {
+                                            const color = COLORS[breakMaterialType] || [200, 200, 200]; 
+                                            // Particle spawning logic... (copied from before)
+                                            for(let i=0;i<MAX_MAGIC_PARTICLES;i++){const p=magicParticlePool[i];if(!p.active){p.active=true;p.x=breakX+0.5;p.y=breakY+0.5;p.lifespan=20+Math.random()*20;p.gravity=0.05;const angle=Math.random()*2*Math.PI;const speed=Math.random()*1.5;p.vx=Math.cos(angle)*speed;p.vy=Math.sin(angle)*speed;const v=30;p.color=[Math.max(0,Math.min(255,color[0]+(Math.random()-0.5)*v)),Math.max(0,Math.min(255,color[1]+(Math.random()-0.5)*v)),Math.max(0,Math.min(255,color[2]+(Math.random()-0.5)*v))];break;}}
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            // Hit a hard material. Play a "clink" effect (optional, placeholder).
+                            // For now, it just does nothing as requested.
+                            // You could add a sound effect or a small spark particle here.
                         }
                     }
                 }
@@ -4791,10 +4848,9 @@
             lastDamageType: null,
             lastTickDamage: 0,
             deathAnimationProgress: -1,
-            toolPocket: [],
+            toolPocket: ['Stone Pick'],
             structurePocket: [],
             activeBuffs: [],
-            unlockedReactions: ['clear_cauldrons'],
             maxToolSlots: 1,
             maxStructureSlots: 1,
             toolIndex: 0,
@@ -7523,8 +7579,8 @@
             const playerCY = Math.floor((player.y + player.height / 2) / CHUNK_SIZE);
 
             // Add the player's current chunk and all 8 neighbors to the dirty set.
-            for (let cy = playerCY - 2; cy <= playerCY + 2; cy++) {
-                for (let cx = playerCX - 2; cx <= playerCX + 2; cx++) {
+            for (let cy = playerCY - 1; cy <= playerCY + 1; cy++) {
+                for (let cx = playerCX - 1; cx <= playerCX + 1; cx++) {
                     lightingDirtyChunks.add(coordToKey(cx, cy));
                 }
             }
@@ -7686,7 +7742,7 @@
                                 a = body.spritePixels[sourceIdx + 3];
                             } else {
                                 const color = COLORS[type] || [255, 0, 255];
-                                if (SHIMMERING_METALS.has(type)) {
+                                if (SHIMMERING_METALS.has(type) || type === MAT.IRON) {
                                     [r, g, b] = metallicColor(x, y, color);
                                 } else {
                                     [r, g, b] = varyColor(...color, x, y, type, 8);
@@ -7847,7 +7903,7 @@
                         if (type === MAT.FIRE) { r = 255; g = 80 + Math.random() * 80; b = 0; firePixelsCoords.push({ x: screenX, y: screenY }); } 
                         else if (type === MAT.OIL_BURNING || type === MAT.COAL_BURNING) { firePixelsCoords.push({ x: screenX, y: screenY });[r, g, b] = varyColor(...COLORS[type], worldX, worldY, type, 4); } 
                         else if (LIQUIDS.has(type)) { [r, g, b] = varyColor(...COLORS[type], worldX, worldY, type, 4); } 
-                        else { if (SHIMMERING_METALS.has(type)) { [r, g, b] = metallicColor(worldX, worldY, COLORS[type]); } else { [r, g, b] = varyColor(...COLORS[type], worldX, worldY, type, 16); } }
+                        else { if (SHIMMERING_METALS.has(type) || type === MAT.IRON) { [r, g, b] = metallicColor(worldX, worldY, COLORS[type]); } else { [r, g, b] = varyColor(...COLORS[type], worldX, worldY, type, 16); } }
                         
                         if (SHIMMERING_METALS.has(type)) { const h = hashCell(worldX, worldY, Math.floor(frameCount / 4)); if (h > 254) { const br = 35; r = Math.min(255, r + br); g = Math.min(255, g + br); b = Math.min(255, b + br); } }
                         if (!ALWAYS_VISIBLE_MATERIALS.has(type)) { const br = lightLevel / MAX_LIGHT_LEVEL; r = (r * br) | 0; g = (g * br) | 0; b = (b * br) | 0; }
