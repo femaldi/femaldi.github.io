@@ -4729,6 +4729,28 @@
                     }
                 },
                 {
+                    name: "FloodedTunnel",
+                    imagePath: 'assets/water_puzzle.png',
+                    spawnLocalX: 256,
+                    spawnLocalY: 256,
+                    targetSectorOffsetX: -2,
+                    targetSectorOffsetY: 0,
+                    parsedData: null,
+                    postGenerationHook: function(piece) {
+                        if (!piece.parsedData) return;
+                        
+                        // Handle treasure
+                        const areas = piece.parsedData.functionalAreas;
+                        if (areas && areas.treasureMarker) {
+                            const treasureArea = areas.treasureMarker;
+                            const treasureWorldX = piece.bounds.x + treasureArea.x;
+                            const treasureWorldY = piece.bounds.y + treasureArea.y;
+                            createMagicTablet(treasureWorldX, treasureWorldY, 'increase_tool_slots');
+                        }
+                        
+                    }
+                },
+                {
                     name: "HollowMountain",
                     imagePath: 'assets/levitation_challenge.png',
                     spawnLocalX: 256,
