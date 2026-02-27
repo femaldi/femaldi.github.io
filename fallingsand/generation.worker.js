@@ -7,6 +7,10 @@ const CHUNK_SIZE = 16;
 const CHUNK_SIZE_SQ = 16 * 16;
 const SECTOR_SIZE = 512;
 
+const MAZE_CHUNK_SIZE = 32;     // The internal grid size for the algorithm
+const MAZE_SCALE = 64;           // "Zooms in", creating 2x2 corridors and walls
+const mazeChunkCache = new Map();
+
 // --- START OF REPLACEMENT ---
 // --- START OF REPLACEMENT (Hardcoded MAT object) ---
 const MAT = {
@@ -111,6 +115,19 @@ function getLayerMaterial(layer) {
     }
 }
 // --- END OF NEW HELPER FUNCTION ---
+
+// --- START: NEW HELPER FUNCTION in generation.worker.js ---
+/**
+ * A deterministic pseudo-random number generator for a given seed.
+ */
+function createSeededRandom(seed) {
+    let s = seed + WORLD_SEED;
+    return () => {
+        s = (s * 9301 + 49297) % 233280;
+        return s / 233280;
+    };
+}
+// --- END: NEW HELPER FUNCTION in generation.worker.js ---
 
 // 2. Worker-local helpers
 const getLocalIndex = (lx, ly) => ly * CHUNK_SIZE + lx;
@@ -429,6 +446,17 @@ self.onmessage = (event) => {
                     switch (biomeInfo.name) {
                         case "Caves":
                             finalTerrainType = generateCavesPixel(worldX, worldY, biomeInfo.params);
+                            //finalTerrainType = generateContinuousMazePixel(worldX, worldY, { wallMaterial: MAT.LABYRINTH_WALL });
+                            break;
+
+                        case "Labyrinth":
+                            // Use the new continuous generator for the Labyrinth layer
+                            finalTerrainType = generateContinuousMazePixel(worldX, worldY, { wallMaterial: MAT.LABYRINTH_WALL });
+                            break;
+
+                        case "MagicDungeon":
+                            // Also use it for the Magic Dungeon layer, just with a different wall type
+                            finalTerrainType = generateContinuousMazePixel(worldX, worldY, { wallMaterial: MAT.MAGIC_WALL });
                             break;
                         
                         case "OceanOfRock":
@@ -474,6 +502,87 @@ self.onmessage = (event) => {
         }, [...terrainBuffers, ...lightBuffers]); // Transfer all data buffers for performance
     }
 };
+
+// --- START: REPLACEMENT for the old generateLabyrinthPixel function ---
+/**
+ * Generates a single pixel for a continuous, "blocky" labyrinth-style biome
+ * using a hybrid of Prim's Algorithm and deterministic hashing.
+ * @param {number} x - The global world X coordinate.
+ * @param {number} y - The global world Y coordinate.
+ * @param {object} params - Biome-specific parameters, including the wall material to use.
+ * @returns {number} The material ID for the pixel.
+ */
+function generateContinuousMazePixel(x, y, params) {
+    const { wallMaterial } = params;
+
+    // Scale down coordinates to create "fat" pixels and wider corridors
+    const scaledX = Math.floor(x / MAZE_SCALE);
+    const scaledY = Math.floor(y / MAZE_SCALE);
+
+    // Determine which chunk this SCALED coordinate belongs to
+    const mcx = Math.floor(scaledX / MAZE_CHUNK_SIZE);
+    const mcy = Math.floor(scaledY / MAZE_CHUNK_SIZE);
+    const key = coordToKey(mcx, mcy);
+
+    // Generate the chunk if it's not in our cache
+    if (!mazeChunkCache.has(key)) {
+        const mazeGrid = new Uint8Array(MAZE_CHUNK_SIZE * MAZE_CHUNK_SIZE).fill(MAT.EMPTY);
+        const chunkSeed = coordToKey(mcx, mcy);
+        const random = createSeededRandom(chunkSeed);
+        const randInt = (max) => Math.floor(random() * max);
+
+        // Part 1: Fill the INTERIOR with a Prim's Algorithm maze
+        const walls = [];
+        const startX = randInt(MAZE_CHUNK_SIZE / 2) * 2;
+        const startY = randInt(MAZE_CHUNK_SIZE / 2) * 2;
+        
+        const addWalls = (cx, cy) => {
+            if (cx > 0) walls.push({ x: cx - 1, y: cy, fromX: cx, fromY: cy });
+            if (cx < MAZE_CHUNK_SIZE - 1) walls.push({ x: cx + 1, y: cy, fromX: cx, fromY: cy });
+            if (cy > 0) walls.push({ x: cx, y: cy - 1, fromX: cx, fromY: cy });
+            if (cy < MAZE_CHUNK_SIZE - 1) walls.push({ x: cx, y: cy + 1, fromX: cx, fromY: cy });
+        };
+        
+        addWalls(startX, startY);
+        mazeGrid[startY * MAZE_CHUNK_SIZE + startX] = wallMaterial; // Mark as "visited"
+
+        while (walls.length > 0) {
+            const wallIndex = randInt(walls.length);
+            const wall = walls.splice(wallIndex, 1)[0];
+            const oppositeX = wall.x + (wall.x - wall.fromX);
+            const oppositeY = wall.y + (wall.y - wall.fromY);
+            if (oppositeX >= 0 && oppositeX < MAZE_CHUNK_SIZE && oppositeY >= 0 && oppositeY < MAZE_CHUNK_SIZE && mazeGrid[oppositeY * MAZE_CHUNK_SIZE + oppositeX] === MAT.EMPTY) {
+                mazeGrid[wall.y * MAZE_CHUNK_SIZE + wall.x] = wallMaterial;
+                mazeGrid[oppositeY * MAZE_CHUNK_SIZE + oppositeX] = wallMaterial;
+                addWalls(oppositeX, oppositeY);
+            }
+        }
+        
+        for (let i = 0; i < mazeGrid.length; i++) {
+            mazeGrid[i] = (mazeGrid[i] === wallMaterial) ? MAT.EMPTY : wallMaterial;
+        }
+
+        // Part 2: Use deterministic hashing for the BORDER pixels
+        for (let i = 0; i < MAZE_CHUNK_SIZE; i++) {
+            const boundarySeedH = coordToKey(mcx * MAZE_CHUNK_SIZE + i, mcy * MAZE_CHUNK_SIZE - 1);
+            const randH = createSeededRandom(boundarySeedH);
+            if (randH() < 0.5) mazeGrid[i] = MAT.EMPTY;
+            if (randH() < 0.5) mazeGrid[(MAZE_CHUNK_SIZE - 1) * MAZE_CHUNK_SIZE + i] = MAT.EMPTY;
+
+            const boundarySeedV = coordToKey(mcx * MAZE_CHUNK_SIZE - 1, mcy * MAZE_CHUNK_SIZE + i);
+            const randV = createSeededRandom(boundarySeedV);
+            if (randV() < 0.5) mazeGrid[i * MAZE_CHUNK_SIZE] = MAT.EMPTY;
+            if (randV() < 0.5) mazeGrid[i * MAZE_CHUNK_SIZE + (MAZE_CHUNK_SIZE - 1)] = MAT.EMPTY;
+        }
+
+        mazeChunkCache.set(key, mazeGrid);
+    }
+
+    const lx = scaledX & (MAZE_CHUNK_SIZE - 1);
+    const ly = scaledY & (MAZE_CHUNK_SIZE - 1);
+    return mazeChunkCache.get(key)[ly * MAZE_CHUNK_SIZE + lx];
+}
+// --- END: REPLACEMENT for the old generateLabyrinthPixel function ---
 
 /**
  * Generates a single terrain pixel for the Caves biome, including ore veins
