@@ -105,11 +105,6 @@
         <p id="loading-status" style="font-size: 1.2em; font-family: monospace;">Initializing...</p>
     </div>
 
-    <h1>Falling Sand Platformer</h1>
-    <div class="info-bar">
-        Use <strong>A/D</strong> to Move, <strong>W</strong> to Jump. Use the mouse to build and destroy.
-    </div>
-
     <div class="controls">
         <button class="btn-sand active" onclick="setMaterial('sand')">Sand</button>
         <button class="btn-soil" onclick="setMaterial('soil')">Soil</button>
@@ -137,16 +132,6 @@
         <button class="btn-iron" onclick="setMaterial('iron')">Iron</button>
         <button class="btn-obsidian" onclick="setMaterial('obsidian')">Obsidian</button>
         <button class="btn-eraser" onclick="setMaterial('empty')">Eraser</button>
-    </div>
-
-    <div id="controls_ui">
-        <b>Controls</b><br>
-        A / D – Move<br>
-        W – Jump<br>
-        Q – Switch Container<br>
-        Left Click – Pour<br>
-        Right Click – Store<br>
-        Middle Click – Paint Brush
     </div>
 
     <div id="generation-status" style="position: fixed; bottom: 10px; left: 10px; color: white; font-family: monospace; font-size: 14px; background: rgba(0,0,0,0.5); padding: 4px 8px; border-radius: 4px; pointer-events: none; display: none; z-index: 1001;">
@@ -321,7 +306,7 @@
         // NEW: Increased view area and reduced scale
         const viewWidth = 480;
         const viewHeight = 270;
-        const scale = 3; // Smaller pixels
+        const scale = 4; // Smaller pixels
 
         const SIMULATION_STEPS_PER_FRAME = 2;
 
@@ -936,6 +921,8 @@
             GROUND: 31, IRON: 32, RUSTED_IRON: 33, OBSIDIAN: 34,
             LAVA: 40, 
             STEAM: 50, SMOKE: 51, METHANE: 52, METHANE_BURNING: 53,
+            BLOOD: 126, LEAD: 127,
+            MOLTEN_LEAD: 128, MOLTEN_COPPER: 129, MOLTEN_SILVER: 130, MOLTEN_GOLD: 131, MOLTEN_PLATINUM: 132,
             RIGID_BODY_STUB: 99,
 
             ICE: 100, FUNGAL_SPORES: 101, QUICKSILVER: 102, QUARTZ: 103, GLOW_MOSS: 104, VOID_SALTS: 105,
@@ -1006,6 +993,13 @@
             [MAT.RUSTED_IRON]: [180, 90, 50], [MAT.OBSIDIAN]: [42, 34, 58],
             [MAT.LAVA]: [252, 68, 15], [MAT.STEAM]: [208, 208, 208],
             [MAT.SMOKE]: [68, 68, 68], [MAT.METHANE]: [180, 240, 180], [MAT.METHANE_BURNING]: [255, 150, 50],
+            [MAT.BLOOD]: [138, 3, 3],
+            [MAT.LEAD]: [92, 97, 108],
+            [MAT.MOLTEN_LEAD]: [150, 155, 170],
+            [MAT.MOLTEN_COPPER]: [255, 165, 80],
+            [MAT.MOLTEN_SILVER]: [230, 230, 255],
+            [MAT.MOLTEN_GOLD]: [255, 240, 150],
+            [MAT.MOLTEN_PLATINUM]: [250, 250, 255],
             // New Material Colors
             [MAT.ICE]: [170, 220, 255], [MAT.FUNGAL_SPORES]: [140, 110, 180],
             [MAT.QUICKSILVER]: [200, 205, 210], [MAT.QUARTZ]: [240, 240, 250],
@@ -1058,6 +1052,10 @@
             [MAT.RUSTED_IRON]: 'Rusted Iron', [MAT.OBSIDIAN]: 'Obsidian',
             [MAT.LAVA]: 'Lava', [MAT.STEAM]: 'Steam',
             [MAT.SMOKE]: 'Smoke', [MAT.METHANE]: 'Methane', [MAT.METHANE_BURNING]: 'Burning Methane',
+            [MAT.BLOOD]: 'Blood', [MAT.LEAD]: 'Lead',
+            [MAT.MOLTEN_LEAD]: 'Molten Lead', [MAT.MOLTEN_COPPER]: 'Molten Copper',
+            [MAT.MOLTEN_SILVER]: 'Molten Silver', [MAT.MOLTEN_GOLD]: 'Molten Gold',
+            [MAT.MOLTEN_PLATINUM]: 'Molten Platinum',
             [MAT.ICE]: 'Ice', [MAT.FUNGAL_SPORES]: 'Fungal Spores',
             [MAT.QUICKSILVER]: 'Quicksilver', [MAT.QUARTZ]: 'Quartz',
             [MAT.GLOW_MOSS]: 'Glow Moss', [MAT.VOID_SALTS]: 'Void Salts',
@@ -1150,7 +1148,7 @@
             { inputs: [MAT.IRON, MAT.COAL].sort(), output: MAT.STEEL, condition: 'heat' },
             { inputs: [MAT.WATER, MAT.ICE].sort(), output: MAT.CRYO_STATIC_DUST, condition: 'cold' },
             { inputs: [MAT.SOIL, MAT.FUNGAL_SPORES].sort(), output: MAT.MYCELIAL_BRICK, condition: 'fertility_essence' },
-            { inputs: [MAT.WOOD, MAT.OIL].sort(), output: MAT.RESIN, condition: 'pressure' },
+            { inputs: [MAT.WOOD, MAT.OIL].sort(), output: MAT.RESIN },
             { inputs: [MAT.GUNPOWDER, MAT.OIL].sort(), output: MAT.BLASTING_JELLY, condition: 'viscosity_essence' },
             { inputs: [MAT.ACID, MAT.COPPER].sort(), output: MAT.COPPER_SALTS, condition: null },
             { inputs: [MAT.QUICKSILVER, MAT.GOLD].sort(), output: MAT.PHILOSOPHERS_AMALGAM, condition: 'purity_essence' },
@@ -1173,6 +1171,7 @@
             [MAT.COAL]: 1.2,
             [MAT.GUNPOWDER]: 1.2,
             [MAT.COPPER]: 8.9,
+            [MAT.LEAD]: 11.3,
             [MAT.SILVER]: 10.5,
             [MAT.GOLD]: 19.3,
             [MAT.PLATINUM]: 21.4,
@@ -1637,10 +1636,27 @@
             ]
         };
 
+        const MOLTEN_METALS = new Set([MAT.MOLTEN_LEAD, MAT.MOLTEN_COPPER, MAT.MOLTEN_SILVER, MAT.MOLTEN_GOLD, MAT.MOLTEN_PLATINUM]);
+        const SOLID_METALS = new Set([MAT.LEAD, MAT.COPPER, MAT.SILVER, MAT.GOLD, MAT.PLATINUM]);
+        const MELT_MAP = {
+            [MAT.LEAD]: MAT.MOLTEN_LEAD, [MAT.COPPER]: MAT.MOLTEN_COPPER, [MAT.SILVER]: MAT.MOLTEN_SILVER,
+            [MAT.GOLD]: MAT.MOLTEN_GOLD, [MAT.PLATINUM]: MAT.MOLTEN_PLATINUM
+        };
+        const SOLIDIFY_MAP = {
+            [MAT.MOLTEN_LEAD]: MAT.LEAD, [MAT.MOLTEN_COPPER]: MAT.COPPER, [MAT.MOLTEN_SILVER]: MAT.SILVER,
+            [MAT.MOLTEN_GOLD]: MAT.GOLD, [MAT.MOLTEN_PLATINUM]: MAT.PLATINUM
+        };
+
 
         const LIQUID_DENSITY = {
             [MAT.ACID]: 4,
             [MAT.LAVA]: 3,
+            [MAT.BLOOD]: 2.1,
+            [MAT.MOLTEN_PLATINUM]: 9,
+            [MAT.MOLTEN_GOLD]: 8,
+            [MAT.MOLTEN_SILVER]: 7,
+            [MAT.MOLTEN_COPPER]: 6,
+            [MAT.MOLTEN_LEAD]: 5,
             [MAT.WATER]: 2,
             [MAT.OIL]: 1,
             [MAT.OIL_BURNING]: 1
@@ -1693,11 +1709,12 @@
         const PLAYER_SUBMERGED_DAMPING = 5.0;
         const BUOYANCY_FORCE = 6.0;
 
-        const MAX_CHUNKS_PER_FRAME = 300;
+        const MAX_CHUNKS_PER_FRAME = 210;
         const REGEN_COOLDOWN = 250;
         const REBUILD_COOLDOWN = 250;
         const MIN_ISLAND_PIXELS = 5;
         const LAVA_SOLIDIFICATION_DEPTH = 10;
+        const RESIN_MAX_BRIDGE_LENGTH = 5;
 
         // --- Add these new variables ---
         const BLOOM_MATERIALS = {
@@ -1711,6 +1728,11 @@
             [MAT.GOLD]: { color: [220, 220, 180], intensity: 0.01, radius: 1 },
             [MAT.LAVA]: { color: [255, 10, 0], intensity: 1.0, radius: 16 },
             [MAT.ACID]: { color: [0, 255, 0], intensity: 1.0, radius: 8 },
+            [MAT.MOLTEN_LEAD]: { color: [200, 205, 220], intensity: 0.8, radius: 10 },
+            [MAT.MOLTEN_COPPER]: { color: [255, 180, 100], intensity: 0.9, radius: 12 },
+            [MAT.MOLTEN_SILVER]: { color: [240, 240, 255], intensity: 1.0, radius: 14 },
+            [MAT.MOLTEN_GOLD]: { color: [255, 250, 200], intensity: 1.2, radius: 16 },
+            [MAT.MOLTEN_PLATINUM]: { color: [255, 255, 255], intensity: 1.2, radius: 16 },
         };
 
         // Add this new constant
@@ -1792,7 +1814,6 @@
         let hoveredBody = null;
 
         const MAX_LIGHT_LEVEL = 30;
-        const LIGHTING_UPDATE_INTERVAL = 30;
         const VISIBLE_LIQUID_SCAN_INTERVAL = 5; // Update lighting every 30 frames
 
         // --- Magic Particle System ---
@@ -1849,11 +1870,22 @@
         let pouredParticles = []; // For the pouring stream effect
         let activeStubs = [];
 
-        const STORABLE_SOLIDS = new Set([MAT.SAND, MAT.SOIL, MAT.GUNPOWDER, MAT.COAL, MAT.GLASS, MAT.COPPER, MAT.SILVER, MAT.GOLD, MAT.PLATINUM]);
-        const STORABLE_LIQUIDS = new Set([MAT.WATER, MAT.OIL, MAT.ACID, MAT.LAVA]);
+        
+        const LIQUIDS = new Set([MAT.WATER, MAT.OIL, MAT.OIL_BURNING, MAT.ACID, MAT.LAVA, MAT.QUICKSILVER, MAT.BLASTING_JELLY,
+            MAT.BLOOD, MAT.MOLTEN_LEAD, MAT.MOLTEN_COPPER, MAT.MOLTEN_SILVER, MAT.MOLTEN_GOLD, MAT.MOLTEN_PLATINUM
+        ]);
         for (const key in ESSENCE_TO_MAT) {
-            STORABLE_LIQUIDS.add(ESSENCE_TO_MAT[key]);
+            LIQUIDS.add(ESSENCE_TO_MAT[key]);
         }
+
+        const POWDER_SOLIDS = new Set([MAT.SAND, MAT.SOIL, MAT.GUNPOWDER, MAT.COAL, 
+                                        MAT.GLASS, MAT.COPPER, MAT.SILVER, MAT.GOLD, 
+                                        MAT.PLATINUM, MAT.RESIN, MAT.VOID_SALTS,
+                                        MAT.PHILOSOPHERS_AMALGAM, MAT.CRYO_STATIC_DUST, MAT.COPPER_SALTS,
+                                        MAT.NULL_CHALK, MAT.ABSOLUTE_ZERO_DUST, MAT.LEAD]);
+
+        const STORABLE_SOLIDS = new Set(POWDER_SOLIDS);
+        const STORABLE_LIQUIDS = new Set(LIQUIDS);
 
         let fluidsCanvas = null;
         let fluidsCtx = null;
@@ -2137,6 +2169,7 @@
                 
                 const key = coordToKey(sx, sy);
                 sectorGrid.set(key, { state: 'ready', sx: sx, sy: sy });
+                markSectorBordersDirty(sx, sy);
 
                 const setPiecesInSector = SetPieceManager.getSetPiecesForSector(sx, sy);
                 for (const pieceInfo of setPiecesInSector) {
@@ -2237,6 +2270,7 @@
                         if (loadSectorFromStorage(sx, sy)) {
                             sectorGrid.set(key, { state: 'ready', sx, sy });
                             isRenderCacheInvalid = true; 
+                            markSectorBordersDirty(sx, sy);
                         } else {
                             sectorGrid.set(key, { state: 'queued', sx, sy });
                             generationQueue.push({ sx, sy });
@@ -3474,7 +3508,8 @@
                 if (imagePieces.length === 0) return;
 
                 const promises = imagePieces.map(piece => {
-                    return new Promise((resolve, reject) => {
+                    // Create a promise for the main material image
+                    const mainImagePromise = new Promise((resolve) => {
                         const img = new Image();
                         img.crossOrigin = "Anonymous";
                         img.src = piece.imagePath;
@@ -3485,35 +3520,53 @@
                             tempCanvas.width = img.width;
                             tempCanvas.height = img.height;
                             tempCtx.drawImage(img, 0, 0);
-
                             const imageData = tempCtx.getImageData(0, 0, img.width, img.height);
                             
-                            // --- START OF MODIFICATION ---
-                            // The loader's only job is to parse the image data.
-                            // The final world bounds will be calculated later.
                             piece.parsedData = parseSetPieceImage(imageData);
                             console.log(`%cSuccessfully loaded and parsed image for: ${piece.name}`, 'color: #76ff7a;');
-                            // --- END OF MODIFICATION ---
-
                             resolve();
                         };
 
                         img.onerror = () => {
-                            // --- START OF MODIFICATION: LOGGING ---
                             console.error(`Failed to load set piece image: ${piece.imagePath}`);
-                            // Keep the promise going so one bad image doesn't stop the game from loading.
-                            resolve(); 
-                            // --- END OF MODIFICATION ---
+                            resolve(); // Resolve anyway to not block game loading
                         };
                     });
+
+                    // Create a promise for the optional background image and cache its data
+                    const bgImagePromise = new Promise((resolve) => {
+                        if (!piece.backgroundImagePath) {
+                            resolve(); // No background to load
+                            return;
+                        }
+                        const bgImg = new Image();
+                        bgImg.src = piece.backgroundImagePath;
+                        bgImg.onload = () => {
+                            const bgCanvas = document.createElement('canvas');
+                            bgCanvas.width = bgImg.width;
+                            bgCanvas.height = bgImg.height;
+                            const bgCtx = bgCanvas.getContext('2d');
+                            bgCtx.drawImage(bgImg, 0, 0);
+                            
+                            // Cache the raw pixel data for efficient rendering later
+                            piece.backgroundImageData = bgCtx.getImageData(0, 0, bgImg.width, bgImg.height);
+
+                            console.log(`%cSuccessfully loaded and cached background for: ${piece.name}`, 'color: #76baff;');
+                            resolve();
+                        };
+                        bgImg.onerror = () => {
+                            console.error(`Failed to load set piece background image: ${piece.backgroundImagePath}`);
+                            resolve(); // Don't block loading
+                        };
+                    });
+                    
+                    // Return a combined promise that waits for both to finish
+                    return Promise.all([mainImagePromise, bgImagePromise]);
                 });
 
                 await Promise.all(promises);
             }
         };
-        // --- END OF NEW CODE ---
-
-        // in index.html, replace the entire SpriteManager.loadAll function
 
         const SpriteManager = {
             sprites: new Map(),
@@ -4119,9 +4172,59 @@
                         break;
                     }
 
-                    // in index.html, inside executeRecipe's switch statement
+                    case 'combine': {
+                        if (processingBatch.size === 0) {
+                            // Nothing to combine, just continue to the next rune
+                            break;
+                        }
 
-                    // in index.html, inside executeRecipe's switch statement
+                        // Get a sorted array of the material types currently in the batch
+                        const currentMaterials = Array.from(processingBatch.keys()).sort((a, b) => a - b);
+                        let matchedRecipe = null;
+
+                        // Find a recipe in our master list that exactly matches the inputs
+                        for (const recipeDef of ALCHEMY_COMBINATIONS) {
+                            // We compare the stringified arrays for a simple and reliable match check
+                            if (JSON.stringify(currentMaterials) === JSON.stringify(recipeDef.inputs)) {
+                                matchedRecipe = recipeDef;
+                                break;
+                            }
+                        }
+
+                        if (matchedRecipe) {
+                            // --- Success: A valid combination was found ---
+
+                            // Determine the quantity of the output. It's limited by the ingredient with the smallest quantity.
+                            const quantities = matchedRecipe.inputs.map(inputId => processingBatch.get(inputId));
+                            const outputQuantity = Math.min(...quantities);
+
+                            if (outputQuantity > 0) {
+                                // 1. Consume the inputs from the processing batch
+                                for (const inputId of matchedRecipe.inputs) {
+                                    const currentAmount = processingBatch.get(inputId);
+                                    if (currentAmount - outputQuantity > 0) {
+                                        // If there's leftover material, update its count
+                                        processingBatch.set(inputId, currentAmount - outputQuantity);
+                                    } else {
+                                        // Otherwise, remove it completely
+                                        processingBatch.delete(inputId);
+                                    }
+                                }
+
+                                // 2. Add the output material to the batch
+                                processingBatch.set(matchedRecipe.output, (processingBatch.get(matchedRecipe.output) || 0) + outputQuantity);
+
+                                console.log(`Combined to produce ${outputQuantity} of ${MATERIAL_NAME[matchedRecipe.output]}`);
+                            }
+
+                        } else {
+                            // --- Failure: No matching combination ---
+                            displayMessage("Combination Failed", "The materials in the crucible do not form a known combination.", 300);
+                            processingBatch.clear(); // Clear the batch to signify failure
+                            return; // Stop processing the rest of the recipe
+                        }
+                        break;
+                    }
 
                     case 'forma_potion': {
                         if (!processingBatch.isPotionBatch) {
@@ -4395,6 +4498,7 @@
                 {
                     name: "AlchemistStation",
                     imagePath: 'assets/alembic.png',
+                    backgroundImagePath: 'assets/alembic_bg.png',
                     targetSectorOffsetX: 0,
                     targetSectorOffsetY: 0,
                     spawnLocalX: SECTOR_SIZE / 2,
@@ -5799,10 +5903,7 @@
             return (type === MAT.WOOD || type === MAT.GUNPOWDER || type === MAT.OIL || type === MAT.COAL || type === MAT.METHANE);
         }
 
-        const LIQUIDS = new Set([MAT.WATER, MAT.OIL, MAT.OIL_BURNING, MAT.ACID, MAT.LAVA]);
-        for (const key in ESSENCE_TO_MAT) {
-            LIQUIDS.add(ESSENCE_TO_MAT[key]);
-        }
+        
 
         const GASES = new Set([MAT.STEAM, MAT.SMOKE, MAT.METHANE, MAT.METHANE_BURNING]);
         const FIRE_PASSABLE = new Set([
@@ -6284,12 +6385,8 @@
         };
 
         const isSolidForPlayer = (type) => [
-            MAT.ROCK_WALL, MAT.SANDSTONE_WALL, MAT.VOLCANIC_WALL, MAT.LABYRINTH_WALL, MAT.MAGIC_WALL,
-            MAT.SOIL, MAT.WOOD, MAT.SAND, 
-            MAT.GUNPOWDER, MAT.COAL, MAT.COAL_BURNING, MAT.GLASS, 
-            MAT.GLASS_WALL, MAT.ADAMANTIUM, MAT.COPPER, MAT.SILVER, 
-            MAT.GOLD, MAT.PLATINUM, MAT.RUNE_WALL,
-            MAT.GROUND, MAT.IRON, MAT.RUSTED_IRON, MAT.OBSIDIAN
+            ...STATIC_MATERIALS,
+            ...POWDER_SOLIDS
         ].includes(type);
         
         function updateRigidBodyGrid() {
@@ -6547,7 +6644,48 @@
             }
         }
 
-        // in index.html, inside the main <script> tag
+        /**
+         * Finds the first solid material along a line, returning its position and type.
+         * @param {number} x0 - Starting X coordinate.
+         * @param {number} y0 - Starting Y coordinate.
+         * @param {number} x1 - Ending X coordinate.
+         * @param {number} y1 - Ending Y coordinate.
+         * @returns {object|null} - An object {x, y, type} if a solid is hit, otherwise null.
+         */
+        function raycastForFirstSolid(x0, y0, x1, y1) {
+            let ix0 = Math.floor(x0);
+            let iy0 = Math.floor(y0);
+            const ix1 = Math.floor(x1);
+            const iy1 = Math.floor(y1);
+
+            const dx = Math.abs(ix1 - ix0);
+            const dy = -Math.abs(iy1 - iy0);
+            const sx = ix0 < ix1 ? 1 : -1;
+            const sy = iy0 < iy1 ? 1 : -1;
+            let err = dx + dy;
+
+            while (true) {
+                const type = getGrid(ix0, iy0);
+
+                // If we hit any solid material...
+                if (isSolidForPlayer(type)) {
+                    // ...return the hit information.
+                    return { x: ix0, y: iy0, type: type };
+                }
+
+                // Check if we've reached the destination
+                if (ix0 === ix1 && iy0 === iy1) {
+                    break;
+                }
+
+                // Bresenham's algorithm stepping logic
+                const e2 = 2 * err;
+                if (e2 >= dy) { err += dy; ix0 += sx; }
+                if (e2 <= dx) { err += dx; iy0 += sy; }
+            }
+
+            return null; // No solid was hit along the path to the destination.
+        }
 
         /**
          * Checks for solid obstructions along a line between two points using Bresenham's algorithm.
@@ -6683,10 +6821,29 @@
             const playerCenterY = player.y + player.height / 2;
             const storeRadius = 1;
 
+            // === Step 1: Determine the Effective Target ===
+            // Raycast from the player to the mouse cursor to see if anything is in the way.
+            const hit = raycastForFirstSolid(playerCenterX, playerCenterY, worldX, worldY);
+
+            let effectiveTargetX, effectiveTargetY;
+
+            if (hit) {
+                // An obstacle was hit. This obstacle is our new primary target.
+                effectiveTargetX = hit.x;
+                effectiveTargetY = hit.y;
+            } else {
+                // The path to the mouse is clear. The mouse position is our target.
+                effectiveTargetX = worldX;
+                effectiveTargetY = worldY;
+            }
+
+            // === Step 2: Attempt to Gather Around the Effective Target ===
+            // We still loop in a small radius to make it easier to grab materials
+            // without needing pixel-perfect aim.
             for (let dy = -storeRadius; dy <= storeRadius; dy++) {
                 for (let dx = -storeRadius; dx <= storeRadius; dx++) {
-                    const wx = worldX + dx;
-                    const wy = worldY + dy;
+                    const wx = effectiveTargetX + dx;
+                    const wy = effectiveTargetY + dy;
                     const type = getGrid(wx, wy);
 
                     let targetGrid, targetW, targetH;
@@ -6695,24 +6852,30 @@
                     } else if (STORABLE_LIQUIDS.has(type)) {
                         targetGrid = flaskGrid; targetW = flaskWidth; targetH = flaskHeight;
                     } else {
-                        continue; // Not a storable material
+                        continue; // This pixel is not a storable material, skip it.
                     }
 
-                    if (hasLineOfSight(playerCenterX, playerCenterY, wx, wy)) {
-                        let spotFound = false;
-                        for (let y=0;y<targetH;y++) {
+                    // Final check: Ensure the final target pixel is both in range AND has a clear line of sight.
+                    // This prevents grabbing items through a thin wall if the raycast happened to miss it.
+                    const distSq = (playerCenterX - wx)**2 + (playerCenterY - wy)**2;
+                    if (distSq <= PLAYER_INTERACTION_RADIUS * PLAYER_INTERACTION_RADIUS && hasLineOfSight(playerCenterX, playerCenterY, wx, wy)) {
+                        
+                        // Attempt to find an empty spot in the correct container
+                        for (let y = 0; y < targetH; y++) {
                             const xOffset = Math.floor(Math.random() * targetW);
-                            for (let i=0;i<targetW;i++) {
-                                const x = (i+xOffset)%targetW;
-                                const containerIdx = getIdx(x,y,targetW,targetH);
+                            for (let i = 0; i < targetW; i++) {
+                                const x = (i + xOffset) % targetW;
+                                const containerIdx = getIdx(x, y, targetW, targetH);
                                 if (containerIdx !== -1 && targetGrid[containerIdx] === MAT.EMPTY) {
+                                    // Success! Move the material.
                                     targetGrid[containerIdx] = type;
                                     setGrid(wx, wy, MAT.EMPTY);
                                     createStoreParticles(wx, wy, type);
-                                    spotFound = true; break;
+                                    
+                                    // We've gathered one pixel, that's enough for one click.
+                                    return;
                                 }
                             }
-                            if (spotFound) break;
                         }
                     }
                 }
@@ -6768,83 +6931,81 @@
         
         // in index.html, replace the entire updatePouredParticles function
 
+        // --- START: REPLACEMENT for updatePouredParticles in index.html ---
         function updatePouredParticles() {
             pouredParticles = pouredParticles.filter(p => {
-                p.lifespan--; // Decrement lifespan each frame
-                if (p.lifespan <= 0) {
-                    return false; // Remove particle if its time is up
-                }
+                p.lifespan--;
+                if (p.lifespan <= 0) return false;
 
-                p.vy += GRAVITY * 0.5; // Apply gravity first
-
-                const vx = p.vx;
-                const vy = p.vy;
-
-                // --- START: NEW COLLISION LOGIC ---
-
-                // 1. Determine how many small steps we need to check this frame.
-                // This is based on the longest distance the particle travels in either axis.
+                p.vy += GRAVITY * 0.5;
+                const vx = p.vx, vy = p.vy;
                 const steps = Math.ceil(Math.max(Math.abs(vx), Math.abs(vy)));
 
-                // If moving less than 1 pixel, we can use a single check (optimization).
-                if (steps <= 1) {
-                    const nextX = p.x + vx;
-                    const nextY = p.y + vy;
-                    const gridBlocked = getGrid(Math.floor(nextX), Math.floor(nextY)) !== MAT.EMPTY;
-                    const rigidBlocked = getAuxData(etcChunkMap, Math.floor(nextX), Math.floor(nextY)) === 1;
+                if (steps <= 0) return true;
 
-                    if (gridBlocked || rigidBlocked) {
-                        // Collision detected, place the particle and stop it.
-                        setGrid(Math.floor(p.x), Math.floor(p.y), p.type, true);
-                        return false; // Remove from active particles
-                    } else {
-                        // No collision, update position and continue.
-                        p.x = nextX;
-                        p.y = nextY;
-                        return true; // Keep particle active
-                    }
-                }
-
-                // 2. If moving fast, check in small increments along the path.
-                const stepX = vx / steps;
-                const stepY = vy / steps;
+                const stepX = vx / steps, stepY = vy / steps;
 
                 for (let i = 1; i <= steps; i++) {
-                    const checkX = p.x + stepX * i;
-                    const checkY = p.y + stepY * i;
-                    const checkIX = Math.floor(checkX);
-                    const checkIY = Math.floor(checkY);
-
-                    const gridBlocked = getGrid(checkIX, checkIY) !== MAT.EMPTY;
+                    const checkX = p.x + stepX * i, checkY = p.y + stepY * i;
+                    const checkIX = Math.floor(checkX), checkIY = Math.floor(checkY);
+                    
+                    const hitType = getGrid(checkIX, checkIY);
                     const rigidBlocked = getAuxData(etcChunkMap, checkIX, checkIY) === 1;
 
-                    if (gridBlocked || rigidBlocked) {
-                        // Collision detected! Settle the particle at its position just BEFORE the hit.
+                    if (hitType !== MAT.EMPTY || rigidBlocked) {
+                        // A collision occurred. The particle should land at the spot *before* the collision.
                         const finalX = Math.floor(p.x + stepX * (i - 1));
                         const finalY = Math.floor(p.y + stepY * (i - 1));
+
+                        // --- Special Case: RESIN (Simplified & Corrected) ---
+                        if (p.type === MAT.RESIN) {
+                            let canGlue = false;
+                            let newAuxValue = 0;
+
+                            // Condition 1: Did the particle hit a static wall?
+                            if (STATIC_MATERIALS.has(hitType)) {
+                                canGlue = true;
+                                newAuxValue = 1; // Become an anchor.
+                            }
+                            // Condition 2: Did it hit an already-glued piece of Resin?
+                            else if (hitType === MAT.RESIN) {
+                                const hitAux = getAuxData(etcChunkMap, checkIX, checkIY);
+                                if (hitAux > 0 && hitAux < RESIN_MAX_BRIDGE_LENGTH) {
+                                    canGlue = true;
+                                    newAuxValue = hitAux + 1; // Extend the bridge.
+                                }
+                            }
+
+                            if (canGlue) {
+                                // Place the resin at the last known empty spot.
+                                // If the spot is somehow taken, the particle is just absorbed.
+                                if (getGrid(finalX, finalY) === MAT.EMPTY) {
+                                    setGrid(finalX, finalY, MAT.RESIN, true);
+                                    setAuxData(etcChunkMap, finalX, finalY, newAuxValue);
+                                }
+                                return false; // Particle is handled, remove it.
+                            }
+                        }
                         
-                        // Use the existing "settle" logic to find an empty spot if the landing spot is taken.
+                        // --- Fallback Settling Logic (for all other materials, or Resin that couldn't glue) ---
                         let placeX = finalX, placeY = finalY;
                         let attempts = 0;
                         while(getGrid(placeX, placeY) !== MAT.EMPTY && attempts < 5) {
                             placeY--;
                             attempts++;
                         }
-                        
                         setGrid(placeX, placeY, p.type, true);
-                        return false; // Remove particle from active list
+                        return false; // Particle is placed.
                     }
                 }
                 
-                // 3. If the loop completes, no collision was found along the path.
+                // If no collision, update position and keep simulating.
                 p.x += vx;
                 p.y += vy;
-                return true; // Keep particle active for the next frame
-
-                // --- END: NEW COLLISION LOGIC ---
+                return true;
             });
         }
-        
+
         const movedPouch = new Uint8Array(pouchWidth*pouchHeight);
         const movedFlask = new Uint8Array(flaskWidth*flaskHeight);
 
@@ -6935,10 +7096,66 @@
 
             if (WALL_TYPES.has(type) || [MAT.EMPTY, MAT.WOOD, MAT.GLASS_WALL, MAT.ADAMANTIUM, MAT.RUNE_WALL, MAT.RIGID_BODY_STUB, MAT.GROUND, MAT.IRON, MAT.RUSTED_IRON, MAT.OBSIDIAN].includes(type) || LIQUIDS.has(type) || GASES.has(type)) return;
             
-            if (type === MAT.FIRE) updateFire(x, y, idx, moved, grid, w, h, getIdx, setter);
-            else if ([MAT.SAND, MAT.SOIL, MAT.GUNPOWDER, MAT.COAL, MAT.GLASS, MAT.COPPER, MAT.SILVER, MAT.GOLD, MAT.PLATINUM].includes(type)) updateSolid(x, y, type, idx, moved, grid, w, h, getIdx, setter);
+            if (type === MAT.RESIN) updateResin(x, y, idx, moved, grid, w, h, getIdx, setter);
+            else if (type === MAT.FIRE) updateFire(x, y, idx, moved, grid, w, h, getIdx, setter);
+            else if (POWDER_SOLIDS.has(type)) updateSolid(x, y, type, idx, moved, grid, w, h, getIdx, setter);
             else if (type === MAT.COAL_BURNING) updateBurningCoal(x, y, idx, moved, grid, w, h, getIdx, setter);
             else if (type === MAT.GUNPOWDER_IGNITED) updateIgnitedGunpowder(x, y, idx, moved, grid, w, h, getIdx, setter);
+        }
+
+        // --- START: NEW function in index.html (place after updateSolid) ---
+        /**
+         * Special update logic for Resin.
+         * Checks if it should "glue" to a neighbor or fall like sand.
+         */
+        function updateResin(x, y, idx, moved, grid, w, h, getIdx, setter) {
+            const isWorldSim = !grid;
+            if (!isWorldSim) { // Resin in containers just behaves like sand
+                updateSolid(x, y, MAT.RESIN, idx, moved, grid, w, h, getIdx, setter);
+                return;
+            }
+
+            // Check if this resin is already glued. If so, do nothing.
+            // A value > 0 in the etcChunkMap signifies it's glued.
+            if (getAuxData(etcChunkMap, x, y) > 0) {
+                return;
+            }
+
+            // This Resin is not glued. Check if it should become glued.
+            const DIRS_8 = [[-1,0],[1,0],[0,-1],[0,1],[-1,-1],[-1,1],[1,-1],[1,1]];
+            let minNeighborAux = Infinity;
+
+            for (const dir of DIRS_8) {
+                const nx = x + dir.x;
+                const ny = y + dir.y;
+                const nType = getGrid(nx, ny);
+
+                // Condition 1: Is it next to a static, non-resin solid?
+                // If so, it becomes an "anchor" with a glue value of 1.
+                if (STATIC_MATERIALS.has(nType)) {
+                    setAuxData(etcChunkMap, x, y, 1);
+                    return; // Glued, so stop processing
+                }
+
+                // Condition 2: Is it next to another already-glued piece of Resin?
+                if (nType === MAT.RESIN) {
+                    const nAux = getAuxData(etcChunkMap, nx, ny);
+                    // If the neighbor is glued (aux > 0), consider it for bridging.
+                    if (nAux > 0) {
+                        minNeighborAux = Math.min(minNeighborAux, nAux);
+                    }
+                }
+            }
+            
+            // If we found a valid, glued resin neighbor and the new bridge length is within limits...
+            if (minNeighborAux < RESIN_MAX_BRIDGE_LENGTH) {
+                // ...glue this pixel to it, incrementing the bridge length.
+                setAuxData(etcChunkMap, x, y, minNeighborAux + 1);
+                return; // Glued, so stop processing
+            }
+
+            // If no glue conditions were met, behave like normal sand.
+            updateSolid(x, y, MAT.RESIN, idx, moved, grid, w, h, getIdx, setter);
         }
 
         function stepLiquid(x, y, moved, grid, w, h, getIdx, setter) {
@@ -7259,7 +7476,30 @@
                     if (gidx !== -1) { setter(gidx, gtype); moved[gidx] = 1; }
                 }
             };
-             const _getAux = (gx, gy) => isWorldSim ? getAuxData(etcChunkMap, gx, gy) : 0;
+            const _getAux = (gx, gy) => isWorldSim ? getAuxData(etcChunkMap, gx, gy) : 0;
+
+            if (isWorldSim && SOLID_METALS.has(type)) {
+                const DIRS_4 = [{x:0,y:1},{x:0,y:-1},{x:1,y:0},{x:-1,y:0}];
+                for (const dir of DIRS_4) {
+                    const nx = x + dir.x, ny = y + dir.y;
+                    const neighborType = _get(nx, ny);
+                    if (neighborType === MAT.LAVA && Math.random() < 0.1) {
+                        _set(x, y, MELT_MAP[type]);
+                        if(!isWorldSim && idx!==-1) moved[idx] = 1;
+                        return; // Melted, so stop other solid logic
+                    }
+                    if (MOLTEN_METALS.has(neighborType)) {
+                        activateChunkAt(x, y, type);
+
+                        if (Math.random() < 0.01)
+                        {
+                            _set(x, y, MELT_MAP[type]);
+                            if(!isWorldSim && idx!==-1) moved[idx] = 1;
+                            return; // Melted, so stop other solid logic
+                        }
+                    }
+                }
+            }
 
             if (isWorldSim) {
                 // Check if the pixel is trying to fall into a fillable rigid body.
@@ -7319,12 +7559,14 @@
             }
         }
         
+        // --- START: REPLACEMENT for updateLiquid in index.html ---
         function updateLiquid(x, y, type, idx, moved, grid, w, h, getIdx, setter) {
             const isWorldSim = !grid;
             const _get = (gx, gy) => isWorldSim ? getGrid(gx, gy) : (getIdx(gx, gy) !== -1 ? grid[getIdx(gx, gy)] : MAT.ROCK_WALL);
+            // --- FIX: Added 'true' to setGrid to ensure chunk activation on change ---
             const _set = (gx, gy, gtype) => {
                 if (isWorldSim) {
-                    setGrid(gx, gy, gtype);
+                    setGrid(gx, gy, gtype, true);
                     movedInFrame.add(coordToKey(gx, gy));
                 } else {
                     const gidx = getIdx(gx, gy);
@@ -7334,7 +7576,6 @@
             const _getAux = (gx, gy) => isWorldSim ? getAuxData(etcChunkMap, gx, gy) : 0;
 
             // --- Phase 1: Reactions ---
-
             if (type === MAT.WATER && _get(x, y + 1) === MAT.OBSIDIAN) {
                 let isLavaBelow = false;
                 for (let i = 1; i <= LAVA_SOLIDIFICATION_DEPTH + 1; i++) {
@@ -7343,16 +7584,13 @@
                         break;
                     }
                 }
-
                 if (isLavaBelow) {
                     _set(x, y, MAT.STEAM);
                     const depthVariation = (PerlinNoise.noise(x * 0.1, 42) * 4);
                     const dynamicDepth = Math.max(2, LAVA_SOLIDIFICATION_DEPTH + Math.floor(depthVariation));
-
                     for (let i = 1; i <= dynamicDepth; i++) {
                         const scanY = y + 1 + i;
                         const scannedCell = _get(x, scanY);
-                        
                         if (scannedCell === MAT.LAVA) {
                             _set(x, scanY, MAT.OBSIDIAN);
                         } else if (scannedCell !== MAT.OBSIDIAN) {
@@ -7368,52 +7606,50 @@
                 const nx = x + dir.x, ny = y + dir.y;
                 const nType = _get(nx, ny);
 
+                // Lava <> Water Reaction
                 if (type === MAT.LAVA && nType === MAT.WATER) {
                     _set(nx, ny, MAT.STEAM);
-                    for (let dy = -1; dy <= 1; dy++) {
-                        for (let dx = -1; dx <= 1; dx++) {
-                            if (_get(nx + dx, ny + dy) === MAT.LAVA) {
-                                _set(nx + dx, ny + dy, MAT.OBSIDIAN);
-                            }
-                        }
-                    }
+                    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if (_get(nx + dx, ny + dy) === MAT.LAVA) _set(nx + dx, ny + dy, MAT.OBSIDIAN);
                     if(!isWorldSim && idx!==-1) moved[idx] = 1; return;
                 }
                 if (type === MAT.WATER && nType === MAT.LAVA) {
                     _set(x, y, MAT.STEAM);
-                    for (let dy = -1; dy <= 1; dy++) {
-                        for (let dx = -1; dx <= 1; dx++) {
-                            if (_get(x + dx, y + dy) === MAT.LAVA) {
-                                _set(x + dx, y + dy, MAT.OBSIDIAN);
-                            }
-                        }
-                    }
+                    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if (_get(x + dx, y + dy) === MAT.LAVA) _set(x + dx, y + dy, MAT.OBSIDIAN);
+                    if(!isWorldSim && idx!==-1) moved[idx] = 1; return;
+                }
+
+                // --- FIX: Molten Metal <> Water Reaction ---
+                if (MOLTEN_METALS.has(type) && nType === MAT.WATER) {
+                    _set(x, y, SOLIDIFY_MAP[type]); // Solidify self
+                    _set(nx, ny, MAT.STEAM);       // Turn neighbor to steam
+                    if(!isWorldSim && idx!==-1) moved[idx] = 1; return;
+                }
+                if (type === MAT.WATER && MOLTEN_METALS.has(nType)) {
+                    _set(x, y, MAT.STEAM);             // Turn self to steam
+                    _set(nx, ny, SOLIDIFY_MAP[nType]); // Solidify neighbor
                     if(!isWorldSim && idx!==-1) moved[idx] = 1; return;
                 }
             }
 
-
             // --- Phase 2: Behaviors (if no reaction occurred) ---
-            if (type === MAT.LAVA) {
-                //
-                // --- START OF MODIFICATION ---
-                // Spread heat to neighbors AND melt obsidian
+            if (type === MAT.LAVA || MOLTEN_METALS.has(type)) {
                 for (const dir of DIRS_4) {
-                    const nx = x + dir.x;
-                    const ny = y + dir.y;
+                    const nx = x + dir.x, ny = y + dir.y;
                     const nType = _get(nx, ny);
-
-                    // New logic: Small chance to melt adjacent obsidian back into lava
-                    if (isWorldSim && nType === MAT.OBSIDIAN) ensureChunkIsActive(x, y, _get(x, y));
-                    if (nType === MAT.OBSIDIAN && Math.random() < 0.005) { // 1% chance per neighbor per frame
-                        _set(nx, ny, MAT.LAVA);
+                    
+                    if (isWorldSim && type === MAT.LAVA && nType === MAT.OBSIDIAN) {
+                        // Ensure the chunk containing the obsidian is active for future simulation ticks.
+                        activateChunkAt(x, y, type);
                         
+                        // Only lava can melt obsidian, and only has a small chance to do so.
+                        if (type === MAT.LAVA && Math.random() < 0.005) {
+                            _set(nx, ny, MAT.LAVA);
+                        }
                     }
 
-                    // Existing logic: Ignite flammable materials
+                    // All hot liquids can ignite things
                     if (isWorldSim) tryIgniteAt(nx, ny, 0.4);
                 }
-                // --- END OF MODIFICATION ---
             }
 
             if (type === MAT.ACID) {
@@ -7780,6 +8016,96 @@
             }
         }
 
+        // --- START OF NEW FUNCTION ---
+        /**
+         * Draws the correct background for a single pixel, prioritizing set piece backgrounds
+         * over the default tiled background.
+         * @param {Uint8ClampedArray} pixels - The destination image data array.
+         * @param {number} destI - The starting index in the destination array for this pixel.
+         * @param {number} worldX - The world X coordinate of the pixel.
+         * @param {number} worldY - The world Y coordinate of the pixel.
+         * @param {Array} visibleSetPieceBGs - Pre-calculated list of visible set piece background data.
+         * @param {Uint8ClampedArray} bgData - The default tiled background's image data.
+         * @param {number} bgWidth - The width of the default background tile.
+         * @param {number} bgHeight - The height of the default background tile.
+         */
+        function drawBackgroundForPixel(pixels, destI, worldX, worldY, visibleSetPieceBGs, bgData, bgWidth, bgHeight) {
+            // Step 1: Check for a set piece background for this pixel
+            for (const bg of visibleSetPieceBGs) {
+                // Check if the current world coordinate falls within this set piece's bounds
+                if (worldX >= bg.bounds.x && worldX < bg.bounds.x + bg.bounds.width &&
+                    worldY >= bg.bounds.y && worldY < bg.bounds.y + bg.bounds.height)
+                {
+                    // It does. Now find the corresponding pixel in the background image data.
+                    const localX = worldX - bg.bounds.x;
+                    const localY = worldY - bg.bounds.y;
+                    const srcI = (localY * bg.width + localX) * 4;
+
+                    // Only draw if the source pixel is not transparent
+                    if (bg.imageData[srcI + 3] > 128) {
+                        pixels[destI]     = bg.imageData[srcI];
+                        pixels[destI + 1] = bg.imageData[srcI + 1];
+                        pixels[destI + 2] = bg.imageData[srcI + 2];
+                        pixels[destI + 3] = 255;
+                        return; // We've drawn the correct background, so we're done.
+                    }
+                }
+            }
+
+            // Step 2: If no set piece background was found, draw the default tiled background
+            const bgX = (worldX % bgWidth + bgWidth) % bgWidth;
+            const bgY = (worldY % bgHeight + bgHeight) % bgHeight;
+            const bgI = (bgY * bgWidth + bgX) * 4;
+            pixels[destI]     = bgData[bgI];
+            pixels[destI + 1] = bgData[bgI + 1];
+            pixels[destI + 2] = bgData[bgI + 2];
+            pixels[destI + 3] = 255;
+        }
+
+        // --- START OF NEW FUNCTION ---
+        /**
+         * Scans all set pieces and returns an array of data for those whose
+         * background images are currently visible on screen.
+         * @returns {Array<object>} An array of objects, each containing bounds, imageData, and width for a visible background.
+         */
+        function getVisibleSetPieceBackgrounds() {
+            const visibleBGs = [];
+            for (const piece of SetPieceManager.setPieces) {
+                // Check if the piece has the necessary data to be rendered
+                if (!piece.backgroundImageData || !piece.parsedData) continue;
+
+                // Calculate the set piece's world position and bounds
+                const targetSX = playerSpawnSX + piece.targetSectorOffsetX;
+                const targetSY = playerSpawnSY + piece.targetSectorOffsetY;
+                const halfW = Math.floor(piece.parsedData.width / 2);
+                const halfH = Math.floor(piece.parsedData.height / 2);
+                const centerX = (targetSX * SECTOR_SIZE) + piece.spawnLocalX;
+                const centerY = (targetSY * SECTOR_SIZE) + piece.spawnLocalY;
+                const pieceBounds = {
+                    x: centerX - halfW,
+                    y: centerY - halfH,
+                    width: piece.parsedData.width,
+                    height: piece.parsedData.height
+                };
+
+                // Check for intersection with the camera's view frustum
+                if (pieceBounds.x < camera.x + viewWidth &&
+                    pieceBounds.x + pieceBounds.width > camera.x &&
+                    pieceBounds.y < camera.y + viewHeight &&
+                    pieceBounds.y + pieceBounds.height > camera.y)
+                {
+                    // If visible, add its pre-calculated data to the list for the renderer to use
+                    visibleBGs.push({
+                        bounds: pieceBounds,
+                        imageData: piece.backgroundImageData.data,
+                        width: piece.backgroundImageData.width,
+                    });
+                }
+            }
+            return visibleBGs;
+        }
+
+
         function render() {
             // Reset per-frame data
             firePixelsCoords = [];
@@ -7852,6 +8178,8 @@
                 });
             }
 
+            const visibleSetPieceBGs = getVisibleSetPieceBackgrounds();
+
             // This is our main buffer for drawing new pixels for this frame
             const currentFrameImageData = ctx.getImageData(0, 0, renderWidth, renderHeight);
             const currentFramePixels = currentFrameImageData.data;
@@ -7873,14 +8201,7 @@
                         const worldY = screenY + startY;
                         const destI = (screenY * renderWidth + screenX) * 4;
 
-                        // --- Start: Core Pixel Logic (Identical to before) ---
-                        const bgX = (worldX % bgWidth + bgWidth) % bgWidth;
-                        const bgY = (worldY % bgHeight + bgHeight) % bgHeight;
-                        const bgI = (bgY * bgWidth + bgX) * 4;
-                        currentFramePixels[destI] = bgData[bgI];
-                        currentFramePixels[destI + 1] = bgData[bgI + 1];
-                        currentFramePixels[destI + 2] = bgData[bgI + 2];
-                        currentFramePixels[destI + 3] = 255;
+                        drawBackgroundForPixel(currentFramePixels, destI, worldX, worldY, visibleSetPieceBGs, bgData, bgWidth, bgHeight);
 
                         const type = getGrid(worldX, worldY);
 
@@ -7901,9 +8222,22 @@
                         }
 
                         if (type === MAT.FIRE) { r = 255; g = 80 + Math.random() * 80; b = 0; firePixelsCoords.push({ x: screenX, y: screenY }); } 
-                        else if (type === MAT.OIL_BURNING || type === MAT.COAL_BURNING) { firePixelsCoords.push({ x: screenX, y: screenY });[r, g, b] = varyColor(...COLORS[type], worldX, worldY, type, 4); } 
-                        else if (LIQUIDS.has(type)) { [r, g, b] = varyColor(...COLORS[type], worldX, worldY, type, 4); } 
-                        else { if (SHIMMERING_METALS.has(type) || type === MAT.IRON) { [r, g, b] = metallicColor(worldX, worldY, COLORS[type]); } else { [r, g, b] = varyColor(...COLORS[type], worldX, worldY, type, 16); } }
+                        else if (type === MAT.OIL_BURNING || type === MAT.COAL_BURNING) { 
+                            firePixelsCoords.push({ x: screenX, y: screenY });
+                            [r, g, b] = varyColor(...COLORS[type], worldX, worldY, type, 4); 
+                        } 
+                        else if (LIQUIDS.has(type)) { 
+                            [r, g, b] = varyColor(...COLORS[type], worldX, worldY, type, 4); 
+                        } 
+                        else if (SHIMMERING_METALS.has(type) || type === MAT.IRON) { 
+                                [r, g, b] = metallicColor(worldX, worldY, COLORS[type]); 
+                        } 
+                        else if (type === MAT.WOOD) {
+                            [r, g, b] = woodColor(worldX, worldY, COLORS[type]);
+                        }
+                        else { 
+                            [r, g, b] = varyColor(...COLORS[type], worldX, worldY, type, 16); 
+                        } 
                         
                         if (SHIMMERING_METALS.has(type)) { const h = hashCell(worldX, worldY, Math.floor(frameCount / 4)); if (h > 254) { const br = 35; r = Math.min(255, r + br); g = Math.min(255, g + br); b = Math.min(255, b + br); } }
                         if (!ALWAYS_VISIBLE_MATERIALS.has(type)) { const br = lightLevel / MAX_LIGHT_LEVEL; r = (r * br) | 0; g = (g * br) | 0; b = (b * br) | 0; }
@@ -7917,7 +8251,7 @@
                     }
                 }
             }
-            
+
             // Put the final, combined image data (with shifted old parts and newly drawn dirty parts) onto the main canvas.
             ctx.putImageData(currentFrameImageData, 0, 0);
 
@@ -7947,7 +8281,6 @@
             }
 
             // --- 4. RENDER DYNAMIC ELEMENTS ON TOP ---
-            // This part remains the same.
             renderBloom(); 
             renderRigidBodies();
 
@@ -9096,10 +9429,71 @@
             {x:-1, y:0}, {x:-2, y:-1}, {x:-1, y:-1}, {x:-1, y:-2}, {x:0, y:-1}, {x:1, y:-2}, {x:1, y:-1}, {x:2, y:-1}
         ];
 
-        function angleToDir16(a){ const step=Math.PI/8; const i=Math.round(a/step)&15; return WAND_DIRS_16[i]; }
-        function hashCell(x,y,type){ let h=x*374761393+y*668265263+type*1442695041; h=(h^(h>>13))*1274126177; return(h^(h>>16))&0xff; }
-        function metallicColor(x,y,baseRGB){const[br,bg,bb]=baseRGB,s1=0.5+0.5*Math.sin((x*0.35)+(y*0.18)),s2=0.5+0.5*Math.sin((x*0.08)-(y*0.12)),t=0.65*s1+0.35*s2,glint=(Math.sin(x*0.9+y*0.25)>0.985)?0.25:0.0,m=0.85+0.35*t+glint,r=Math.min(255,Math.max(0,br*m)),g=Math.min(255,Math.max(0,bg*(m*0.98))),b=Math.min(255,Math.max(0,bb*(m*1.05)));return[r|0,g|0,b|0];}
-        function varyColor(r,g,b,x,y,type,strength=18){ const n=hashCell(x,y,type)/255, delta=(n-0.5)*strength*2; return[Math.max(0,Math.min(255,r+delta)),Math.max(0,Math.min(255,g+delta)),Math.max(0,Math.min(255,b+delta))]; }
+        function angleToDir16(a) {
+            const step = Math.PI / 8;
+            const i = Math.round(a / step) & 15;
+            return WAND_DIRS_16[i];
+        }
+
+        function hashCell(x, y, type) {
+            let h = x * 374761393 + y * 668265263 + type * 1442695041;
+            h = (h ^ (h >> 13)) * 1274126177;
+            return (h ^ (h >> 16)) & 0xff;
+        }
+
+        function metallicColor(x, y, baseRGB) {
+            const [br, bg, bb] = baseRGB, s1 = 0.5 + 0.5 * Math.sin((x * 0.35) + (y * 0.18)), s2 = 0.5 + 0.5 * Math.sin((x * 0.08) - (y * 0.12)), t = 0.65 * s1 + 0.35 * s2, glint = (Math.sin(x * 0.9 + y * 0.25) > 0.985) ? 0.25 : 0.0, m = 0.85 + 0.35 * t + glint, r = Math.min(255, Math.max(0, br * m)), g = Math.min(255, Math.max(0, bg * (m * 0.98))), b = Math.min(255, Math.max(0, bb * (m * 1.05)));
+            return [r | 0, g | 0, b | 0];
+        }
+
+        function varyColor(r, g, b, x, y, type, strength = 18) {
+            const n = hashCell(x, y, type) / 255,
+                delta = (n - 0.5) * strength * 2;
+            return [Math.max(0, Math.min(255, r + delta)), Math.max(0, Math.min(255, g + delta)), Math.max(0, Math.min(255, b + delta))];
+        }
+
+        // --- START OF NEW FUNCTION ---
+        /**
+         * Generates a procedural wood grain color for a given pixel coordinate.
+         * @param {number} x - The world X coordinate.
+         * @param {number} y - The world Y coordinate.
+         * @param {Array<number>} baseRGB - The base [r, g, b] color for the wood.
+         * @returns {Array<number>} The final [r, g, b] color with a wood texture.
+         */
+        function woodColor(x, y, baseRGB) {
+            // Main grain pattern - stretched vertically for a typical wood grain look.
+            // Using different noise "layers" (the third parameter) adds variety.
+            const grainNoise = PerlinNoise.noise(x * 0.08, y * 0.4, 10);
+
+            // A second, finer noise layer for subtle texture and imperfections.
+            const textureNoise = PerlinNoise.noise(x * 0.7, y * 0.7, 20);
+
+            // Define the darker color for the grain lines by reducing the base color's brightness.
+            const darkColor = [baseRGB[0] * 0.65, baseRGB[1] * 0.65, baseRGB[2] * 0.55];
+
+            // The 'grainNoise' creates smooth waves. We'll use its fractional part to create sharp, repeating bands.
+            // Multiplying by a number (e.g., 7) makes the bands denser.
+            const bandValue = (grainNoise * 7) % 1.0;
+
+            let r, g, b;
+
+            // Create sharp, dark lines for the grain based on a threshold.
+            if (bandValue < 0.25) {
+                [r, g, b] = darkColor;
+            } else {
+                [r, g, b] = baseRGB;
+            }
+
+            // Apply the subtle texture noise to both light and dark bands for more realism.
+            // This breaks up the flat colors and makes the texture feel more organic.
+            const textureMod = (textureNoise - 0.5) * 35; // Varies brightness by +/- 17.5
+            r = Math.max(0, Math.min(255, r + textureMod));
+            g = Math.max(0, Math.min(255, g + textureMod));
+            b = Math.max(0, Math.min(255, b + textureMod));
+
+            return [r | 0, g | 0, b | 0];
+        }
+        // --- END OF NEW FUNCTION ---
         
         // --- START OF REPLACEMENT ---
         function updateHoverMaterial(){
@@ -9755,6 +10149,58 @@
             }
         }
 
+        // in index.html, inside the main <script> tag
+
+        /**
+         * When a sector becomes ready, this function checks its neighbors. If a neighbor is also ready,
+         * it marks the border chunks of both sectors as dirty for a lighting update.
+         * @param {number} sx - The X coordinate of the newly ready sector.
+         * @param {number} sy - The Y coordinate of the newly ready sector.
+         */
+        function markSectorBordersDirty(sx, sy) {
+            const chunksPerSector = SECTOR_SIZE / CHUNK_SIZE;
+            const directions = [
+                { dx: 1, dy: 0 }, // Right
+                { dx: -1, dy: 0 }, // Left
+                { dx: 0, dy: 1 }, // Bottom
+                { dx: 0, dy: -1 }  // Top
+            ];
+
+            for (const dir of directions) {
+                const neighborSX = sx + dir.dx;
+                const neighborSY = sy + dir.dy;
+                const neighborSector = sectorGrid.get(coordToKey(neighborSX, neighborSY));
+
+                // Check if the neighbor exists and is already loaded.
+                if (neighborSector && neighborSector.state === 'ready') {
+                    
+                    // --- We found a seam that needs updating ---
+
+                    if (dir.dx !== 0) { // Horizontal seam (left/right)
+                        const newSectorBorderCX = (dir.dx === -1) ? (sx * chunksPerSector) : ((sx + 1) * chunksPerSector - 1);
+                        const neighborBorderCX = (dir.dx === -1) ? (sx * chunksPerSector - 1) : ((sx + 1) * chunksPerSector);
+                        
+                        const startCY = sy * chunksPerSector;
+                        const endCY = startCY + chunksPerSector;
+                        for (let cy = startCY; cy < endCY; cy++) {
+                            lightingDirtyChunks.add(coordToKey(newSectorBorderCX, cy));
+                            lightingDirtyChunks.add(coordToKey(neighborBorderCX, cy));
+                        }
+                    } else { // Vertical seam (top/bottom)
+                        const newSectorBorderCY = (dir.dy === -1) ? (sy * chunksPerSector) : ((sy + 1) * chunksPerSector - 1);
+                        const neighborBorderCY = (dir.dy === -1) ? (sy * chunksPerSector - 1) : ((sy + 1) * chunksPerSector);
+
+                        const startCX = sx * chunksPerSector;
+                        const endCX = startCX + chunksPerSector;
+                        for (let cx = startCX; cx < endCX; cx++) {
+                            lightingDirtyChunks.add(coordToKey(cx, newSectorBorderCY));
+                            lightingDirtyChunks.add(coordToKey(cx, neighborBorderCY));
+                        }
+                    }
+                }
+            }
+        }
+
         // in index.html, add this new function
 
         /**
@@ -10255,6 +10701,7 @@
 
                     const key = coordToKey(sx, sy);
                     sectorGrid.set(key, { state: 'ready', sx: sx, sy: sy });
+                    markSectorBordersDirty(sx, sy);
                 }
             }
 
