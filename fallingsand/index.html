@@ -526,20 +526,14 @@
             }
         }
 
-
-        // in index.html, replace the entire pickupObject function
-
         function pickupObject(body) {
-            if (body.isDestroyed || !body.body) return; // Added a safety check here too
+            if (body.isDestroyed || !body.body) return;
 
             const userData = body.body.getUserData();
             const ringSprite = SpriteManager.sprites.get('pickup_shape');
             let pickedUp = false;
             
-            // --- START OF THE FIX ---
-            // Get the position BEFORE doing anything that might destroy the body.
             const pickupPos = body.body.getPosition();
-            // --- END OF THE FIX ---
 
             // Handle picking up finished potions
             if (userData.isPotion) {
@@ -556,13 +550,25 @@
             else if (userData.onPickup) {
                 userData.onPickup(player);
                 body.isDestroyed = true; 
-                createShapeDissolveEffect({ x: pickupPos.x * B2_SCALE, y: pickupPos.y * B2_SCALE, shapeImage: ringSprite, /* ... */ });
+                createShapeDissolveEffect({ x: pickupPos.x * B2_SCALE, y: pickupPos.y * B2_SCALE, shapeImage: ringSprite });
                 return;
             }
+            // --- NEW LOGIC: Handle picking up material chunks ---
+            else if (userData.isMaterialChunk) {
+                if (player.structurePocket.length < player.maxStructureSlots) {
+                    world.destroyBody(body.body);
+                    body.body = null;
+                    player.structurePocket.push(body);
+                    pickedUp = true;
+                } else {
+                    displayMessage("Inventory Full", "Cannot pick up the material chunk.", 240);
+                }
+            }
+            // --- END NEW LOGIC ---
             // Handle all other defined objects (tools, empty potions, barrels, etc.)
             else {
                 const def = OBJECT_DEFINITIONS[userData.definitionId];
-                if (!def) return;
+                if (!def) return; // THIS WAS THE LINE CAUSING THE PROBLEM
 
                 switch (def.type) {
                     case 'tool':
@@ -584,8 +590,7 @@
             
             if (pickedUp) {
                 body.isDestroyed = true;
-                // Use the saved position for the particle effect.
-                 createShapeDissolveEffect({
+                createShapeDissolveEffect({
                     x: pickupPos.x * B2_SCALE,
                     y: pickupPos.y * B2_SCALE,
                     shapeImage: ringSprite,
@@ -1316,7 +1321,7 @@
                     const PICK_RANGE = 24; // How far the pick can reach, in pixels.
                     const BREAK_RADIUS = 12; // How large the break area is.
                     
-                    const softMaterials = new Set([MAT.SAND, MAT.SOIL, MAT.SANDSTONE_WALL, MAT.COAL, MAT.GLASS, MAT.GLASS_WALL, MAT.GROUND]);
+                    const softMaterials = new Set([MAT.SAND, MAT.SOIL, MAT.SANDSTONE_WALL, MAT.COAL, MAT.GLASS, MAT.GLASS_WALL, MAT.GROUND, MAT.WOOD]);
                     
                     // 1. Define Raycast Start and End Points
                     const aim = computePlayerAim();
@@ -1358,6 +1363,9 @@
                     if (hitPoint) {
                         // Check if the material we hit is something the pick can break.
                         if (softMaterials.has(hitType)) {
+
+                            const destroyedCounts = new Map();
+
                             // Success! Use the hitPoint as the center of destruction.
                             for (let r_dy = -BREAK_RADIUS; r_dy <= BREAK_RADIUS; r_dy++) {
                                 for (let r_dx = -BREAK_RADIUS; r_dx <= BREAK_RADIUS; r_dx++) {
@@ -1370,6 +1378,10 @@
                                     if (softMaterials.has(breakMaterialType)) {
                                         setGrid(breakX, breakY, MAT.EMPTY);
                                         activateChunkAt(breakX, breakY, MAT.EMPTY);
+
+                                        if(MINABLE_MATERIALS[breakMaterialType]) {
+                                            destroyedCounts.set(breakMaterialType, (destroyedCounts.get(breakMaterialType) || 0) + 1);
+                                        }
                                         
                                         // Spawn particles (reusing existing logic)
                                         if (Math.random() < 0.25) {
@@ -1380,6 +1392,26 @@
                                     }
                                 }
                             }
+
+                            if (destroyedCounts.size > 0) {
+                                // Find which minable material was destroyed the most in this swing
+                                let dominantMaterial = -1;
+                                let maxCount = 0;
+                                for (const [material, count] of destroyedCounts.entries()) {
+                                    if (count > maxCount) {
+                                        maxCount = count;
+                                        dominantMaterial = material;
+                                    }
+                                }
+
+                                // Roll the dice once for the dominant material
+                                const dropConfig = MINABLE_MATERIALS[dominantMaterial];
+                                if (dropConfig && Math.random() < dropConfig.chance) {
+                                    // Spawn the chunk at the center of the impact
+                                    createMaterialChunk(hitPoint.x, hitPoint.y, dominantMaterial);
+                                }
+                            }
+
                         } else {
                             // Hit a hard material. Play a "clink" effect (optional, placeholder).
                             // For now, it just does nothing as requested.
@@ -1473,6 +1505,33 @@
                 ].map(p => p === 1 ? MAT.GLASS_WALL : MAT.EMPTY)
             },
         };
+
+        // --- START: NEW Function in index.html ---
+        /**
+         * Creates a dynamic rigid body representing a chunk of a specific material.
+         * @param {number} x - The world X coordinate for the chunk's center.
+         * @param {number} y - The world Y coordinate for the chunk's center.
+         * @param {number} materialType - The MAT id of the material being spawned.
+         */
+        function createMaterialChunk(x, y, materialType) {
+            const config = MINABLE_MATERIALS[materialType];
+            if (!config) return;
+
+            const body = new RigidBody(x, y, config.size, config.size, materialType, config.name);
+
+            // Fill the body's pixels with its representative material
+            body.pixels.fill(materialType);
+            body.rebuildFixtures();
+
+            // Add special properties to the user data for alchemy and interaction
+            const userData = body.body.getUserData();
+            userData.isPickup = true;
+            userData.isMaterialChunk = true;  // A flag to identify this as a resource chunk
+            userData.materialType = materialType; // The material it represents for alchemy
+            userData.quantity = config.quantity;  // How much it's worth
+
+            rigidBodies.push(body);
+        }
 
         const TradeManager = {
             isVisible: false,
@@ -1699,6 +1758,26 @@
             MAT.OBSIDIAN
         ]);
 
+        const MINABLE_MATERIALS = {
+            [MAT.WOOD]: {
+                chance: 0.5,      // 15% chance to drop a chunk when a wood pixel is destroyed
+                size: 8,           // The chunk will be an 8x8 rigid body
+                quantity: 64,      // This chunk is worth 64 units of Wood in alchemy
+                name: "Wood Chunk"
+            },
+            [MAT.SANDSTONE_WALL]: {
+                chance: 0.05,
+                size: 6,
+                quantity: 36,
+                name: "Sandstone Chunk"
+            },
+            [MAT.GROUND]: {
+                chance: 0.5,
+                size: 4,
+                quantity: 16,
+                name: "Ground Chunk"
+            }
+        };
 
         const MAX_STEP_HEIGHT = 2;
         const GRAVITY = 0.1;
@@ -4008,36 +4087,83 @@
             loadedRecipeName: "",
         };
 
-        // --- ADD THIS ENTIRE NEW BLOCK OF HELPER FUNCTIONS ---
-
+        // --- START: REPLACEMENT for getMaterialsInArea in index.html ---
         /**
-         * Scans all pixels within a defined area and returns a Map of materials and their quantities.
+         * Scans all pixels AND rigid body chunks within a defined area and returns a Map of materials and their quantities.
          * @param {Array<{x, y}>} areaPoints - An array of world coordinates defining the area.
          * @returns {Map<number, number>} A map where keys are MAT IDs and values are their counts.
          */
         function getMaterialsInArea(areaPoints) {
             const counts = new Map();
-            if (!areaPoints) return counts;
+            if (!areaPoints || areaPoints.length === 0) return counts;
 
+            // --- Step 1: Scan the static grid (original behavior) ---
             for (const point of areaPoints) {
                 const type = getGrid(point.x, point.y);
                 if (type !== MAT.EMPTY) {
                     counts.set(type, (counts.get(type) || 0) + 1);
                 }
             }
+
+            // --- Step 2: Scan for rigid body chunks in the same area ---
+            // First, find the bounding box of the area to query the physics world efficiently.
+            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+            for (const p of areaPoints) {
+                minX = Math.min(minX, p.x); minY = Math.min(minY, p.y);
+                maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y);
+            }
+
+            const pMin = pl.Vec2(minX / B2_SCALE, minY / B2_SCALE);
+            const pMax = pl.Vec2(maxX / B2_SCALE, maxY / B2_SCALE);
+            const aabb = new pl.AABB(pMin, pMax);
+            const processedBodies = new Set(); // Prevent double-counting a body with multiple fixtures
+
+            world.queryAABB(aabb, (fixture) => {
+                const body = fixture.getBody();
+                if (processedBodies.has(body)) return true; // Already counted, skip
+
+                const userData = body.getUserData();
+                if (userData && userData.isMaterialChunk) {
+                    const materialType = userData.materialType;
+                    const quantity = userData.quantity;
+                    counts.set(materialType, (counts.get(materialType) || 0) + quantity);
+                    processedBodies.add(body);
+                }
+                return true; // Continue searching
+            });
+
             return counts;
         }
 
+        // --- START: REPLACEMENT for removeMaterialsFromArea in index.html ---
         /**
-         * Removes a specific quantity of materials from a defined area.
+         * Removes a specific quantity of materials from a defined area, prioritizing rigid body chunks first.
          * @param {Array<{x, y}>} areaPoints - The world coordinates to remove materials from.
          * @param {Map<number, number>} materialsToRemove - A map of MAT IDs and quantities to remove.
          */
         function removeMaterialsFromArea(areaPoints, materialsToRemove) {
-            if (!areaPoints) return;
-            const shuffledPoints = [...areaPoints].sort(() => 0.5 - Math.random());
+            if (!areaPoints || areaPoints.length === 0) return;
             const materialsLeft = new Map(materialsToRemove);
 
+            // --- Step 1: Consume rigid body chunks first ---
+            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+            for (const p of areaPoints) { minX = Math.min(minX, p.x); minY = Math.min(minY, p.y); maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y); }
+            const pMin = pl.Vec2(minX / B2_SCALE, minY / B2_SCALE), pMax = pl.Vec2(maxX / B2_SCALE, maxY / B2_SCALE);
+            const aabb = new pl.AABB(pMin, pMax);
+            const chunksInArea = [];
+            world.queryAABB(aabb, f => { const b = f.getBody(); if(b.getUserData()?.isMaterialChunk) chunksInArea.push(b.getUserData()); return true; });
+            
+            for (const chunk of chunksInArea) {
+                const matType = chunk.materialType;
+                const neededAmount = materialsLeft.get(matType);
+                if (neededAmount && neededAmount > 0) {
+                    materialsLeft.set(matType, neededAmount - chunk.quantity);
+                    chunk.isDestroyed = true; // Mark the rigid body for deletion
+                }
+            }
+
+            // --- Step 2: Consume remaining materials from the static grid ---
+            const shuffledPoints = [...areaPoints].sort(() => 0.5 - Math.random());
             for (const point of shuffledPoints) {
                 const type = getGrid(point.x, point.y);
                 const countLeft = materialsLeft.get(type);
@@ -4048,8 +4174,6 @@
                 }
             }
         }
-
-        // in index.html
 
         /**
          * Spawns a collection of materials into empty spaces within a defined area.
