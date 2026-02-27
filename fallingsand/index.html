@@ -928,6 +928,7 @@
             STEAM: 50, SMOKE: 51, METHANE: 52, METHANE_BURNING: 53,
             BLOOD: 126, LEAD: 127,
             MOLTEN_LEAD: 128, MOLTEN_COPPER: 129, MOLTEN_SILVER: 130, MOLTEN_GOLD: 131, MOLTEN_PLATINUM: 132,
+            SEALANT: 98,
             RIGID_BODY_STUB: 99,
 
             ICE: 100, FUNGAL_SPORES: 101, QUICKSILVER: 102, QUARTZ: 103, GLOW_MOSS: 104, VOID_SALTS: 105,
@@ -1005,6 +1006,7 @@
             [MAT.MOLTEN_SILVER]: [230, 230, 255],
             [MAT.MOLTEN_GOLD]: [255, 240, 150],
             [MAT.MOLTEN_PLATINUM]: [250, 250, 255],
+            [MAT.SEALANT]: [166, 166, 166],
             // New Material Colors
             [MAT.ICE]: [170, 220, 255], [MAT.FUNGAL_SPORES]: [140, 110, 180],
             [MAT.QUICKSILVER]: [200, 205, 210], [MAT.QUARTZ]: [240, 240, 250],
@@ -1072,6 +1074,8 @@
             [MAT.REINFORCED_COMPOSITE]: 'Reinforced Composite', [MAT.SCRYING_LENS]: 'Scrying Lens',
             [MAT.ABSOLUTE_ZERO_DUST]: 'Absolute Zero Dust', [MAT.LIVING_CIRCUITRY]: 'Living Circuitry',
             [MAT.HEX_CHARGE]: 'Hex-Charge', [MAT.VOLCANIC_ADAMANT]: 'Volcanic Adamant',
+
+            [MAT.SEALANT]: 'Set Piece Block',
 
             // --- Hardcoded Unstable Essence Names ---
             [MAT.UNSTABLE_ESSENCE_INTENSE_HEAT]: 'Unstable Essence of intense heat',
@@ -3407,6 +3411,69 @@
 
             return rb; // Return the full RigidBody object
         }
+        
+        // --- START OF NEW HELPER FUNCTION ---
+        /**
+         * Creates a dynamic rigid body from an arbitrary array of pixel coordinates.
+         * @param {object} options - Configuration for the object.
+         * @param {Array<{x, y}>} options.cells - Array of pixel coordinates in set piece local space.
+         * @param {number} options.material - The base MAT id for physics and color.
+         * @param {number} options.worldOffsetX - The world X coordinate of the set piece's origin.
+         * @param {number} options.worldOffsetY - The world Y coordinate of the set piece's origin.
+         * @param {string} [options.name='Object'] - The display name for the object.
+         * @param {string} [options.spriteId=null] - The ID of a sprite to bake onto the shape.
+         */
+        function createRigidBodyFromCells({ cells, material, worldOffsetX, worldOffsetY, name = 'Object', spriteId = null }) {
+            if (!cells || cells.length === 0) return null;
+
+            // 1. Find the bounding box of the shape.
+            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+            for (const cell of cells) {
+                minX = Math.min(minX, cell.x);
+                minY = Math.min(minY, cell.y);
+                maxX = Math.max(maxX, cell.x);
+                maxY = Math.max(maxY, cell.y);
+            }
+            const width = maxX - minX + 1;
+            const height = maxY - minY + 1;
+
+            // 2. Calculate the world center for the new RigidBody.
+            const centerX = worldOffsetX + minX + width / 2;
+            const centerY = worldOffsetY + minY + height / 2;
+
+            // 3. Create the RigidBody instance with the calculated bounding box.
+            const body = new RigidBody(centerX, centerY, width, height, material, name);
+
+            // 4. Clear the default filled pixels and "paint" the actual shape.
+            body.pixels.fill(MAT.EMPTY);
+            for (const cell of cells) {
+                const localX = cell.x - minX;
+                const localY = cell.y - minY;
+                const lIdx = localY * width + localX;
+                body.pixels[lIdx] = material;
+            }
+
+            // 5. Bake sprite if provided.
+            if (spriteId && SpriteManager.sprites.has(spriteId)) {
+                const spriteImg = SpriteManager.sprites.get(spriteId);
+                const tempCanvas = document.createElement('canvas');
+                tempCanvas.width = width;
+                tempCanvas.height = height;
+                const tempCtx = tempCanvas.getContext('2d');
+                
+                // Draw the sprite, but offset it to align with the body's bounding box.
+                // The sprite is drawn relative to the set piece image's origin (0,0).
+                tempCtx.drawImage(spriteImg, -minX, -minY);
+
+                const imageData = tempCtx.getImageData(0, 0, width, height);
+                body.spritePixels = imageData.data;
+            }
+
+            // 6. Finalize the body.
+            body.rebuildFixtures();
+            rigidBodies.push(body);
+            return body;
+        }
         // --- END OF NEW HELPER FUNCTION ---
 
         /**
@@ -3459,15 +3526,15 @@
         }
         // --- END OF REPLACEMENT ---
 
-        // --- START OF REPLACEMENT (v5.1 - FINAL & COMPLETE PARSER) ---
+        // --- START OF REPLACEMENT ---
         /**
          * Parses image data into a format the game can use, detecting functional areas,
-         * rigid body definitions, and storing pixel-perfect coordinates. This is the definitive parser.
+         * rigid body definitions (legacy and new generic), and joint markers.
          * @param {ImageData} imageData - The raw pixel data from a canvas.
-         * @returns {object} An object containing parsed pixels, functional areas, and rigid body definitions.
+         * @returns {object} An object containing parsed data.
          */
         function parseSetPieceImage(imageData) {
-            console.log("--- Starting Set Piece Image Parsing (v5.1 - Final & Complete) ---");
+            console.log("--- Starting Set Piece Image Parsing (v5.2 - Generic Bodies & Joints) ---");
 
             const emptyColor = { r: 255, g: 255, b: 255 };
             const MARKER_COLORS = {
@@ -3487,6 +3554,9 @@
                 // General Markers
                 treasureMarker:   { r: 1, g: 1, b: 1 },
                 rigidBodyMarker:  { r: 100, g: 100, b: 0 },
+                // New Markers
+                genericBody:      { r: 166, g: 166, b: 166 },
+                revoluteJoint:    { r: 2,   g: 2,   b: 2 },
             };
 
             const colorToMaterialMap = new Map();
@@ -3503,7 +3573,10 @@
             for (const key in MARKER_COLORS) { areaPoints[key] = []; }
 
             const rigidBodies = [];
+            const genericRigidBodies = [];
             const visited = new Uint8Array(width * height);
+            const genericBodyMarker = MARKER_COLORS.genericBody;
+            const jointMarker = MARKER_COLORS.revoluteJoint;
 
             for (let y = 0; y < height; y++) {
                 for (let x = 0; x < width; x++) {
@@ -3513,96 +3586,103 @@
                     const dataIndex = pixelArrayIndex * 4;
                     const r = data[dataIndex], g = data[dataIndex + 1], b = data[dataIndex + 2], a = data[dataIndex + 3];
 
-                    // 1. Transparency
-                    if (a < 128) {
-                        pixels[pixelArrayIndex] = -1;
-                        continue;
-                    }
-                    // 2. White is Empty
-                    if (r === emptyColor.r && g === emptyColor.g && b === emptyColor.b) {
-                        pixels[pixelArrayIndex] = MAT.EMPTY;
-                        continue;
-                    }
+                    if (a < 128) { pixels[pixelArrayIndex] = -1; continue; }
+                    if (r === emptyColor.r && g === emptyColor.g && b === emptyColor.b) { pixels[pixelArrayIndex] = MAT.EMPTY; continue; }
                     
-                    // 3. Special Logic for Rigid Body Marker
+                    // --- NEW: Arbitrary Shape Rigid Body Parsing using BFS ---
+                    if (r === genericBodyMarker.r && g === genericBodyMarker.g && b === genericBodyMarker.b) {
+                        const bodyCells = [];
+                        const bodyJoints = [];
+                        const queue = [{x, y}];
+                        visited[pixelArrayIndex] = 1;
+
+                        while(queue.length > 0) {
+                            const current = queue.shift();
+                            bodyCells.push(current);
+                            pixels[current.y * width + current.x] = MAT.EMPTY; // Carve out space
+
+                            // Check 8 neighbors for more body parts or joints
+                            for (let dy = -1; dy <= 1; dy++) {
+                                for (let dx = -1; dx <= 1; dx++) {
+                                    if (dx === 0 && dy === 0) continue;
+                                    const nx = current.x + dx, ny = current.y + dy;
+                                    if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
+                                        const nIdx = ny * width + nx;
+                                        if (!visited[nIdx]) {
+                                            const nDataIdx = nIdx * 4;
+                                            const nr = data[nDataIdx], ng = data[nDataIdx+1], nb = data[nDataIdx+2];
+                                            if (nr === genericBodyMarker.r && ng === genericBodyMarker.g && nb === genericBodyMarker.b) {
+                                                visited[nIdx] = 1;
+                                                queue.push({x: nx, y: ny});
+                                            } else if (nr === jointMarker.r && ng === jointMarker.g && nb === jointMarker.b) {
+                                                visited[nIdx] = 1;
+                                                pixels[nIdx] = MAT.EMPTY;
+                                                bodyJoints.push({x: nx, y: ny});
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        if (bodyCells.length > 0) {
+                            genericRigidBodies.push({ cells: bodyCells, material: MAT.SEALANT, joints: bodyJoints });
+                        }
+                        continue;
+                    }
+
+                    // Legacy Rigid Body Marker Logic
                     const rbMarker = MARKER_COLORS.rigidBodyMarker;
                     if (r === rbMarker.r && g === rbMarker.g && b === rbMarker.b) {
                         visited[pixelArrayIndex] = 1;
                         pixels[pixelArrayIndex] = MAT.EMPTY;
-
-                        const bodyPixelIndex = (y * width + (x + 1)) * 4;
                         if (x + 1 < width) {
+                            const bodyPixelIndex = (y * width + (x + 1)) * 4;
                             const bodyR = data[bodyPixelIndex], bodyG = data[bodyPixelIndex + 1], bodyB = data[bodyPixelIndex + 2];
                             const bodyColorKey = `${bodyR},${bodyG},${bodyB}`;
-                            
                             if (colorToMaterialMap.has(bodyColorKey)) {
                                 const bodyMaterial = colorToMaterialMap.get(bodyColorKey);
-                                
                                 let endX = x + 1;
                                 while (endX < width && data[(y * width + endX) * 4] === bodyR && data[(y * width + endX) * 4 + 1] === bodyG && data[(y * width + endX) * 4 + 2] === bodyB) { endX++; }
                                 let endY = y;
                                 while (endY < height && data[(endY * width + x + 1) * 4] === bodyR && data[(endY * width + x + 1) * 4 + 1] === bodyG && data[(endY * width + x + 1) * 4 + 2] === bodyB) { endY++; }
-
-                                const rbWidth = endX - (x + 1);
-                                const rbHeight = endY - y;
-
+                                const rbWidth = endX - (x + 1), rbHeight = endY - y;
                                 if (rbWidth > 0 && rbHeight > 0) {
                                     rigidBodies.push({ x: x + 1, y: y, width: rbWidth, height: rbHeight, material: bodyMaterial });
-                                    for (let ry = y; ry < endY; ry++) {
-                                        for (let rx = x; rx < endX; rx++) {
-                                            visited[ry * width + rx] = 1;
-                                            pixels[ry * width + rx] = MAT.EMPTY;
-                                        }
-                                    }
+                                    for (let ry = y; ry < endY; ry++) for (let rx = x; rx < endX; rx++) { visited[ry * width + rx] = 1; pixels[ry * width + rx] = MAT.EMPTY; }
                                 }
                             }
                         }
                         continue;
                     }
 
-                    // 4. Other Functional Markers
+                    // Other Functional Markers
                     let isMarker = false;
                     for (const key in MARKER_COLORS) {
-                        if (key === 'rigidBodyMarker') continue; 
+                        if (['rigidBodyMarker', 'genericBody', 'revoluteJoint'].includes(key)) continue; 
                         const marker = MARKER_COLORS[key];
                         if (r === marker.r && g === marker.g && b === marker.b) {
                             areaPoints[key].push({ x, y });
-                            pixels[pixelArrayIndex] = MAT.EMPTY;
-                            isMarker = true;
-                            break;
+                            pixels[pixelArrayIndex] = MAT.EMPTY; isMarker = true; break;
                         }
                     }
                     if (isMarker) continue;
 
-                    // 5. Standard Terrain
                     const colorKey = `${r},${g},${b}`;
                     pixels[pixelArrayIndex] = colorToMaterialMap.has(colorKey) ? colorToMaterialMap.get(colorKey) : -1;
                 }
             }
             
-            // Post-process functional area points into bounding boxes AND point lists
             for (const key in areaPoints) {
                 const points = areaPoints[key];
                 if (points.length === 0) continue;
-
                 let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-                for (const p of points) {
-                    minX = Math.min(minX, p.x); minY = Math.min(minY, p.y);
-                    maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y);
-                }
-                functionalAreas[key] = {
-                    x: minX,
-                    y: minY,
-                    width: maxX - minX + 1,
-                    height: maxY - minY + 1,
-                    points: points 
-                };
+                for (const p of points) { minX = Math.min(minX, p.x); minY = Math.min(minY, p.y); maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y); }
+                functionalAreas[key] = { x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1, points: points };
             }
 
-            console.log(`--- Finished Parsing. Found ${Object.keys(functionalAreas).length} functional areas and ${rigidBodies.length} rigid body definitions. ---`);
-            return { width, height, pixels, functionalAreas, rigidBodies };
+            console.log(`--- Finished Parsing. Found ${Object.keys(functionalAreas).length} areas, ${rigidBodies.length} legacy bodies, and ${genericRigidBodies.length} generic bodies. ---`);
+            return { width, height, pixels, functionalAreas, rigidBodies, genericRigidBodies };
         }
-        // --- END OF REPLACEMENT ---
 
         const SetPieceLoader = {
             async loadAll() {
@@ -4762,6 +4842,89 @@
                             createMagicTablet(treasureWorldX, treasureWorldY, 'increase_tool_slots');
                         }
                         
+                    }
+                },
+                {
+                    name: "WaterTrap",
+                    imagePath: 'assets/water_trap.png',
+                    spawnLocalX: 256,
+                    spawnLocalY: 256,
+                    targetSectorOffsetX: 0,
+                    targetSectorOffsetY: 1,
+                    parsedData: null,
+                    postGenerationHook: function(piece) {
+                        if (!piece.parsedData) return;
+                        
+                        const jointsToDisable = []; // Array to hold references to the joints we create.
+                        
+                        // Handle generic rigid bodies
+                        if (piece.parsedData.genericRigidBodies && piece.parsedData.genericRigidBodies.length > 0) {
+                            console.log(`Spawning ${piece.parsedData.genericRigidBodies.length} generic rigid body/bodies for '${piece.name}'.`);
+                            for (const rbDef of piece.parsedData.genericRigidBodies) {
+                                const newBody = createRigidBodyFromCells({
+                                    cells: rbDef.cells,
+                                    material: rbDef.material,
+                                    worldOffsetX: piece.bounds.x,
+                                    worldOffsetY: piece.bounds.y,
+                                    name: 'Trap Door'
+                                });
+                                if (!newBody) continue;
+
+                                for (const jointDef of rbDef.joints) {
+                                    const jointWorldX = piece.bounds.x + jointDef.x;
+                                    const jointWorldY = piece.bounds.y + jointDef.y;
+                                    const pivotBody = world.createBody({ type: 'static', position: pl.Vec2(jointWorldX / B2_SCALE, jointWorldY / B2_SCALE) });
+                                    const localAnchorB = newBody.body.getLocalPoint(pl.Vec2(jointWorldX / B2_SCALE, jointWorldY / B2_SCALE));
+                                    
+                                    const joint = world.createJoint(pl.RevoluteJoint({ 
+                                        bodyA: pivotBody, 
+                                        bodyB: newBody.body, 
+                                        localAnchorA: pl.Vec2(0, 0), 
+                                        localAnchorB: localAnchorB,
+                                        enableMotor: true, 
+                                        motorSpeed: 0.0, 
+                                        maxMotorTorque: 50.0 // Strong motor to hold the door shut
+                                    }));
+                                    
+                                    // Store the reference to this joint so we can access it later.
+                                    jointsToDisable.push(joint);
+                                }
+                            }
+                        } 
+                        
+                        // Handle treasure and link its pickup event to the joints
+                        const areas = piece.parsedData.functionalAreas;
+                        if (areas && areas.treasureMarker) {
+                            const treasureArea = areas.treasureMarker;
+                            const treasureWorldX = piece.bounds.x + treasureArea.x;
+                            const treasureWorldY = piece.bounds.y + treasureArea.y;
+                            
+                            // 1. Create the tablet normally.
+                            createMagicTablet(treasureWorldX, treasureWorldY, 'increase_structure_slots');
+
+                            // 2. Get a reference to the tablet we just created (it's the last body in the array).
+                            const tabletBody = rigidBodies[rigidBodies.length - 1];
+                            if (tabletBody && tabletBody.body) {
+                                const tabletUserData = tabletBody.body.getUserData();
+                                
+                                // 3. Store the original onPickup function.
+                                const originalOnPickup = tabletUserData.onPickup;
+
+                                // 4. Create a new "wrapper" function that calls the original and then adds our new logic.
+                                tabletUserData.onPickup = (player) => {
+                                    // First, execute the original behavior (e.g., increase slots).
+                                    if (originalOnPickup) {
+                                        originalOnPickup(player);
+                                    }
+
+                                    // Then, execute our new custom behavior.
+                                    console.log(`WaterTrap treasure picked up! Disabling ${jointsToDisable.length} motors.`);
+                                    for (const joint of jointsToDisable) {
+                                        joint.enableMotor(false);
+                                    }
+                                };
+                            }
+                        }
                     }
                 },
                 {
