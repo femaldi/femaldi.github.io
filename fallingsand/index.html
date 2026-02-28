@@ -4873,6 +4873,7 @@
                                 for (const jointDef of rbDef.joints) {
                                     const jointWorldX = piece.bounds.x + jointDef.x;
                                     const jointWorldY = piece.bounds.y + jointDef.y;
+                                    setGrid(jointWorldX, jointWorldY, MAT.EMPTY, true);
                                     const pivotBody = world.createBody({ type: 'static', position: pl.Vec2(jointWorldX / B2_SCALE, jointWorldY / B2_SCALE) });
                                     const localAnchorB = newBody.body.getLocalPoint(pl.Vec2(jointWorldX / B2_SCALE, jointWorldY / B2_SCALE));
                                     
@@ -5756,20 +5757,25 @@
         }
         // --- END OF REPLACEMENT ---
 
+        // --- START OF REPLACEMENT ---
         function renderFloatingArrow() {
             if (!floatingArrow.isVisible) return;
 
-            const screenX = Math.round(floatingArrow.x - camera.x);
-            const screenY = Math.round(floatingArrow.y - camera.y);
+            // THE FIX: Calculate float position first, then round only for drawing the shape.
+            const screenX = floatingArrow.x - camera.x;
+            const screenY = floatingArrow.y - camera.y;
 
             // Animate the vertical "bobbing" motion
             const animatedY = screenY + Math.sin(frameCount * 0.12) * 4;
 
+            const finalX = Math.round(screenX);
+            const finalY = Math.round(animatedY);
+
             ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
             ctx.beginPath();
-            ctx.moveTo(screenX - 5, animatedY);
-            ctx.lineTo(screenX + 5, animatedY);
-            ctx.lineTo(screenX, animatedY + 8);
+            ctx.moveTo(finalX - 5, finalY);
+            ctx.lineTo(finalX + 5, finalY);
+            ctx.lineTo(finalX, finalY + 8);
             ctx.closePath();
             ctx.fill();
         }
@@ -7913,7 +7919,7 @@
             // --- FIX: Added 'true' to setGrid to ensure chunk activation on change ---
             const _set = (gx, gy, gtype) => {
                 if (isWorldSim) {
-                    setGrid(gx, gy, gtype, true);
+                    setGrid(gx, gy, gtype, false);
                     movedInFrame.add(coordToKey(gx, gy));
                 } else {
                     const gidx = getIdx(gx, gy);
@@ -8171,9 +8177,11 @@
         
         function renderNpcs(anim) {
             for (const npc of npcs) {
-                // For now, we reuse the player rendering logic
-                const npcScreenX = Math.round(npc.x - camera.x);
-                const npcScreenY = Math.round(npc.y - camera.y);
+                // --- START OF REPLACEMENT ---
+                // THE FIX: Calculate floating-point position. The render function will handle rounding.
+                const npcScreenX = npc.x - camera.x;
+                const npcScreenY = npc.y - camera.y;
+                // --- END OF REPLACEMENT ---
                 renderPlayerSprite(npcScreenX, npcScreenY, false, anim.frameIdx, false);
             }
         }
@@ -8249,8 +8257,8 @@
         // --- RENDERING ---
         function setPixel(x,y,r,g,b,a=255){ const i=(y*renderWidth+x)*4; pixels[i]=r; pixels[i+1]=g; pixels[i+2]=b; pixels[i+3]=a; }
 
-        // --- REPLACEMENT for the renderRigidBodies function ---
-        function renderRigidBodies() {
+        // --- START OF REPLACEMENT ---
+        function renderRigidBodies(startX, startY) {
             ctx.imageSmoothingEnabled = false; 
             ctx.globalCompositeOperation = 'source-over';
             ctx.globalAlpha = 1.0;
@@ -8258,97 +8266,61 @@
             for (const body of rigidBodies) {
                 if (!body.body || body.isDestroyed) continue;
 
+                // Cache update logic remains the same...
                 const hasSprite = body.spritePixels !== null;
                 let needsCacheUpdate = !body.renderCacheCanvas;
-
-                // --- START OF FIX: Perform dirty-checking for ALL bodies ---
-
-                // Calculate a simple, fast hash of the current simulation pixel state.
                 let currentHash = 0;
                 for (let i = 0; i < body.pixels.length; i++) {
-                    // Use a simple rolling hash to better differentiate states
                     currentHash = (currentHash * 31 + body.pixels[i]) | 0;
                 }
-
-                // If the hash is different from last frame, the body's pixels have changed.
                 if (currentHash !== body.pixelStateHash) {
                     needsCacheUpdate = true;
-                    body.pixelStateHash = currentHash; // Store the new hash for the next frame
+                    body.pixelStateHash = currentHash;
                 }
-
-                // --- END OF FIX ---
-
-                // Check if the body needs dynamic updates for shimmering effects.
                 if (!hasSprite && body.renderCacheCanvas && body.isShimmering === undefined) {
                     body.isShimmering = false;
-                    for (const p of body.pixels) {
-                        if (SHIMMERING_METALS.has(p)) {
-                            body.isShimmering = true;
-                            break;
-                        }
-                    }
+                    for (const p of body.pixels) { if (SHIMMERING_METALS.has(p)) { body.isShimmering = true; break; } }
                 }
-                
-                // Force a cache update if the body is marked as shimmering.
                 if (body.isShimmering) {
                     needsCacheUpdate = true;
                 }
-
-                // If the cache needs to be built (first time) or rebuilt (dirty/shimmering)...
                 if (needsCacheUpdate) {
                     if (!body.renderCacheCanvas) {
-                        const tempCanvas = document.createElement('canvas');
-                        tempCanvas.width = body.width;
-                        tempCanvas.height = body.height;
-                        body.renderCacheCanvas = tempCanvas;
+                        body.renderCacheCanvas = document.createElement('canvas');
+                        body.renderCacheCanvas.width = body.width;
+                        body.renderCacheCanvas.height = body.height;
                     }
-
                     const tempCtx = body.renderCacheCanvas.getContext('2d');
                     const imageData = tempCtx.createImageData(body.width, body.height);
                     const cachePixels = imageData.data;
-
                     for (let i = 0; i < body.pixels.length; i++) {
                         const destIdx = i * 4;
                         const type = body.pixels[i];
-                        const x = i % body.width;
-                        const y = Math.floor(i / body.width);
-                        
+                        const x = i % body.width, y = Math.floor(i / body.width);
                         let r, g, b, a = 255;
-
-                        // Only render if the simulation pixel is not empty
                         if (type !== MAT.EMPTY) {
                             if (hasSprite) {
                                 const sourceIdx = i * 4;
-                                r = body.spritePixels[sourceIdx + 0];
-                                g = body.spritePixels[sourceIdx + 1];
-                                b = body.spritePixels[sourceIdx + 2];
-                                a = body.spritePixels[sourceIdx + 3];
+                                r = body.spritePixels[sourceIdx + 0]; g = body.spritePixels[sourceIdx + 1]; b = body.spritePixels[sourceIdx + 2]; a = body.spritePixels[sourceIdx + 3];
                             } else {
                                 const color = COLORS[type] || [255, 0, 255];
-                                if (SHIMMERING_METALS.has(type) || type === MAT.IRON) {
-                                    [r, g, b] = metallicColor(x, y, color);
-                                } else {
-                                    [r, g, b] = varyColor(...color, x, y, type, 8);
-                                }
+                                if (SHIMMERING_METALS.has(type) || type === MAT.IRON) { [r, g, b] = metallicColor(x, y, color); } 
+                                else { [r, g, b] = varyColor(...color, x, y, type, 8); }
                             }
-                        } else {
-                            a = 0; // Empty pixel
-                        }
-                        
-                        if (a > 10) { // Use a small threshold to avoid rendering near-invisible sprite pixels
-                            cachePixels[destIdx + 0] = r;
-                            cachePixels[destIdx + 1] = g;
-                            cachePixels[destIdx + 2] = b;
-                            cachePixels[destIdx + 3] = a;
-                        }
+                        } else { a = 0; }
+                        if (a > 10) { cachePixels[destIdx + 0] = r; cachePixels[destIdx + 1] = g; cachePixels[destIdx + 2] = b; cachePixels[destIdx + 3] = a; }
                     }
                     tempCtx.putImageData(imageData, 0, 0);
                 }
 
+                // Drawing logic
                 const pos = body.body.getPosition(), angle = body.body.getAngle();
                 ctx.save();
-                const screenX = Math.round(pos.x * B2_SCALE - camera.x);
-                const screenY = Math.round(pos.y * B2_SCALE - camera.y);
+                
+                // THE FIX: Calculate screen position relative to the stable integer origin (startX, startY).
+                const screenX = pos.x * B2_SCALE - startX;
+                const screenY = pos.y * B2_SCALE - startY;
+                
                 ctx.translate(screenX, screenY);
                 ctx.rotate(angle);
 
@@ -8629,7 +8601,7 @@
 
             // --- 4. RENDER DYNAMIC ELEMENTS ON TOP ---
             renderBloom(); 
-            renderRigidBodies();
+            renderRigidBodies(startX, startY);
 
             let wandScreenX, wandScreenY; // Define here
             if (player.isSpawning) {
@@ -8790,17 +8762,17 @@
         function renderPlayerSprite(centerX, centerY, facingRight, frameIdx, isDead) {
             const frameId = `player_frame_${(frameIdx % 2) + 1}`;
             const spriteImg = SpriteManager.sprites.get(frameId);
-            if (!spriteImg) return; // Don't draw if the sprite isn't loaded yet
+            if (!spriteImg) return;
 
             ctx.save();
+
+            // THE FIX: Round the final translate position to ensure the sprite lands on a crisp pixel boundary.
             ctx.translate(Math.round(centerX), Math.round(centerY));
 
-            // Handle horizontal flipping
             if (!facingRight) {
                 ctx.scale(-1, 1);
             }
             
-            // Calculate alpha for submersion in liquids
             let alpha = 1.0;
             const worldY = centerY + camera.y;
             const worldX = centerX + camera.x;
@@ -8810,15 +8782,13 @@
                 alpha = playerAlphaAtScreen(centerX, centerY + player.height / 2);
             }
 
-            // Handle death animation fade-out
             if (isDead) {
-                const DEATH_ANIM_DURATION = 60; // a 1-second fade
+                const DEATH_ANIM_DURATION = 60;
                 alpha = Math.max(0, 1.0 - (player.deathAnimationProgress / DEATH_ANIM_DURATION));
             }
 
             ctx.globalAlpha = alpha;
             
-            // Draw the image centered on its anchor point
             ctx.drawImage(spriteImg, -spriteImg.width / 2, -spriteImg.height / 2);
 
             ctx.restore();
@@ -8860,7 +8830,9 @@
         }
 		
         function renderPlayer(aim, anim){
-			const baseW=8,baseH=16,playerScreenX=Math.round(player.x-camera.x),playerScreenY=Math.round(player.y-camera.y);
+			const baseW=8,baseH=16;
+            const playerScreenX = player.x - camera.x;
+            const playerScreenY = player.y - camera.y;
 			ctx.imageSmoothingEnabled=false;
 			const anchorX=playerScreenX+(baseW/2),anchorY=playerScreenY+baseH;
 			ctx.save();
