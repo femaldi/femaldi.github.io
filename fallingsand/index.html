@@ -676,6 +676,67 @@
             maxTime: 0
         };
 
+        const ZoneMessageManager = {
+            isVisible: false,
+            text: '',
+            timer: 0,
+            maxTime: 0,
+        };
+
+        const ZoneManager = {
+            zones: [
+                {
+                    id: 'alchemist_lab',
+                    name: 'Alchemist Laboratory',
+                    condition: (sx, sy, biome) => sx === playerSpawnSX && sy === playerSpawnSY
+                },
+                {
+                    id: 'sand_cave',
+                    name: 'Sand Caves',
+                    condition: (sx, sy, biome) => biome && biome.name === 'Caves' && biome.params.layer === 0 && (sx !== playerSpawnSX || sy !== playerSpawnSY)
+                },
+                {
+                    id: 'silver_mines',
+                    name: 'Silver Mines',
+                    condition: (sx, sy, biome) => biome && biome.name === 'Caves' && biome.params.layer === 1
+                },
+                {
+                    id: 'volcanic_region',
+                    name: 'Volcanic Region',
+                    condition: (sx, sy, biome) => biome && biome.name === 'Caves' && biome.params.layer === 2
+                },
+                {
+                    id: 'labyrinth',
+                    name: 'The Labyrinth',
+                    condition: (sx, sy, biome) => biome && biome.name === 'Labyrinth'
+                },
+                {
+                    id: 'magic_dungeon',
+                    name: 'Magic Dungeon',
+                    condition: (sx, sy, biome) => biome && biome.name === 'MagicDungeon'
+                }
+            ],
+
+            checkZones: function(player) {
+                if (!player.body) return;
+
+                const playerSectorX = Math.floor(player.x / SECTOR_SIZE);
+                const playerSectorY = Math.floor(player.y / SECTOR_SIZE);
+                const biome = BiomeManager.getBiomeForSector(playerSectorX, playerSectorY);
+
+                for (const zone of this.zones) {
+                    if (!player.visitedZones.has(zone.id)) {
+                        if (zone.condition(playerSectorX, playerSectorY, biome)) {
+                            displayZoneMessage(zone.name);
+                            //console.log("displaying", zone.name);
+                            player.visitedZones.add(zone.id);
+                            break; // Only trigger one new zone per check
+                        }
+                    }
+                }
+            }
+        };
+
         function renderBuffsUI() {
             if (player.activeBuffs.length === 0) return;
 
@@ -727,6 +788,77 @@
             UIMessageManager.maxTime = durationInFrames;
             UIMessageManager.isVisible = true;
         }
+
+        // --- START OF NEW CODE ---
+        /**
+         * Displays a large, centered zone discovery message.
+         * @param {string} text - The name of the zone to display.
+         * @param {number} durationInFrames - Total time on screen (default 5 seconds).
+         */
+        function displayZoneMessage(text, durationInFrames = 300) {
+            ZoneMessageManager.text = text;
+            ZoneMessageManager.timer = durationInFrames;
+            ZoneMessageManager.maxTime = durationInFrames;
+            ZoneMessageManager.isVisible = true;
+        }
+        
+        function updateZoneMessage() {
+            if (ZoneMessageManager.timer > 0) {
+                ZoneMessageManager.timer--;
+            } else if (ZoneMessageManager.isVisible) {
+                ZoneMessageManager.isVisible = false;
+            }
+        }
+
+        function renderZoneMessage() {
+            if (!ZoneMessageManager.isVisible) return;
+
+            const FADE_TIME = 60; // 1 second fade in/out
+            const totalTime = ZoneMessageManager.maxTime;
+            const remainingTime = ZoneMessageManager.timer;
+            
+            let alpha = 1.0;
+            if (remainingTime < FADE_TIME) {
+                // Fade out
+                alpha = remainingTime / FADE_TIME;
+            } else if (totalTime - remainingTime < FADE_TIME) {
+                // Fade in
+                alpha = (totalTime - remainingTime) / FADE_TIME;
+            }
+
+            const boxW = 150;
+            const boxH = 25;
+            const boxX = (renderWidth - boxW) / 2;
+            const boxY = renderHeight / 2 + 30; // Position below center, like Noita
+            const cornerRadius = 6;
+
+            // Draw background box (using rounded rectangle path)
+            ctx.fillStyle = `rgba(30, 20, 10, ${0.8 * alpha})`;
+            ctx.strokeStyle = `rgba(255, 180, 80, ${0.9 * alpha})`;
+            ctx.lineWidth = 2;
+            
+            ctx.beginPath();
+            ctx.moveTo(boxX + cornerRadius, boxY);
+            ctx.lineTo(boxX + boxW - cornerRadius, boxY);
+            ctx.arcTo(boxX + boxW, boxY, boxX + boxW, boxY + cornerRadius, cornerRadius);
+            ctx.lineTo(boxX + boxW, boxY + boxH - cornerRadius);
+            ctx.arcTo(boxX + boxW, boxY + boxH, boxX + boxW - cornerRadius, boxY + boxH, cornerRadius);
+            ctx.lineTo(boxX + cornerRadius, boxY + boxH);
+            ctx.arcTo(boxX, boxY + boxH, boxX, boxY + boxH - cornerRadius, cornerRadius);
+            ctx.lineTo(boxX, boxY + cornerRadius);
+            ctx.arcTo(boxX, boxY, boxX + cornerRadius, boxY, cornerRadius);
+            ctx.closePath();
+            ctx.fill();
+            ctx.stroke();
+
+            // Draw Text
+            ctx.fillStyle = `rgba(255, 220, 150, ${alpha})`;
+            ctx.font = 'bold 10px monospace';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(ZoneMessageManager.text, renderWidth / 2, boxY + boxH / 2);
+        }
+        // --- END OF NEW CODE ---
 
         function updateMessageSystem() {
             if (UIMessageManager.timer > 0) {
@@ -5316,7 +5448,7 @@
             structureIndex: 0,
             discoveredEssences: new Map(),
             discoveredMaterials: new Set([MAT.SAND, MAT.GLASS]),
-            
+            visitedZones: new Set(),
             runeInventory: {
                 // This is the player's RUNE REPERTOIRE (knowledge base)
                 knownRunes: new Set([
@@ -8762,6 +8894,7 @@
             renderGrimoire();
             renderBuffsUI();
             renderMessageUI();
+            renderZoneMessage();
 
             if (debugMode)
             {
@@ -10412,6 +10545,11 @@
             updateActiveToolEffects();
             updateMessageSystem();
             updateBuffs();
+            updateZoneMessage();
+
+            if (frameCount % 30 === 0) {
+                ZoneManager.checkZones(player);
+            }
             
             Profiler.stop('UpdateLogic');
 
