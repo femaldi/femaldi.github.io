@@ -98,6 +98,95 @@ const PerlinNoise = {
     }
 };
 
+const hash = (x, y, s = 0) => {
+    let h = x * 374761393 + y * 668265263 + s * 1442695041;
+    h = (h ^ (h >> 13)) * 1274126177;
+    return (h ^ (h >> 16)) & 255;
+};
+const lerp = (a, b, t) => a + (b - a) * t;
+const lerpColor = (c1, c2, t) => [lerp(c1[0], c2[0], t), lerp(c1[1], c2[1], t), lerp(c1[2], c2[2], t)];
+
+const getSandCaveColor = (x, y) => {
+    const px = x >> 1,
+        py = y >> 1,
+        n = (PerlinNoise.noise(px * 0.04, py * 0.1) + 1) / 2;
+    if (n > 0.6) return [60, 45, 30];
+    if (n > 0.4) return [50, 38, 25];
+    return [40, 30, 20];
+};
+const getCoalMineColor = (x, y) => {
+    const px = x >> 1,
+        py = y >> 1,
+        r = (PerlinNoise.noise(px * 0.1, py * 0.1) + 1) / 2,
+        s = PerlinNoise.noise(px * 0.02, py * 0.15);
+    if (s * s > 0.3) return [5, 3, 3];
+    if (r > 0.6) return [28, 25, 25];
+    if (r > 0.45) return [20, 18, 18];
+    return [12, 10, 10];
+};
+const getVolcanicColor = (x, y) => {
+    const px = x >> 1,
+        py = y >> 1,
+        c = Math.abs(PerlinNoise.noise(px * 0.06, py * 0.06) * 2.5);
+    if (c > 0.98) return [255, 170, 0];
+    if (c > 0.95) return [255, 90, 0];
+    const r = hash(px >> 1, py >> 1) / 255;
+    if (r > 0.5) return [25, 10, 10];
+    return [15, 5, 5];
+};
+const getLabyrinthColor = (x, y) => {
+    const px = x >> 2,
+        py = y >> 2;
+    if (x % 4 < 1 || y % 4 < 1) return [20, 22, 25];
+    return hash(px, py) > 128 ? [55, 60, 65] : [45, 50, 55];
+};
+const getMagicDungeonColor = (x, y) => {
+    const px = x >> 1,
+        py = y >> 1,
+        e = (PerlinNoise.noise(px * 0.03, py * 0.03) + 1) / 2,
+        c = Math.abs(PerlinNoise.noise(px * 0.16, py * 0.16));
+    if (c * c * c > 0.2) return [180, 150, 255];
+    if (c * c > 0.25) return [100, 80, 140];
+    if (hash(x, y) > 254) return [200, 200, 255];
+    if (e > 0.55) return [40, 15, 60];
+    return [20, 5, 40];
+};
+
+const layerFunctions = [getSandCaveColor, getCoalMineColor, getVolcanicColor, getLabyrinthColor, getMagicDungeonColor];
+
+/**
+ * Generates a procedural background image for a single sector based on its biome info.
+ * @param {number} sx - The sector's X coordinate.
+ * @param {number} sy - The sector's Y coordinate.
+ * @param {object} biomeInfo - Information about the biome, including the layer.
+ * @returns {ImageData} - The generated image data for the background.
+ */
+function generateSectorBackground(sx, sy, biomeInfo) {
+    const imageData = new ImageData(SECTOR_SIZE, SECTOR_SIZE);
+    const data = imageData.data;
+    const startX = sx * SECTOR_SIZE;
+    const startY = sy * SECTOR_SIZE;
+
+    const layerIndex = biomeInfo.params.layer ?? (biomeInfo.name === "Labyrinth" ? 3 : biomeInfo.name === "MagicDungeon" ? 4 : 1);
+    const colorFunc = layerFunctions[layerIndex] || getCoalMineColor;
+
+    for (let y = 0; y < SECTOR_SIZE; y++) {
+        for (let x = 0; x < SECTOR_SIZE; x++) {
+            const worldX = startX + x;
+            const worldY = startY + y;
+
+            const color = colorFunc(worldX, worldY);
+
+            const i = (y * SECTOR_SIZE + x) * 4;
+            data[i] = color[0];
+            data[i + 1] = color[1];
+            data[i + 2] = color[2];
+            data[i + 3] = 255;
+        }
+    }
+    return imageData;
+}
+
 // --- START OF NEW HELPER FUNCTION ---
 /**
  * Returns the appropriate wall material for a given biome layer index.
@@ -372,6 +461,17 @@ self.onmessage = (event) => {
         return;
     }
 
+    if (type === 'generate-background') {
+        const sectorBackground = generateSectorBackground(sx, sy, biomeInfo);
+        self.postMessage({
+            type: 'background-result',
+            sx: sx,
+            sy: sy,
+            background: sectorBackground,
+        }, [sectorBackground.data.buffer]);
+        return;
+    }
+
     if (type === 'generate-and-bake') {
         if (setPieces && setPieces.length > 0) {
             console.log(`[WORKER] Received generate-and-bake for sector [${sx}, ${sy}] with set pieces:`, setPieces);
@@ -473,6 +573,8 @@ self.onmessage = (event) => {
         
         // --- Post-Generation Processing ---
 
+        const sectorBackground = generateSectorBackground(sx, sy, biomeInfo);
+
         // Use the newly generated terrain to bake the lighting information.
         const lightMap = bakeLightingForSector(sx, sy, terrainMap, borderContext);
         
@@ -499,7 +601,8 @@ self.onmessage = (event) => {
             sy: sy,
             chunks: transferableChunks,
             lightChunks: transferableLightChunks,
-        }, [...terrainBuffers, ...lightBuffers]); // Transfer all data buffers for performance
+            background: sectorBackground,
+        }, [...terrainBuffers, ...lightBuffers, sectorBackground.data.buffer]); // Transfer all data buffers for performance
     }
 };
 

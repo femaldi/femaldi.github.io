@@ -1946,6 +1946,7 @@
         // --- NEW: TILEABLE BACKGROUND ---
         let backgroundPattern = null;
         const BACKGROUND_TILE_SIZE = 512;
+        const sectorBackgrounds = new Map(); 
 
         // --- INVENTORY AND CONTAINERS ---
         const pouchWidth = 32;
@@ -2241,7 +2242,7 @@
         let generationQueue = [];
 
         generationWorker.onmessage = (event) => {
-            const { type, sx, sy, chunks, lightChunks } = event.data; // Now receives lightChunks
+            const { type, sx, sy, chunks, lightChunks, background } = event.data; // Now receives lightChunks
 
             if (type === 'result') {
                 // Integrate terrain chunks
@@ -2260,6 +2261,11 @@
                 }
                 
                 const key = coordToKey(sx, sy);
+
+                if (background) {
+                    sectorBackgrounds.set(key, background);
+                }
+
                 sectorGrid.set(key, { state: 'ready', sx: sx, sy: sy });
                 markSectorBordersDirty(sx, sy);
 
@@ -2276,6 +2282,13 @@
 
                 isGenerating = false;
                 isRenderCacheInvalid = true; // Invalidate cache now that all data is ready
+            } else if (type === 'background-result') { // From a background-only task
+                if (background) {
+                    const key = coordToKey(sx, sy);
+                    sectorBackgrounds.set(key, background);
+                    isRenderCacheInvalid = true; // Force a redraw now that the background is here
+                }
+                isGeneratingBackground = false;
             }
         };
 
@@ -2307,40 +2320,52 @@
             return context;
         }
 
-        // This function will be called from our game loop to feed tasks to the worker.
-        let isGenerating = false; // This now acts as a simple lock
+        let isGenerating = false;
         
         function checkGenerationQueue() {
-            if (isGenerating || generationQueue.length === 0) {
+            const statusElement = document.getElementById('generation-status');
+            
+            // Prioritize full sector generation
+            if (!isGenerating && generationQueue.length > 0) {
+                isGenerating = true;
+                statusElement.innerText = `Generating... (${generationQueue.length} sectors left)`;
+                statusElement.style.display = 'block';
+
+                const sector = generationQueue.shift();
+                const biomeInfo = BiomeManager.getBiomeForSector(sector.sx, sector.sy) || { name: "OceanOfRock", params: {} };
+                const setPieces = SetPieceManager.getSetPiecesForSector(sector.sx, sector.sy);
+
+                generationWorker.postMessage({ 
+                    type: 'generate-and-bake', 
+                    sx: sector.sx, sy: sector.sy,
+                    borderContext: gatherBorderContext(sector.sx, sector.sy),
+                    biomeInfo: biomeInfo,
+                    setPieces: setPieces 
+                });
+                return; // Only do one task at a time
+            }
+
+            // If idle, work on the background queue
+            if (!isGenerating && !isGeneratingBackground && backgroundQueue.length > 0) {
+                isGeneratingBackground = true;
+                if(generationQueue.length === 0) statusElement.style.display = 'none';
+
+                const sector = backgroundQueue.shift();
+                const biomeInfo = BiomeManager.getBiomeForSector(sector.sx, sector.sy) || { name: "OceanOfRock", params: {} };
+
+                generationWorker.postMessage({
+                    type: 'generate-background',
+                    sx: sector.sx,
+                    sy: sector.sy,
+                    biomeInfo: biomeInfo
+                });
                 return;
             }
 
-            isGenerating = true;
-            const statusElement = document.getElementById('generation-status');
-            statusElement.innerText = `Generating... (${generationQueue.length} sectors left)`;
-            statusElement.style.display = 'block';
-
-            const sector = generationQueue.shift();
-            
-            // --- START OF MODIFICATION ---
-            
-            // Determine the biome and set pieces for the sector being generated.
-            const biomeInfo = BiomeManager.getBiomeForSector(sector.sx, sector.sy);
-            const setPieces = SetPieceManager.getSetPiecesForSector(sector.sx, sector.sy);
-
-            // The default biome if none is found.
-            const finalBiomeInfo = biomeInfo || { name: "OceanOfRock", params: {} };
-
-            generationWorker.postMessage({ 
-                type: 'generate-and-bake', 
-                sx: sector.sx, 
-                sy: sector.sy,
-                borderContext: gatherBorderContext(sector.sx, sector.sy),
-                // Pass the new biome and set piece data to the worker.
-                biomeInfo: finalBiomeInfo,
-                setPieces: setPieces 
-            });
-            // --- END OF MODIFICATION ---
+            // Hide status if both queues are empty
+            if (generationQueue.length === 0 && backgroundQueue.length === 0) {
+                statusElement.style.display = 'none';
+            }
         }
 
         async function updateSectors() {
@@ -5081,11 +5106,9 @@
             return decompressed;
         }
 
-        /**
-         * Saves all chunks within a given sector to Local Storage after compressing them.
-         * @param {number} sx The sector's X coordinate.
-         * @param {number} sy The sector's Y coordinate.
-         */
+        let backgroundQueue = [];
+        let isGeneratingBackground = false;
+
         function saveSectorToStorage(sx, sy) {
             const storageKey = `fsp-sector-${sx},${sy}`;
             const sectorData = {
@@ -5105,43 +5128,40 @@
                     const terrainChunk = chunkMap.get(key);
                     if (terrainChunk) {
                         sectorData.terrain.push({ cx, cy, data: compressRLE(terrainChunk.data) });
-                        chunkMap.delete(key); // Free up memory
+                        chunkMap.delete(key);
                     }
 
                     const lightChunk = lightChunkMap.get(key);
                     if (lightChunk) {
                         sectorData.light.push({ cx, cy, data: compressRLE(lightChunk.data) });
-                        lightChunkMap.delete(key); // Free up memory
+                        lightChunkMap.delete(key);
                     }
                 }
             }
 
             try {
+                // Now only saving terrain and light, which is much smaller.
                 localStorage.setItem(storageKey, JSON.stringify(sectorData));
-                console.log(`Sector [${sx}, ${sy}] saved to storage.`);
+                console.log(`Sector [${sx}, ${sy}] saved to storage (without background).`);
             } catch (e) {
-                console.error(`Failed to save sector [${sx}, ${sy}]. Local Storage may be full.`, e);
+                console.error(`Failed to save sector [${sx}, ${sy}].`, e);
             }
         }
 
         /**
-         * Attempts to load a sector from Local Storage into memory.
-         * @param {number} sx The sector's X coordinate.
-         * @param {number} sy The sector's Y coordinate.
-         * @returns {boolean} True if the sector was loaded successfully, false otherwise.
+         * Loads a sector from storage and queues its background for regeneration.
          */
         function loadSectorFromStorage(sx, sy) {
             const storageKey = `fsp-sector-${sx},${sy}`;
             const savedData = localStorage.getItem(storageKey);
 
             if (!savedData) {
-                return false; // Not in storage, needs generation.
+                return false;
             }
 
             try {
                 const sectorData = JSON.parse(savedData);
 
-                // Load terrain
                 for (const chunkData of sectorData.terrain) {
                     const key = coordToKey(chunkData.cx, chunkData.cy);
                     const chunk = getChunk(chunkMap, key);
@@ -5150,7 +5170,6 @@
                     chunk.cy = chunkData.cy;
                 }
 
-                // Load lighting
                 for (const chunkData of sectorData.light) {
                     const key = coordToKey(chunkData.cx, chunkData.cy);
                     const chunk = getChunk(lightChunkMap, key);
@@ -5159,9 +5178,11 @@
                     chunk.cy = chunkData.cy;
                 }
                 
-                // Important: Remove it from storage after loading to prevent stale data if it's saved again later
+                // CRITICAL: Instead of loading a background, queue it for regeneration.
+                backgroundQueue.push({ sx, sy });
+
                 localStorage.removeItem(storageKey); 
-                console.log(`Sector [${sx}, ${sy}] loaded from storage.`);
+                console.log(`Sector [${sx}, ${sy}] loaded from storage. Background queued for regeneration.`);
                 isRenderCacheInvalid = true;
                 return true;
             } catch (e) {
@@ -5192,6 +5213,7 @@
                 // Find the first sector that is 'ready' and NOT protected.
                 if (sector.state === 'ready' && !protectedKeys.has(key)) {
                     saveSectorToStorage(sector.sx, sector.sy);
+                    sectorBackgrounds.delete(key);
                     sectorGrid.delete(key); // Unload it by removing it from the map.
                     
                     // We only unload one sector per frame to avoid hitches.
@@ -8503,10 +8525,6 @@
             const currentFrameImageData = ctx.getImageData(0, 0, renderWidth, renderHeight);
             const currentFramePixels = currentFrameImageData.data;
 
-            const bgData = backgroundTileData.data;
-            const bgWidth = backgroundTileData.width;
-            const bgHeight = backgroundTileData.height;
-
             // Loop through only the identified dirty rectangles
             for (const rect of dirtyRects) {
                 const rStartX = Math.max(0, Math.floor(rect.x));
@@ -8520,7 +8538,52 @@
                         const worldY = screenY + startY;
                         const destI = (screenY * renderWidth + screenX) * 4;
 
-                        drawBackgroundForPixel(currentFramePixels, destI, worldX, worldY, visibleSetPieceBGs, bgData, bgWidth, bgHeight);
+                        // --- NEW INTEGRATED BACKGROUND LOGIC ---
+                        let backgroundDrawn = false;
+
+                        // Priority 1: Try to draw a set piece background.
+                        for (const bg of visibleSetPieceBGs) {
+                            if (worldX >= bg.bounds.x && worldX < bg.bounds.x + bg.bounds.width &&
+                                worldY >= bg.bounds.y && worldY < bg.bounds.y + bg.bounds.height) {
+                                const localX = worldX - bg.bounds.x;
+                                const localY = worldY - bg.bounds.y;
+                                const srcI = (localY * bg.width + localX) * 4;
+                                if (bg.imageData[srcI + 3] > 128) {
+                                    currentFramePixels[destI]     = bg.imageData[srcI];
+                                    currentFramePixels[destI + 1] = bg.imageData[srcI + 1];
+                                    currentFramePixels[destI + 2] = bg.imageData[srcI + 2];
+                                    currentFramePixels[destI + 3] = 255;
+                                    backgroundDrawn = true;
+                                    break; // Found the right BG, stop checking others.
+                                }
+                            }
+                        }
+
+                        // Priority 2: If no set piece BG, draw the procedural sector background.
+                        if (!backgroundDrawn) {
+                            const sectorX = Math.floor(worldX / SECTOR_SIZE);
+                            const sectorY = Math.floor(worldY / SECTOR_SIZE);
+                            const sectorKey = coordToKey(sectorX, sectorY);
+                            const bgImageData = sectorBackgrounds.get(sectorKey);
+
+                            if (bgImageData) {
+                                const localX = worldX - sectorX * SECTOR_SIZE;
+                                const localY = worldY - sectorY * SECTOR_SIZE;
+                                const srcI = (localY * SECTOR_SIZE + localX) * 4;
+                                const bgData = bgImageData.data;
+                                currentFramePixels[destI]     = bgData[srcI];
+                                currentFramePixels[destI + 1] = bgData[srcI + 1];
+                                currentFramePixels[destI + 2] = bgData[srcI + 2];
+                                currentFramePixels[destI + 3] = 255;
+                            } else {
+                                // Priority 3: Fallback color if nothing is loaded.
+                                currentFramePixels[destI] = 5;
+                                currentFramePixels[destI + 1] = 2;
+                                currentFramePixels[destI + 2] = 8;
+                                currentFramePixels[destI + 3] = 255;
+                            }
+                        }
+                        // --- END INTEGRATED BACKGROUND LOGIC ---
 
                         const type = getGrid(worldX, worldY);
 
@@ -10942,11 +11005,11 @@
                 b: new Float32Array(bloomCanvas.width * bloomCanvas.height)
             };
 
-            updateLoadingStatus('Carving Background Strata...');
-            await yieldToBrowser();
-            const bgTileCanvas = generateCaveBackgroundTile(BACKGROUND_TILE_SIZE, BACKGROUND_TILE_SIZE * 5);
-            const bgTileCtx = bgTileCanvas.getContext('2d');
-            backgroundTileData = bgTileCtx.getImageData(0, 0, bgTileCanvas.width, bgTileCanvas.height);
+            // updateLoadingStatus('Carving Background Strata...');
+            // await yieldToBrowser();
+            // const bgTileCanvas = generateCaveBackgroundTile(BACKGROUND_TILE_SIZE, BACKGROUND_TILE_SIZE * 5);
+            // const bgTileCtx = bgTileCanvas.getContext('2d');
+            // backgroundTileData = bgTileCtx.getImageData(0, 0, bgTileCanvas.width, bgTileCanvas.height);
 
             // Store the player's spawn sector coordinates for biome and set piece calculations
             playerSpawnSX = Math.floor(player.x / SECTOR_SIZE);
@@ -10971,7 +11034,7 @@
                         
                         // Define how to handle messages FROM the temporary worker.
                         tempLocalGenerator.onmessage = event => {
-                            const { type, chunks, lightChunks } = event.data;
+                            const { type, chunks, lightChunks, background } = event.data;
 
                             if (type === 'init-ack') {
                                 // The worker is ready. Now we can send it the generation command.
@@ -11004,6 +11067,12 @@
                                         chunk.cx = payload.cx;
                                         chunk.cy = payload.cy;
                                     }
+                                }
+
+                                // Store the newly generated background
+                                if (background) {
+                                    const key = coordToKey(sx, sy);
+                                    sectorBackgrounds.set(key, background);
                                 }
                                 
                                 tempLocalGenerator.terminate(); // Clean up the worker
