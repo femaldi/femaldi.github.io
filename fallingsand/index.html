@@ -4657,6 +4657,8 @@
                             break;
                         }
 
+                        player.knownPotions.add(potionId);
+
                         // Consume the empty potion vessel
                         vesselBody.isDestroyed = true; 
                         
@@ -4811,8 +4813,9 @@
             isVisible: false,
             activeTab: 'compendium', // 'compendium' or 'grimoire_runes'
             
-            compendiumScroll: 0,
-            selectedMaterial: null,
+            compendiumActiveCategory: 'materials', // 'materials', 'potions', 'oils', etc.
+            compendiumListScroll: 0,
+            compendiumSelectedItem: null,
 
             selectedRecipeIndex: 0, 
             heldRune: null, // Data for rune being "dragged"
@@ -5426,7 +5429,11 @@
             'ashen_skin': {
                 name: 'Potion of Ashen Skin',
                 buffId: 'ashen_skin',
-                description: 'Grants immunity to fire and lava damage.'
+                description: 'Grants immunity to fire and lava damage.',
+                recipe: {
+                    base: MAT.WATER,
+                    essences: [ESSENCES.INTENSE_HEAT] // Example recipe
+                }
             },
             // Add other potions here later
         };
@@ -5465,6 +5472,7 @@
             structureIndex: 0,
             discoveredEssences: new Map(),
             discoveredMaterials: new Set([MAT.SAND, MAT.GLASS]),
+            knownPotions: new Set(),
             visitedZones: new Set(),
             runeInventory: {
                 // This is the player's RUNE REPERTOIRE (knowledge base)
@@ -6507,12 +6515,12 @@
                 const mouseX = (e.clientX - rect.left) / scale;
                 const mouseY = (e.clientY - rect.top) / scale;
 
-                const boxW = 440, boxH = 250, boxX = (renderWidth - boxW) / 2, boxY = (renderHeight - boxH) / 2;
+                const boxW = 440, boxH = 260, boxX = (renderWidth - boxW) / 2, boxY = (renderHeight - boxH) / 2;
                 const contentX = boxX, contentY = boxY + 20;
 
                 const RUNE_SLOT_SIZE = 16;
                 const RECIPE_ROW_HEIGHT = RUNE_SLOT_SIZE + 6;
-                let recipeY = contentY + 10;
+                let recipeY = contentY + 15;
 
                 for (let i = 0; i < player.grimoire.maxPages; i++) {
                     const page = player.grimoire.pages[i];
@@ -6623,7 +6631,7 @@
             const mouseX = (e.clientX - rect.left) / scale;
             const mouseY = (e.clientY - rect.top) / scale;
             
-            const boxW = 440, boxH = 250, boxX = (renderWidth - boxW) / 2, boxY = (renderHeight - boxH) / 2;
+            const boxW = 440, boxH = 260, boxX = (renderWidth - boxW) / 2, boxY = (renderHeight - boxH) / 2;
             const contentX = boxX, contentY = boxY + 20, contentW = boxW, contentH = boxH - 20;
 
             // --- PRIORITY 1: HANDLE POP-UPS ---
@@ -6693,10 +6701,66 @@
             }
             if (mouseY < contentY) return;
 
-            // --- PRIORITY 3: HANDLE ACTIVE TAB LOGIC ---
+            // --- Handle Active Tab Logic ---
             if (GrimoireManager.activeTab === 'compendium') {
-                 // Unchanged compendium click logic
-                 return;
+                const categoryW = 100, listW = 180;
+                const listX = contentX + categoryW;
+
+                // A. Click in Category Panel (Left)
+                if (mouseX >= contentX && mouseX < listX) {
+                    let catY = contentY + 10;
+                    const categories = ['materials', 'potions', 'oils', 'alkahests', 'gems'];
+                    const formaMap = { potions: 'forma_potion', oils: 'forma_oil', alkahests: 'forma_alkahest', gems: 'forma_gem' };
+                    
+                    for (const cat of categories) {
+                        if (mouseY >= catY && mouseY < catY + 15) {
+                            const isKnown = cat === 'materials' || player.runeInventory.knownRunes.has(formaMap[cat]);
+                            if (isKnown) {
+                                GrimoireManager.compendiumActiveCategory = cat;
+                                GrimoireManager.compendiumSelectedItem = null; // Reset selection on category change
+                                GrimoireManager.compendiumListScroll = 0; // Reset scroll
+                            }
+                            return;
+                        }
+                        catY += 18;
+                    }
+                }
+                
+                // B. Click in List Panel (Middle)
+                if (mouseX >= listX && mouseX < listX + listW) {
+                    let yOff = contentY + 10 - GrimoireManager.compendiumListScroll;
+                    
+                    // This logic would be repeated for each category, get the item list first
+                    let itemList = [];
+                    if (GrimoireManager.compendiumActiveCategory === 'materials') {
+                        // Create a master list of all materials that have essences
+                        itemList = Array.from(Object.keys(MATERIAL_ESSENCES)).map(id => parseInt(id)).sort((a,b)=>MATERIAL_NAME[a].localeCompare(MATERIAL_NAME[b]));
+                    } else if (GrimoireManager.compendiumActiveCategory === 'potions') {
+                        itemList = Object.keys(POTION_DEFINITIONS).sort();
+                    }
+                    // TODO: Add lists for oils, alkahests, gems
+
+                    for (const itemId of itemList) {
+                        if (yOff >= contentY && yOff < contentY + contentH - 12) {
+                            if (mouseY >= yOff && mouseY < yOff + 12) {
+                                let isDiscovered = false;
+                                if (GrimoireManager.compendiumActiveCategory === 'materials') {
+                                    isDiscovered = player.discoveredMaterials.has(itemId);
+                                } else if (GrimoireManager.compendiumActiveCategory === 'potions') {
+                                    isDiscovered = player.knownPotions.has(itemId);
+                                }
+                                if (isDiscovered) {
+                                    GrimoireManager.compendiumSelectedItem = itemId;
+                                }
+                                return;
+                            }
+                        }
+                        yOff += 12;
+                    }
+                }
+
+                // C. Click in Scrollbar Area
+                // (For simplicity, we are only handling mouse wheel for scrolling for now)
             }
             
             if (GrimoireManager.activeTab === 'grimoire_runes') {
@@ -6706,7 +6770,7 @@
 
                 // --- A. Click in Recipe Area (Top) ---
                 if (mouseY < contentY + recipeAreaHeight) {
-                    let recipeY = contentY + 10;
+                    let recipeY = contentY + 15;
                     for (let i = 0; i < player.grimoire.maxPages; i++) {
                         if (mouseY >= recipeY && mouseY < recipeY + RECIPE_ROW_HEIGHT) {
                             if (mouseX >= contentX + 5 && mouseX < contentX + 35) {
@@ -6788,6 +6852,21 @@
                         GrimoireManager.isAwaitingAttunement = true;
                         GrimoireManager.attunementContext = { purpose: 'new_filter' };
                     }
+                }
+            }
+        });
+
+        // --- START OF NEW CODE ---
+        canvas.addEventListener('wheel', e => {
+            if (GrimoireManager.isVisible && GrimoireManager.activeTab === 'compendium') {
+                e.preventDefault();
+                // Scroll up or down by a fixed amount
+                const scrollAmount = e.deltaY > 0 ? 20 : -20;
+                GrimoireManager.compendiumListScroll += scrollAmount;
+                // Clamp scroll so it doesn't go too far
+                // (More advanced clamping will happen in the render function)
+                if (GrimoireManager.compendiumListScroll < 0) {
+                    GrimoireManager.compendiumListScroll = 0;
                 }
             }
         });
@@ -9410,13 +9489,13 @@
             const mouseX = mouse.x / scale;
             const mouseY = mouse.y / scale;
 
-            const boxW = 440, boxH = 250, boxX = (renderWidth - boxW) / 2, boxY = (renderHeight - boxH) / 2;
+            const boxW = 440, boxH = 260, boxX = (renderWidth - boxW) / 2, boxY = (renderHeight - boxH) / 2;
             const contentX = boxX, contentY = boxY + 20, contentW = boxW;
             const RUNE_SLOT_SIZE = 16, RUNE_SLOT_SPACING = 4;
 
             // Check recipe area
             const RECIPE_ROW_HEIGHT = RUNE_SLOT_SIZE + 6;
-            let recipeY = contentY + 10;
+            let recipeY = contentY + 15;
             for (let i = 0; i < player.grimoire.maxPages; i++) {
                 const page = player.grimoire.pages[i];
                 if (page && mouseY >= recipeY && mouseY < recipeY + RUNE_SLOT_SIZE) {
@@ -9516,7 +9595,7 @@
 
         function renderGrimoire() {
             if (!GrimoireManager.isVisible) return;
-            const boxW = 440, boxH = 250, boxX = (renderWidth - boxW) / 2, boxY = (renderHeight - boxH) / 2;
+            const boxW = 440, boxH = 260, boxX = (renderWidth - boxW) / 2, boxY = (renderHeight - boxH) / 2;
             ctx.fillStyle = 'rgba(20, 25, 35, 0.95)'; ctx.fillRect(boxX, boxY, boxW, boxH);
             ctx.strokeStyle = '#a0a0c0'; ctx.lineWidth = 1; ctx.strokeRect(boxX, boxY, boxW, boxH);
             const tabs = ['Compendium', 'Grimoire & Runes'];
@@ -9548,59 +9627,148 @@
         }
 
         function renderGrimoireCompendium(x, y, w, h) {
-            const listWidth = 150,
-                detailX = x + listWidth + 10,
-                detailW = w - listWidth - 10;
+            const categoryW = 100, listW = 180, detailW = w - categoryW - listW;
+            const categoryX = x, listX = x + categoryW, detailX = listX + listW;
+
+            // Draw panel backgrounds/dividers
             ctx.fillStyle = '#2d3748';
-            ctx.fillRect(x, y, listWidth, h);
+            ctx.fillRect(categoryX, y, categoryW, h);
+            ctx.strokeStyle = '#4a5568';
+            ctx.beginPath(); ctx.moveTo(listX, y); ctx.lineTo(listX, y + h); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(detailX, y); ctx.lineTo(detailX, y + h); ctx.stroke();
+
+            renderCompendiumCategories(categoryX, y, categoryW, h);
+            renderCompendiumList(listX, y, listW, h);
+            renderCompendiumDetails(detailX, y, detailW, h);
+        }
+
+        function renderCompendiumCategories(x, y, w, h) {
             let yOff = y + 10;
-            ctx.font = '8px monospace';
-            const sortedMaterials = Array.from(player.discoveredMaterials).sort((a, b) => MATERIAL_NAME[a].localeCompare(MATERIAL_NAME[b]));
-            sortedMaterials.forEach(matId => {
-                const matName = MATERIAL_NAME[matId],
-                    isSelected = GrimoireManager.selectedMaterial === matId;
-                ctx.fillStyle = isSelected ? '#ffd966' : '#a0a0c0';
-                ctx.fillText(matName, x + 10, yOff);
-                yOff += 12;
-            });
-            if (GrimoireManager.selectedMaterial !== null) {
-                const matId = GrimoireManager.selectedMaterial,
-                    matName = MATERIAL_NAME[matId],
-                    matColor = COLORS[matId];
-                ctx.fillStyle = `rgb(${matColor[0]},${matColor[1]},${matColor[2]})`;
-                ctx.fillRect(detailX, y + 10, 24, 24);
-                ctx.fillStyle = 'white';
-                ctx.font = 'bold 12px monospace';
-                ctx.textAlign = 'left';
-                ctx.textBaseline = 'top';
-                ctx.fillText(matName, detailX + 30, y + 15);
-                yOff = y + 50;
+            ctx.font = 'bold 10px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+
+            const categories = { materials: "Materials", potions: "Potions", oils: "Oils", alkahests: "Alkahests", gems: "Gems" };
+            const formaMap = { potions: 'forma_potion', oils: 'forma_oil', alkahests: 'forma_alkahest', gems: 'forma_gem' };
+
+            for (const catKey in categories) {
+                const isKnown = catKey === 'materials' || player.runeInventory.knownRunes.has(formaMap[catKey]);
+                const isActive = GrimoireManager.compendiumActiveCategory === catKey;
+                
+                if (isActive) {
+                    ctx.fillStyle = '#4a5568';
+                    ctx.fillRect(x, yOff - 2, w, 15);
+                }
+
+                ctx.fillStyle = isKnown ? (isActive ? '#ffd966' : '#a0a0c0') : '#666';
+                ctx.fillText(isKnown ? categories[catKey] : `[${categories[catKey]}]`, x + 10, yOff);
+                yOff += 18;
+            }
+        }
+        
+        function renderCompendiumList(x, y, w, h) {
+            const itemHeight = 12;
+            let itemList = [], isMaterialList = false;
+
+            switch(GrimoireManager.compendiumActiveCategory) {
+                case 'materials':
+                    itemList = Object.keys(MATERIAL_ESSENCES).map(id => parseInt(id)).sort((a,b)=>MATERIAL_NAME[a].localeCompare(MATERIAL_NAME[b]));
+                    isMaterialList = true;
+                    break;
+                case 'potions':
+                    itemList = Object.keys(POTION_DEFINITIONS).sort();
+                    break;
+                // TODO: Cases for oils, alkahests, gems
+                default:
+                    ctx.fillStyle = '#666'; ctx.textAlign='center';
+                    ctx.fillText("[Not Implemented]", x + w / 2, y + h / 2);
+                    return;
+            }
+
+            const contentHeight = itemList.length * itemHeight;
+            const maxScroll = Math.max(0, contentHeight - h);
+            if (GrimoireManager.compendiumListScroll > maxScroll) GrimoireManager.compendiumListScroll = maxScroll;
+            if (GrimoireManager.compendiumListScroll < 0) GrimoireManager.compendiumListScroll = 0;
+
+            let yOff = y + 10 - GrimoireManager.compendiumListScroll;
+            ctx.font = '8px monospace'; ctx.textAlign = 'left';
+
+            ctx.save();
+            ctx.beginPath(); ctx.rect(x, y, w, h); ctx.clip();
+
+            for (const itemId of itemList) {
+                if (yOff >= y && yOff < y + h - itemHeight) {
+                    let isDiscovered, name;
+                    if (isMaterialList) {
+                        isDiscovered = player.discoveredMaterials.has(itemId);
+                        name = isDiscovered ? MATERIAL_NAME[itemId] : '[Undiscovered Material]';
+                    } else { // Potion, Oil, etc.
+                        isDiscovered = player.knownPotions.has(itemId);
+                        name = isDiscovered ? POTION_DEFINITIONS[itemId].name : '[Undiscovered Potion]';
+                    }
+                    
+                    const isSelected = GrimoireManager.compendiumSelectedItem === itemId;
+                    if (isSelected) {
+                        ctx.fillStyle = '#4a5568';
+                        ctx.fillRect(x + 2, yOff - 2, w - 4, itemHeight + 2);
+                    }
+                    ctx.fillStyle = isDiscovered ? (isSelected ? 'white' : '#a0a0c0') : '#666';
+                    ctx.fillText(name, x + 10, yOff);
+                }
+                yOff += itemHeight;
+            }
+            ctx.restore();
+
+            // Draw Scrollbar
+            if (maxScroll > 0) {
+                const scrollbarX = x + w - 8;
+                const thumbH = Math.max(10, (h / contentHeight) * h);
+                const thumbY = y + (GrimoireManager.compendiumListScroll / maxScroll) * (h - thumbH);
+                ctx.fillStyle = '#4a5568';
+                ctx.fillRect(scrollbarX, thumbY, 6, thumbH);
+            }
+        }
+        
+        function renderCompendiumDetails(x, y, w, h) {
+            const item = GrimoireManager.compendiumSelectedItem;
+            if (item === null) {
+                ctx.fillStyle = '#666'; ctx.font = '10px monospace'; ctx.textAlign = 'center';
+                ctx.fillText("Select an item to view details.", x + w / 2, y + h / 2);
+                return;
+            }
+
+            ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+            let yOff = y + 10;
+
+            if (GrimoireManager.compendiumActiveCategory === 'materials') {
+                const matId = item, matName = MATERIAL_NAME[matId], matColor = COLORS[matId];
+                ctx.fillStyle = `rgb(${matColor[0]}, ${matColor[1]}, ${matColor[2]})`;
+                ctx.fillRect(x + 10, yOff, 24, 24);
+                ctx.fillStyle = 'white'; ctx.font = 'bold 12px monospace';
+                ctx.fillText(matName, x + 40, yOff + 5);
+                yOff += 40;
                 ctx.font = '10px monospace';
                 const allEssences = MATERIAL_ESSENCES[matId] || [];
                 if (allEssences.length > 0) {
-                    ctx.fillStyle = '#a0a0c0';
-                    ctx.fillText("Contains Essences:", detailX, yOff);
-                    yOff += 15;
-                    const knownEssencesForThisMaterial = player.discoveredEssences.get(matId) || new Set();
-                    allEssences.forEach(essenceId => {
-                        if (knownEssencesForThisMaterial.has(essenceId)) {
-                            ctx.fillStyle = 'white';
-                            ctx.fillText(`- [${essenceId.replace(/_/g,' ')}]`, detailX + 10, yOff);
-                        } else {
-                            ctx.fillStyle = '#666';
-                            ctx.fillText(`- [Undiscovered Essence]`, detailX + 10, yOff);
-                        }
+                    ctx.fillStyle = '#a0a0c0'; ctx.fillText("Contains Essences:", x + 10, yOff); yOff += 15;
+                    const known = player.discoveredEssences.get(matId) || new Set();
+                    allEssences.forEach(e => {
+                        ctx.fillStyle = known.has(e) ? 'white' : '#666';
+                        ctx.fillText(`- [${known.has(e) ? e.replace(/_/g,' ') : 'Undiscovered'}]`, x + 20, yOff);
                         yOff += 12;
                     });
-                } else {
-                    ctx.fillStyle = '#666';
-                    ctx.fillText("No discernible essences found.", detailX, yOff);
                 }
-            } else {
-                ctx.fillStyle = '#666';
-                ctx.font = '10px monospace';
-                ctx.textAlign = 'center';
-                ctx.fillText("Select a material to view its properties.", x + listWidth + detailW / 2, y + h / 2);
+            } else if (GrimoireManager.compendiumActiveCategory === 'potions') {
+                const def = POTION_DEFINITIONS[item];
+                ctx.fillStyle = 'white'; ctx.font = 'bold 12px monospace';
+                ctx.fillText(def.name, x + 10, yOff); yOff += 20;
+                ctx.fillStyle = '#a0a0c0'; ctx.font = '8px monospace';
+                ctx.fillText(def.description, x + 10, yOff); yOff += 25; // More space for recipe
+                ctx.fillStyle = '#a0a0c0'; ctx.font = '10px monospace';
+                ctx.fillText("Recipe:", x + 10, yOff); yOff += 15;
+                ctx.fillStyle = 'white';
+                ctx.fillText(`- Base: ${MATERIAL_NAME[def.recipe.base]}`, x + 20, yOff); yOff += 12;
+                def.recipe.essences.forEach(e => {
+                    ctx.fillText(`- Essence: [${e.replace(/_/g, ' ')}]`, x + 20, yOff); yOff += 12;
+                });
             }
         }
 
@@ -9630,7 +9798,7 @@
             const recipeAreaHeight = (player.grimoire.maxPages * RECIPE_ROW_HEIGHT) + 30;
             ctx.fillStyle = '#a0a0c0'; ctx.font = 'bold 10px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
             ctx.fillText("GRIMOIRE", x + 10, y + 5);
-            let recipeY = y + 10;
+            let recipeY = y + 15;
             for (let i = 0; i < player.grimoire.maxPages; i++) {
                 const isSelected = GrimoireManager.selectedRecipeIndex === i;
                 ctx.fillStyle = isSelected ? '#ffd966' : 'white';
