@@ -5445,6 +5445,10 @@
             width: 8, height: 16, speed: 1, onGround: false,
             spawnX: 0,
             spawnY: 0,
+            groundAccel: 0.8,    // How quickly the player reaches max speed on the ground (0 to 1). Higher is faster.
+            airAccel: 0.1,       // How much control the player has in the air. Lower is less "floaty".
+            groundFriction: 0.75,  // How quickly the player stops on the ground (0 to 1). Lower is faster.
+            airFriction: 0.98, // How much the player drifts in the air (0 to 1). Higher means more drift.
             body: null,
             isSpawning: true, // ADD: Start in spawning state
             spawnAnimationTimer: 0, // ADD: Timer for animation speed
@@ -5456,7 +5460,7 @@
             hoverEnergy: 100,
             hoverForce: 0.1,
             hoverDrainRate: 1,
-            hoverRechargeRate: 1,
+            hoverRechargeRate: 4,
             maxHp: 100,
             hp: 100,
             lastDamageTime: 0,
@@ -6990,29 +6994,23 @@
         // --- END OF NEW CODE ---
         
         function updatePlayer() {
-            if (player.isSpawning) return;
+            if (player.isSpawning || !player.body) return;
 
-            updatePlayerDamage(); // Check for environmental damage
+            updatePlayerDamage();
             if (player.hp <= 0) return;
-
-            if (DialogueManager.isVisible) {
+            if (DialogueManager.isVisible || isAlembicUIVisible || TradeManager.isVisible) {
                 player.body.setLinearVelocity(pl.Vec2(0, 0));
                 return;
-            }
-
-            if (isAlembicUIVisible) {
-                player.body.setLinearVelocity(pl.Vec2(0, 0));
-                return;
-            }
-
-            if (TradeManager.isVisible) { 
-                player.body.setLinearVelocity(pl.Vec2(0, 0)); 
-                return; 
             }
 
             const submersionRatio = getPlayerSubmersionRatio();
             const isInLiquid = submersionRatio > 0;
+            player.onGround = isPlayerOnGround();
 
+            // --- 1. Handle Vertical Movement (Buoyancy & Hover/Jump) ---
+            const currentVel = player.body.getLinearVelocity();
+            let newVelY = currentVel.y;
+            
             if (isInLiquid) {
                 const upwardForce = BUOYANCY_FORCE * submersionRatio * player.body.getMass();
                 player.body.applyForceToCenter(pl.Vec2(0, -upwardForce), true);
@@ -7021,17 +7019,8 @@
                 player.body.setLinearDamping(PLAYER_DEFAULT_DAMPING);
             }
 
-            const currentVel = player.body.getLinearVelocity();
-            let targetVelX = 0;
-
-            if (keys['KeyA']) { targetVelX = -player.speed * 2.5; playerFacingRight = false; }
-            else if (keys['KeyD']) { targetVelX = player.speed * 2.5; playerFacingRight = true; }
-
-            player.onGround = isPlayerOnGround();
-            let newVelY = currentVel.y;
-
             if (keys['KeyW'] && player.hoverEnergy > 0) {
-                const jumpForce = isInLiquid ? MAX_HOVER_SPEED * 1.5 :  MAX_HOVER_SPEED;
+                const jumpForce = isInLiquid ? MAX_HOVER_SPEED * 1.5 : MAX_HOVER_SPEED;
                 newVelY = -jumpForce;
                 player.hoverEnergy = Math.max(0, player.hoverEnergy - player.hoverDrainRate);
                 if (!isInLiquid) spawnLevitationParticles(2);
@@ -7041,7 +7030,26 @@
                 player.hoverEnergy = Math.min(player.maxHoverEnergy, player.hoverEnergy + player.hoverRechargeRate);
             }
 
-            player.body.setLinearVelocity(pl.Vec2(targetVelX, newVelY));
+            // --- 2. Handle Horizontal Movement (Acceleration & Friction) ---
+            const maxSpeed = player.speed * 2.5;
+            let targetVelX = 0;
+            if (keys['KeyA']) { targetVelX = -maxSpeed; playerFacingRight = false; }
+            else if (keys['KeyD']) { targetVelX = maxSpeed; playerFacingRight = true; }
+
+            const accel = player.onGround ? player.groundAccel : player.airAccel;
+            const friction = player.onGround ? player.groundFriction : player.airFriction;
+            
+            let newVelX;
+            if (targetVelX !== 0) {
+                // Accelerating: Smoothly move current velocity towards the target velocity
+                newVelX = currentVel.x + (targetVelX - currentVel.x) * accel;
+            } else {
+                // Decelerating: Apply friction to slow down
+                newVelX = currentVel.x * friction;
+            }
+
+            // --- 3. Apply the final calculated velocity to the physics body ---
+            player.body.setLinearVelocity(pl.Vec2(newVelX, newVelY));
         }
 
         // in index.html, replace the entire isPlayerOnGround function
