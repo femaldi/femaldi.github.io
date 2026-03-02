@@ -1,102 +1,640 @@
 // --- WORKER SCRIPT: generation.worker.js ---
+// This worker generates game world sectors. It uses a layered approach:
+// 1. Scaled Wang Tiles generate a blocky base structure.
+// 2. A smoothing pass is applied to bevel corners and create a natural look.
+// 3. Hand-crafted Set Pieces are stamped on top by clearing their area.
 
-// 1. Dependencies (now includes lighting constants)
+// ====================================================================================
+// SECTION 1: CORE DEPENDENCIES & CONSTANTS
+// ====================================================================================
+
 let WORLD_SEED = 0;
-// Basic constants, must match index.html
+
 const CHUNK_SIZE = 16;
 const CHUNK_SIZE_SQ = 16 * 16;
 const SECTOR_SIZE = 512;
+const MAX_LIGHT_LEVEL = 30;
 
-const MAZE_CHUNK_SIZE = 32;     // The internal grid size for the algorithm
-const MAZE_SCALE = 64;           // "Zooms in", creating 2x2 corridors and walls
-const mazeChunkCache = new Map();
+const WANG_TILE_SCALE = 15;
 
-// --- START OF REPLACEMENT ---
-// --- START OF REPLACEMENT (Hardcoded MAT object) ---
+// Hardcoded MAT object from the main game
 const MAT = {
-    EMPTY: 0, ROCK_WALL: 1, SAND: 2, WATER: 3, SOIL: 4, 
-    WOOD: 10, FIRE: 11, GUNPOWDER: 12, GUNPOWDER_IGNITED: 13,
-    OIL: 14, OIL_BURNING: 15,
-    COAL:16, COAL_BURNING:17,
-    ACID:18, GLASS:19, GLASS_WALL: 20,
-    ADAMANTIUM: 21, COPPER: 22, SILVER: 23, GOLD: 24, PLATINUM: 25, RUNE_WALL: 26,
-    SANDSTONE_WALL: 27, VOLCANIC_WALL: 28, LABYRINTH_WALL: 29, MAGIC_WALL: 30,
-    GROUND: 31, IRON: 32, RUSTED_IRON: 33, OBSIDIAN: 34,
-    LAVA: 40, 
-    STEAM: 50, SMOKE: 51, METHANE: 52, METHANE_BURNING: 53,
-    BLOOD: 126, LEAD: 127,
-    MOLTEN_LEAD: 128, MOLTEN_COPPER: 129, MOLTEN_SILVER: 130, MOLTEN_GOLD: 131, MOLTEN_PLATINUM: 132,
-
+    EMPTY: 0,
+    ROCK_WALL: 1,
+    SAND: 2,
+    WATER: 3,
+    SOIL: 4,
+    WOOD: 10,
+    FIRE: 11,
+    GUNPOWDER: 12,
+    GUNPOWDER_IGNITED: 13,
+    OIL: 14,
+    OIL_BURNING: 15,
+    COAL: 16,
+    COAL_BURNING: 17,
+    ACID: 18,
+    GLASS: 19,
+    GLASS_WALL: 20,
+    ADAMANTIUM: 21,
+    COPPER: 22,
+    SILVER: 23,
+    GOLD: 24,
+    PLATINUM: 25,
+    RUNE_WALL: 26,
+    SANDSTONE_WALL: 27,
+    VOLCANIC_WALL: 28,
+    LABYRINTH_WALL: 29,
+    MAGIC_WALL: 30,
+    GROUND: 31,
+    IRON: 32,
+    RUSTED_IRON: 33,
+    OBSIDIAN: 34,
+    LAVA: 40,
+    STEAM: 50,
+    SMOKE: 51,
+    METHANE: 52,
+    METHANE_BURNING: 53,
     SEALANT: 98,
     RIGID_BODY_STUB: 99,
-    ICE: 100, FUNGAL_SPORES: 101, QUICKSILVER: 102, QUARTZ: 103, GLOW_MOSS: 104, VOID_SALTS: 105,
-    CRYSTAL_GLASS: 110, STEEL: 111, CRYO_STATIC_DUST: 112, MYCELIAL_BRICK: 113, RESIN: 114,
-    BLASTING_JELLY: 115, COPPER_SALTS: 116, PHILOSOPHERS_AMALGAM: 117, LUMINITE_CRYSTAL: 118, NULL_CHALK: 119,
-    REINFORCED_COMPOSITE: 120, SCRYING_LENS: 121, ABSOLUTE_ZERO_DUST: 122, LIVING_CIRCUITRY: 123, HEX_CHARGE: 124, VOLCANIC_ADAMANT: 125,
-
-    // --- Hardcoded Unstable Essence Materials ---
-    UNSTABLE_ESSENCE_INTENSE_HEAT: 200, UNSTABLE_ESSENCE_FLUIDITY: 201, UNSTABLE_ESSENCE_DAMPENING: 202,
-    UNSTABLE_ESSENCE_STABILITY: 203, UNSTABLE_ESSENCE_FERTILITY: 204, UNSTABLE_ESSENCE_VAPOR: 205,
-    UNSTABLE_ESSENCE_COLD: 206, UNSTABLE_ESSENCE_PERMEABILITY: 207, UNSTABLE_ESSENCE_HARDNESS: 208,
-    UNSTABLE_ESSENCE_WEIGHT: 209, UNSTABLE_ESSENCE_GRANULARITY: 210, UNSTABLE_ESSENCE_ABRASION: 211,
-    UNSTABLE_ESSENCE_STRUCTURE: 212, UNSTABLE_ESSENCE_BUOYANCY: 213, UNSTABLE_ESSENCE_CLARITY: 214,
-    UNSTABLE_ESSENCE_BRITTLENESS: 215, UNSTABLE_ESSENCE_HEAT_RESISTANCE: 216, UNSTABLE_ESSENCE_LEVITY: 217,
-    UNSTABLE_ESSENCE_OBSCURITY: 218, UNSTABLE_ESSENCE_VISCOSITY: 219, UNSTABLE_ESSENCE_RAPID_EXPANSION: 220,
-    UNSTABLE_ESSENCE_VOLATILITY: 221, UNSTABLE_ESSENCE_SLOW_BURN: 222, UNSTABLE_ESSENCE_CARBON: 223,
-    UNSTABLE_ESSENCE_SEPARATION: 224, UNSTABLE_ESSENCE_CONDUCTION: 225, UNSTABLE_ESSENCE_OXIDATION: 226,
-    UNSTABLE_ESSENCE_INERTIA: 227, UNSTABLE_ESSENCE_PURITY: 228, UNSTABLE_ESSENCE_CATALYSIS: 229,
-    UNSTABLE_ESSENCE_AETHERIC_RESONANCE: 230, UNSTABLE_ESSENCE_DURABILITY: 231, UNSTABLE_ESSENCE_STASIS: 232,
-    UNSTABLE_ESSENCE_REGENERATION: 233, UNSTABLE_ESSENCE_CONNECTIVITY: 234, UNSTABLE_ESSENCE_ADHESION: 235,
-    UNSTABLE_ESSENCE_ADHERENT_EXPANSION: 236, UNSTABLE_ESSENCE_REACTION: 237, UNSTABLE_ESSENCE_FUSION: 238,
-    UNSTABLE_ESSENCE_POTENT_CONDUCTIVITY: 239, UNSTABLE_ESSENCE_FOCUSED_LIGHT: 240, UNSTABLE_ESSENCE_ENERGY_STORAGE: 241,
-    UNSTABLE_ESSENCE_MAGIC_NULLIFICATION: 242, UNSTABLE_ESSENCE_FLEXIBILITY: 243, UNSTABLE_ESSENCE_TRUE_SIGHT: 244,
-    UNSTABLE_ESSENCE_ENTROPY: 245, UNSTABLE_ESSENCE_SENTIENCE: 246, UNSTABLE_ESSENCE_LOGIC: 247,
-    UNSTABLE_ESSENCE_CHAIN_REACTION: 248, UNSTABLE_ESSENCE_INDESTRUCTIBILITY: 249, UNSTABLE_ESSENCE_ALACRITY: 250,
-    UNSTABLE_ESSENCE_DENSITY: 251, UNSTABLE_ESSENCE_BIOLUMINESCENCE: 252, UNSTABLE_ESSENCE_NEGATION: 253,
-    UNSTABLE_ESSENCE_GRAVITY: 254,
 };
 
-// Rune definitions for set pieces, must match index.html
-const DWARVEN_RUNES = {
-    RUNE_HEIGHT: 9,
-};
-const MAX_LIGHT_LEVEL = 30;
-const WALL_TYPES = new Set([MAT.ROCK_WALL, MAT.SANDSTONE_WALL, MAT.VOLCANIC_WALL, MAT.LABYRINTH_WALL, MAT.MAGIC_WALL]);
+const WALL_TYPES = new Set([
+    MAT.ROCK_WALL, MAT.SANDSTONE_WALL, MAT.VOLCANIC_WALL,
+    MAT.LABYRINTH_WALL, MAT.MAGIC_WALL
+]);
 
+const LAYER_WALL_MATERIALS = [
+    MAT.SANDSTONE_WALL, // Layer 0
+    MAT.ROCK_WALL,      // Layer 1 (Default)
+    MAT.VOLCANIC_WALL,  // Layer 2
+    MAT.LABYRINTH_WALL, // Layer 3
+    MAT.MAGIC_WALL      // Layer 4
+];
+
+// Perlin Noise object, used for backgrounds
 const PerlinNoise = {
     p: [],
     seed: function(s) {
-        let random = (() => { let sd=s; return () => (sd=(sd*9301+49297)%233280)/233280; })();
-        this.p = new Uint8Array(512); let perm = [];
-        for (let i=0;i<256;i++) perm.push(i);
-        for (let i=perm.length-1;i>0;i--) { const j=Math.floor(random()*(i+1)); [perm[i],perm[j]]=[perm[j],perm[i]]; }
-        for (let i=0;i<256;i++) this.p[i] = this.p[i+256] = perm[i];
+        let random = (() => {
+            let sd = s;
+            return () => (sd = (sd * 9301 + 49297) % 233280) / 233280;
+        })();
+        this.p = new Uint8Array(512);
+        let perm = [];
+        for (let i = 0; i < 256; i++) perm.push(i);
+        for (let i = perm.length - 1; i > 0; i--) {
+            const j = Math.floor(random() * (i + 1));
+            [perm[i], perm[j]] = [perm[j], perm[i]];
+        }
+        for (let i = 0; i < 256; i++) this.p[i] = this.p[i + 256] = perm[i];
     },
-    fade: t => t*t*t*(t*(t*6-15)+10),
-    lerp: (t,a,b) => a+t*(b-a),
-    grad: function(h,x,y,z) {
-        let u = h < 8 ? x : y;
-        let v = h < 4 ? y : h === 12 || h === 14 ? x : z;
+    fade: t => t * t * t * (t * (t * 6 - 15) + 10),
+    lerp: (t, a, b) => a + t * (b - a),
+    grad: function(h, x, y, z) {
+        let u = h < 8 ? x : y,
+            v = h < 4 ? y : h === 12 || h === 14 ? x : z;
         return ((h & 1) === 0 ? u : -u) + ((h & 2) === 0 ? v : -v);
     },
     noise: function(x, y, z = 0) {
-        let X = Math.floor(x) & 255, Y = Math.floor(y) & 255, Z = Math.floor(z) & 255;
-        x -= Math.floor(x); y -= Math.floor(y); z -= Math.floor(z);
-        let u = this.fade(x), v = this.fade(y), w = this.fade(z);
-        let A = this.p[X] + Y, AA = this.p[A] + Z, AB = this.p[A + 1] + Z;
-        let B = this.p[X + 1] + Y, BA = this.p[B] + Z, BB = this.p[B + 1] + Z;
-        return this.lerp(w,
-            this.lerp(v,
-                this.lerp(u, this.grad(this.p[AA], x, y, z), this.grad(this.p[BA], x - 1, y, z)),
-                this.lerp(u, this.grad(this.p[AB], x, y - 1, z), this.grad(this.p[BB], x - 1, y - 1, z))
-            ),
-            this.lerp(v,
-                this.lerp(u, this.grad(this.p[AA + 1], x, y, z - 1), this.grad(this.p[BA + 1], x - 1, y, z - 1)),
-                this.lerp(u, this.grad(this.p[AB + 1], x, y - 1, z - 1), this.grad(this.p[BB + 1], x - 1, y - 1, z - 1))
-            )
-        );
+        let X = Math.floor(x) & 255,
+            Y = Math.floor(y) & 255,
+            Z = Math.floor(z) & 255;
+        x -= Math.floor(x);
+        y -= Math.floor(y);
+        z -= Math.floor(z);
+        let u = this.fade(x),
+            v = this.fade(y),
+            w = this.fade(z);
+        let A = this.p[X] + Y,
+            AA = this.p[A] + Z,
+            AB = this.p[A + 1] + Z,
+            B = this.p[X + 1] + Y,
+            BA = this.p[B] + Z,
+            BB = this.p[B + 1] + Z;
+        return this.lerp(w, this.lerp(v, this.lerp(u, this.grad(this.p[AA], x, y, z), this.grad(this.p[BA], x - 1, y, z)), this.lerp(u, this.grad(this.p[AB], x, y - 1, z), this.grad(this.p[BB], x - 1, y - 1, z))), this.lerp(v, this.lerp(u, this.grad(this.p[AA + 1], x, y, z - 1), this.grad(this.p[BA + 1], x - 1, y, z - 1)), this.lerp(u, this.grad(this.p[AB + 1], x, y - 1, z - 1), this.grad(this.p[BB + 1], x - 1, y - 1, z - 1))));
     }
 };
+
+// Helper functions for coordinates and chunk data
+let currentSectorSX, currentSectorSY;
+const getLocalIndex = (lx, ly) => ly * CHUNK_SIZE + lx;
+
+function coordToKey(x, y) {
+    return x * 374761393 + y * 668265263;
+}
+
+function getChunk(map, key, fillValue = 0) {
+    if (!map.has(key)) {
+        const newChunk = {
+            key: key,
+            data: new Uint8Array(CHUNK_SIZE_SQ).fill(fillValue)
+        };
+        map.set(key, newChunk);
+        return newChunk;
+    }
+    return map.get(key);
+}
+
+function setGrid(x, y, type, map) {
+    const pixelSectorX = Math.floor(x / SECTOR_SIZE);
+    const pixelSectorY = Math.floor(y / SECTOR_SIZE);
+    if (pixelSectorX !== currentSectorSX || pixelSectorY !== currentSectorSY) {
+        return;
+    }
+    const cx = Math.floor(x / CHUNK_SIZE),
+        cy = Math.floor(y / CHUNK_SIZE),
+        key = coordToKey(cx, cy),
+        chunk = getChunk(map, key, MAT.EMPTY);
+    if (chunk.cx === undefined) {
+        chunk.cx = cx;
+        chunk.cy = cy;
+    }
+    const lx = x & (CHUNK_SIZE - 1),
+        ly = y & (CHUNK_SIZE - 1);
+    chunk.data[getLocalIndex(lx, ly)] = type;
+}
+
+// ====================================================================================
+// SECTION 2: WANG TILE GENERATOR LOGIC
+// ====================================================================================
+
+function cyrb128(str) {
+    let h1 = 1779033703,
+        h2 = 3144134277,
+        h3 = 1013904242,
+        h4 = 2773480762;
+    for (let i = 0, k; i < str.length; i++) {
+        k = str.charCodeAt(i);
+        h1 = h2 ^ Math.imul(h1 ^ k, 597399067);
+        h2 = h3 ^ Math.imul(h2 ^ k, 2869860233);
+        h3 = h4 ^ Math.imul(h3 ^ k, 951274213);
+        h4 = h1 ^ Math.imul(h4 ^ k, 2716044179);
+    }
+    h1 = Math.imul(h3 ^ (h1 >>> 18), 597399067);
+    h2 = Math.imul(h4 ^ (h2 >>> 22), 2869860233);
+    h3 = Math.imul(h1 ^ (h3 >>> 17), 951274213);
+    h4 = Math.imul(h2 ^ (h4 >>> 19), 2716044179);
+    return [(h1 ^ h2 ^ h3 ^ h4) >>> 0, (h2 ^ h1) >>> 0, (h3 ^ h1) >>> 0, (h4 ^ h1) >>> 0];
+}
+
+function sfc32(a, b, c, d) {
+    return function() {
+        a >>>= 0;
+        b >>>= 0;
+        c >>>= 0;
+        d >>>= 0;
+        let t = (a + b) | 0;
+        a = b ^ b >>> 9;
+        b = c + (c << 3) | 0;
+        c = (c << 21 | c >>> 11);
+        d = d + 1 | 0;
+        t = t + d | 0;
+        c = c + t | 0;
+        return (t >>> 0) / 4294967296;
+    }
+}
+
+function prng_create(seed) {
+    return function(x, y) {
+        const coordSeed = `${seed},${x},${y}`;
+        const seedArr = cyrb128(coordSeed);
+        const rng = sfc32(seedArr[0], seedArr[1], seedArr[2], seedArr[3]);
+        return rng();
+    }
+}
+
+function rgbToHex(val) {
+    let hex = Number(val).toString(16);
+    return hex.length < 2 ? '0' + hex : hex;
+}
+
+function fullColorHex(r, g, b) {
+    return rgbToHex(r) + rgbToHex(g) + rgbToHex(b);
+}
+const TILESET = 'inside.png';
+const COLOR_TO_MAT_MAP = new Map([
+    ['000000', MAT.EMPTY],
+    ['ffffff', MAT.ROCK_WALL],
+    ['855e34', MAT.GROUND],
+]);
+let DEFAULT_MAT = MAT.ROCK_WALL;
+let wangIsInitialized = false,
+    rng, num_tiles_h_x, num_tiles_h_y, num_tiles_v_x, num_tiles_v_y, tileSize, tileInfos = {
+        horizontal: {},
+        vertical: {}
+    },
+    tilesetImageData, tilesetImageWidth, tilesetImageHeight;
+
+function getPixelDataFromImage(imageData, x, y, imageWidth) {
+    const i = (y * imageWidth + x) * 4;
+    return [imageData[i], imageData[i + 1], imageData[i + 2], imageData[i + 3]];
+}
+
+function parseTilesetData(imgData, imgWidth, imgHeight) {
+    let tileSize = -2,
+        count_h_x = 0,
+        count_h_y = 0,
+        count_v_x = 0,
+        count_v_y = 0,
+        currentPixel = 2;
+    while (currentPixel <= imgHeight) {
+        const [r, g, b] = getPixelDataFromImage(imgData, 0, currentPixel, imgWidth);
+        if (fullColorHex(r, g, b) === 'ffffff') break;
+        tileSize++;
+        currentPixel++;
+    }
+    currentPixel = 2;
+    let prevColor = '';
+    while (currentPixel <= imgHeight) {
+        const [r, g, b] = getPixelDataFromImage(imgData, 0, currentPixel, imgWidth), color = fullColorHex(r, g, b);
+        if (color === 'ffffff') {
+            if (prevColor === 'ffffff') {
+                currentPixel += 2;
+                break;
+            }
+            count_h_y++;
+        }
+        prevColor = color;
+        currentPixel++;
+    }
+    while (currentPixel <= imgHeight) {
+        const [r, g, b] = getPixelDataFromImage(imgData, 0, currentPixel, imgWidth);
+        if (fullColorHex(r, g, b) === 'ffffff') count_v_y++;
+        currentPixel++;
+    }
+    currentPixel = 0;
+    prevColor = '';
+    while (currentPixel <= imgWidth) {
+        const [r, g, b] = getPixelDataFromImage(imgData, currentPixel, 2, imgWidth), color = fullColorHex(r, g, b);
+        if (color === 'ffffff') {
+            if (prevColor === 'ffffff') break;
+            count_h_x++;
+        }
+        prevColor = color;
+        currentPixel++;
+    }
+    currentPixel = 0;
+    prevColor = '';
+    const vertical_tiles_y_offset = (tileSize + 3) * count_h_y + 4;
+    while (currentPixel <= imgWidth) {
+        const [r, g, b] = getPixelDataFromImage(imgData, currentPixel, vertical_tiles_y_offset, imgWidth), color = fullColorHex(r, g, b);
+        if (color === 'ffffff') {
+            if (prevColor === 'ffffff') break;
+            count_v_x++;
+        }
+        prevColor = color;
+        currentPixel++;
+    }
+    return {
+        tileSize,
+        count_h_x,
+        count_h_y,
+        count_v_x,
+        count_v_y
+    };
+}
+
+function tilePosToPixelCoordinates(tx, ty, horizontal) {
+    let x, y;
+    if (horizontal) {
+        x = tx * tileSize * 2 + 3 * tx;
+        y = ty * tileSize + 3 * ty + 2;
+    } else {
+        const offset_vertical_tiles_start = num_tiles_h_y * (tileSize + 3) + 4;
+        x = tx * tileSize + 3 * tx;
+        y = ty * tileSize * 2 + 3 * ty + offset_vertical_tiles_start;
+    }
+    return {
+        x,
+        y
+    };
+}
+
+function getTileInfo(tx, ty, horizontal) {
+    const points_h = {
+            edges: {
+                topLeft: {
+                    x: Math.floor(tileSize * 0.5),
+                    y: 0
+                },
+                topRight: {
+                    x: Math.floor(tileSize * 1.5),
+                    y: 0
+                },
+                left: {
+                    x: 0,
+                    y: Math.floor(tileSize * 0.5)
+                },
+                right: {
+                    x: tileSize * 2 + 1,
+                    y: Math.floor(tileSize * 0.5)
+                },
+                bottomLeft: {
+                    x: Math.floor(tileSize * 0.5),
+                    y: tileSize + 1
+                },
+                bottomRight: {
+                    x: Math.floor(tileSize * 1.5),
+                    y: tileSize + 1
+                },
+            }
+        },
+        points_v = {
+            edges: {
+                topLeft: {
+                    x: 0,
+                    y: Math.floor(tileSize * 0.5)
+                },
+                top: {
+                    x: Math.floor(tileSize * 0.5),
+                    y: 0
+                },
+                topRight: {
+                    x: tileSize + 1,
+                    y: Math.floor(tileSize * 0.5)
+                },
+                bottomLeft: {
+                    x: 0,
+                    y: Math.floor(tileSize * 1.5)
+                },
+                bottom: {
+                    x: Math.floor(tileSize * 0.5),
+                    y: tileSize * 2 + 1
+                },
+                bottomRight: {
+                    x: tileSize + 1,
+                    y: Math.floor(tileSize * 1.5)
+                },
+            }
+        },
+        points = horizontal ? points_h : points_v,
+        tileCoords = tilePosToPixelCoordinates(tx, ty, horizontal);
+    for (const [key, value] of Object.entries(points.edges)) {
+        const [r, g, b] = getPixelDataFromImage(tilesetImageData, tileCoords.x + value.x, tileCoords.y + value.y, tilesetImageWidth);
+        points.edges[key] = fullColorHex(r, g, b);
+    }
+    return points;
+}
+
+function getValidTiles(constraints, type) {
+    const validTiles = [];
+    const max_x = type === 'horizontal' ? num_tiles_h_x : num_tiles_v_x,
+        max_y = type === 'horizontal' ? num_tiles_h_y : num_tiles_v_y;
+    for (let y = 0; y < max_y; y++) {
+        for (let x = 0; x < max_x; x++) {
+            const tileInfo = tileInfos[type][`${x}_${y}`];
+            let failed = false;
+            for (const [key, value] of Object.entries(constraints.edges)) {
+                if (tileInfo.edges[key] !== value) {
+                    failed = true;
+                    break;
+                }
+            }
+            if (!failed) validTiles.push({
+                x,
+                y
+            });
+        }
+    }
+    return validTiles;
+}
+
+function stampTileToGrid(destTileX, destTileY, srcTileX, srcTileY, isHorizontal, terrainMap) {
+    const scaledTileSize = tileSize * WANG_TILE_SCALE;
+    const destWorldX = destTileX * scaledTileSize;
+    const destWorldY = destTileY * scaledTileSize;
+    const srcPixelCoords = tilePosToPixelCoordinates(srcTileX, srcTileY, isHorizontal);
+    const tileW = isHorizontal ? tileSize * 2 : tileSize;
+    const tileH = isHorizontal ? tileSize : tileSize * 2;
+    for (let py = 0; py < tileH; py++) {
+        for (let px = 0; px < tileW; px++) {
+            const srcX = srcPixelCoords.x + 1 + px;
+            const srcY = srcPixelCoords.y + 1 + py;
+            const [r, g, b] = getPixelDataFromImage(tilesetImageData, srcX, srcY, tilesetImageWidth);
+            const colorHex = fullColorHex(r, g, b);
+            const material = COLOR_TO_MAT_MAP.get(colorHex) ?? DEFAULT_MAT;
+            const blockStartX = destWorldX + px * WANG_TILE_SCALE;
+            const blockStartY = destWorldY + py * WANG_TILE_SCALE;
+            for (let i = 0; i < WANG_TILE_SCALE; i++) {
+                for (let j = 0; j < WANG_TILE_SCALE; j++) {
+                    setGrid(blockStartX + i, blockStartY + j, material, terrainMap);
+                }
+            }
+        }
+    }
+}
+
+async function generateWangTileSector(sx, sy, terrainMap) {
+    if (!wangIsInitialized) {
+        console.log("[WORKER] Initializing Wang Tile generator...");
+        const imageBlob = await fetch(TILESET).then(res => res.blob());
+        const imageBitmap = await createImageBitmap(imageBlob);
+        const canvas = new OffscreenCanvas(imageBitmap.width, imageBitmap.height);
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(imageBitmap, 0, 0);
+        const imgData = ctx.getImageData(0, 0, imageBitmap.width, imageBitmap.height);
+        tilesetImageData = imgData.data;
+        tilesetImageWidth = imgData.width;
+        tilesetImageHeight = imgData.height;
+        const wangData = parseTilesetData(tilesetImageData, tilesetImageWidth, tilesetImageHeight);
+        tileSize = wangData.tileSize;
+        num_tiles_h_x = wangData.count_h_x;
+        num_tiles_h_y = wangData.count_h_y;
+        num_tiles_v_x = wangData.count_v_x;
+        num_tiles_v_y = wangData.count_v_y;
+        for (let y = 0; y < num_tiles_h_y; y++) {
+            for (let x = 0; x < num_tiles_h_x; x++) {
+                tileInfos.horizontal[`${x}_${y}`] = getTileInfo(x, y, true);
+            }
+        }
+        for (let y = 0; y < num_tiles_v_y; y++) {
+            for (let x = 0; x < num_tiles_v_x; x++) {
+                tileInfos.vertical[`${x}_${y}`] = getTileInfo(x, y, false);
+            }
+        }
+        rng = prng_create(WORLD_SEED.toString());
+        wangIsInitialized = true;
+        console.log("[WORKER] Wang Tile generator initialized.");
+    }
+    const mapData = {};
+    const scaledTileSize = tileSize * WANG_TILE_SCALE;
+    const startTileX = Math.floor(sx * SECTOR_SIZE / scaledTileSize) - 2;
+    const startTileY = Math.floor(sy * SECTOR_SIZE / scaledTileSize) - 2;
+    const endTileX = Math.ceil((sx + 1) * SECTOR_SIZE / scaledTileSize) + 2;
+    const endTileY = Math.ceil((sy + 1) * SECTOR_SIZE / scaledTileSize) + 2;
+    for (let y = startTileY; y < endTileY; y++) {
+        for (let x = startTileX; x < endTileX; x++) {
+            const tileTypeCheck = (x - y) % 4;
+            if (tileTypeCheck === 0) {
+                const constraints = {
+                    edges: {}
+                };
+                if (mapData[`${x - 1}_${y}`]) constraints.edges.left = mapData[`${x - 1}_${y}`].right;
+                if (mapData[`${x}_${y - 1}`]) constraints.edges.topLeft = mapData[`${x}_${y - 1}`].bottom;
+                if (mapData[`${x + 1}_${y - 1}`]) constraints.edges.topRight = mapData[`${x + 1}_${y - 1}`].bottom;
+                if (mapData[`${x + 2}_${y}`]) constraints.edges.right = mapData[`${x + 2}_${y}`].left;
+                const validTiles = getValidTiles(constraints, 'horizontal');
+                if (validTiles.length === 0) continue;
+                const randomIndex = Math.floor(rng(x, y) * validTiles.length),
+                    randomTile = validTiles[randomIndex],
+                    tileInfo = tileInfos.horizontal[`${randomTile.x}_${randomTile.y}`];
+                stampTileToGrid(x, y, randomTile.x, randomTile.y, true, terrainMap);
+                mapData[`${x}_${y}`] = {
+                    tilePos: randomTile,
+                    top: tileInfo.edges.topLeft,
+                    left: tileInfo.edges.left,
+                    bottom: tileInfo.edges.bottomLeft
+                };
+                mapData[`${x + 1}_${y}`] = {
+                    tilePos: randomTile,
+                    top: tileInfo.edges.topRight,
+                    right: tileInfo.edges.right,
+                    bottom: tileInfo.edges.bottomRight
+                };
+            }
+            if (tileTypeCheck === 3 || tileTypeCheck === -1) {
+                const constraints = {
+                    edges: {}
+                };
+                if (mapData[`${x - 1}_${y}`]) constraints.edges.topLeft = mapData[`${x - 1}_${y}`].right;
+                if (mapData[`${x}_${y - 1}`]) constraints.edges.top = mapData[`${x}_${y - 1}`].bottom;
+                const validTiles = getValidTiles(constraints, 'vertical');
+                if (validTiles.length === 0) continue;
+                const randomIndex = Math.floor(rng(x, y) * validTiles.length),
+                    randomTile = validTiles[randomIndex],
+                    tileInfo = tileInfos.vertical[`${randomTile.x}_${randomTile.y}`];
+                stampTileToGrid(x, y, randomTile.x, randomTile.y, false, terrainMap);
+                mapData[`${x}_${y}`] = {
+                    tilePos: randomTile,
+                    left: tileInfo.edges.topLeft,
+                    top: tileInfo.edges.top,
+                    right: tileInfo.edges.topRight
+                };
+                mapData[`${x}_${y + 1}`] = {
+                    tilePos: randomTile,
+                    left: tileInfo.edges.bottomLeft,
+                    bottom: tileInfo.edges.bottom,
+                    right: tileInfo.edges.bottomRight
+                };
+            }
+        }
+    }
+}
+
+// ====================================================================================
+// SECTION 3: SMOOTHING, BACKGROUND & LIGHTING
+// ====================================================================================
+
+// --- GAUSSIAN BLUR CONFIGURATION ---
+
+// The "radius" of the blur, in pixels. This controls the size of the slopes.
+// A larger radius will create longer, more gentle slopes. 5-7 is a good start.
+const BLUR_RADIUS = 32;
+
+// The threshold for turning a blurred value back into solid ground. 0.5 is the standard.
+const SOLID_THRESHOLD = 0.5;
+
+// Helper to determine if a material is a structural, smoothable solid.
+const isSolid = (type) => WALL_TYPES.has(type) || type === MAT.GROUND;
+
+/**
+ * Transforms "pixel stairways" into smooth slopes using a stable Gaussian Blur filter.
+ * This is a standard image processing technique guaranteed to be non-destructive.
+ */
+function applySmoothingPass(sx, sy, terrainMap, wallMaterial) {
+    const startX = sx * SECTOR_SIZE;
+    const startY = sy * SECTOR_SIZE;
+    const endX = startX + SECTOR_SIZE;
+    const endY = startY + SECTOR_SIZE;
+
+    const getGridFromMap = (x, y, map) => {
+        const cx = Math.floor(x / CHUNK_SIZE), cy = Math.floor(y / CHUNK_SIZE), key = coordToKey(cx, cy);
+        const chunk = map.get(key);
+        if (!chunk) return MAT.EMPTY;
+        const lx = x & (CHUNK_SIZE - 1), ly = y & (CHUNK_SIZE - 1);
+        return chunk.data[getLocalIndex(lx, ly)];
+    };
+
+    // --- STAGE 1: Initialize Buffers ---
+    // We need floating-point buffers to store the blurred values.
+    const readBuffer = new Float32Array(SECTOR_SIZE * SECTOR_SIZE);
+    const writeBuffer = new Float32Array(SECTOR_SIZE * SECTOR_SIZE);
+
+    // Populate the initial read buffer: 1.0 for solid, 0.0 for empty.
+    for (let y = 0; y < SECTOR_SIZE; y++) {
+        for (let x = 0; x < SECTOR_SIZE; x++) {
+            readBuffer[y * SECTOR_SIZE + x] = isSolid(getGridFromMap(startX + x, startY + y, terrainMap)) ? 1.0 : 0.0;
+        }
+    }
+
+    // --- STAGE 2: Generate Gaussian Kernel ---
+    const kernel = [];
+    const sigma = BLUR_RADIUS / 3;
+    const sigmaSq = sigma * sigma;
+    let kernelSum = 0;
+    for (let i = -BLUR_RADIUS; i <= BLUR_RADIUS; i++) {
+        const distanceSq = i * i;
+        const value = Math.exp(-0.5 * (distanceSq / sigmaSq));
+        kernel.push(value);
+        kernelSum += value;
+    }
+    // Normalize the kernel so that its values sum to 1.0
+    for (let i = 0; i < kernel.length; i++) {
+        kernel[i] /= kernelSum;
+    }
+
+    // --- STAGE 3: Apply Separable Gaussian Blur ---
+
+    // 3a: Horizontal pass
+    for (let y = 0; y < SECTOR_SIZE; y++) {
+        for (let x = 0; x < SECTOR_SIZE; x++) {
+            let weightedSum = 0;
+            for (let k = -BLUR_RADIUS; k <= BLUR_RADIUS; k++) {
+                const sampleX = Math.max(0, Math.min(SECTOR_SIZE - 1, x + k)); // Clamp to edges
+                const sampleValue = readBuffer[y * SECTOR_SIZE + sampleX];
+                weightedSum += sampleValue * kernel[k + BLUR_RADIUS];
+            }
+            writeBuffer[y * SECTOR_SIZE + x] = weightedSum;
+        }
+    }
+
+    // 3b: Vertical pass
+    for (let y = 0; y < SECTOR_SIZE; y++) {
+        for (let x = 0; x < SECTOR_SIZE; x++) {
+            let weightedSum = 0;
+            for (let k = -BLUR_RADIUS; k <= BLUR_RADIUS; k++) {
+                const sampleY = Math.max(0, Math.min(SECTOR_SIZE - 1, y + k)); // Clamp to edges
+                const sampleValue = writeBuffer[sampleY * SECTOR_SIZE + x];
+                weightedSum += sampleValue * kernel[k + BLUR_RADIUS];
+            }
+            readBuffer[y * SECTOR_SIZE + x] = weightedSum;
+        }
+    }
+
+    // --- STAGE 4: Apply Threshold and Write Final Terrain ---
+    // The final smoothed data is in readBuffer.
+    const finalMap = new Map();
+    for (const [key, chunk] of terrainMap.entries()) {
+        finalMap.set(key, { ...chunk, data: new Uint8Array(chunk.data) });
+    }
+
+    for (let y = 0; y < SECTOR_SIZE; y++) {
+        for (let x = 0; x < SECTOR_SIZE; x++) {
+            const value = readBuffer[y * SECTOR_SIZE + x];
+            if (value > SOLID_THRESHOLD) {
+                setGrid(startX + x, startY + y, wallMaterial, finalMap);
+            } else {
+                setGrid(startX + x, startY + y, MAT.EMPTY, finalMap);
+            }
+        }
+    }
+
+    // Copy the final result back to the original terrainMap
+    terrainMap.clear();
+    for(const [key, chunk] of finalMap.entries()) {
+        terrainMap.set(key, chunk);
+    }
+}
 
 const hash = (x, y, s = 0) => {
     let h = x * 374761393 + y * 668265263 + s * 1442695041;
@@ -105,7 +643,6 @@ const hash = (x, y, s = 0) => {
 };
 const lerp = (a, b, t) => a + (b - a) * t;
 const lerpColor = (c1, c2, t) => [lerp(c1[0], c2[0], t), lerp(c1[1], c2[1], t), lerp(c1[2], c2[2], t)];
-
 const getSandCaveColor = (x, y) => {
     const px = x >> 1,
         py = y >> 1,
@@ -151,33 +688,21 @@ const getMagicDungeonColor = (x, y) => {
     if (e > 0.55) return [40, 15, 60];
     return [20, 5, 40];
 };
-
 const layerFunctions = [getSandCaveColor, getCoalMineColor, getVolcanicColor, getLabyrinthColor, getMagicDungeonColor];
 
-/**
- * Generates a procedural background image for a single sector based on its biome info.
- * @param {number} sx - The sector's X coordinate.
- * @param {number} sy - The sector's Y coordinate.
- * @param {object} biomeInfo - Information about the biome, including the layer.
- * @returns {ImageData} - The generated image data for the background.
- */
 function generateSectorBackground(sx, sy, biomeInfo) {
-    const imageData = new ImageData(SECTOR_SIZE, SECTOR_SIZE);
-    const data = imageData.data;
-    const startX = sx * SECTOR_SIZE;
-    const startY = sy * SECTOR_SIZE;
-
-    const layerIndex = biomeInfo.params.layer ?? (biomeInfo.name === "Labyrinth" ? 3 : biomeInfo.name === "MagicDungeon" ? 4 : 1);
-    const colorFunc = layerFunctions[layerIndex] || getCoalMineColor;
-
+    const imageData = new ImageData(SECTOR_SIZE, SECTOR_SIZE),
+        data = imageData.data,
+        startX = sx * SECTOR_SIZE,
+        startY = sy * SECTOR_SIZE,
+        layerIndex = biomeInfo.params.layer ?? (biomeInfo.name === "Labyrinth" ? 3 : biomeInfo.name === "MagicDungeon" ? 4 : 1),
+        colorFunc = layerFunctions[layerIndex] || getCoalMineColor;
     for (let y = 0; y < SECTOR_SIZE; y++) {
         for (let x = 0; x < SECTOR_SIZE; x++) {
-            const worldX = startX + x;
-            const worldY = startY + y;
-
-            const color = colorFunc(worldX, worldY);
-
-            const i = (y * SECTOR_SIZE + x) * 4;
+            const worldX = startX + x,
+                worldY = startY + y,
+                color = colorFunc(worldX, worldY),
+                i = (y * SECTOR_SIZE + x) * 4;
             data[i] = color[0];
             data[i + 1] = color[1];
             data[i + 2] = color[2];
@@ -187,277 +712,117 @@ function generateSectorBackground(sx, sy, biomeInfo) {
     return imageData;
 }
 
-// --- START OF NEW HELPER FUNCTION ---
-/**
- * Returns the appropriate wall material for a given biome layer index.
- * @param {number} layer - The layer index (0-4).
- * @returns {number} The material ID for the wall.
- */
-function getLayerMaterial(layer) {
-    switch (layer) {
-        case 0: return MAT.SANDSTONE_WALL;
-        case 1: return MAT.ROCK_WALL;
-        case 2: return MAT.VOLCANIC_WALL;
-        case 3: return MAT.LABYRINTH_WALL;
-        case 4: return MAT.MAGIC_WALL;
-        default: return MAT.ROCK_WALL;
-    }
-}
-// --- END OF NEW HELPER FUNCTION ---
-
-// --- START: NEW HELPER FUNCTION in generation.worker.js ---
-/**
- * A deterministic pseudo-random number generator for a given seed.
- */
-function createSeededRandom(seed) {
-    let s = seed + WORLD_SEED;
-    return () => {
-        s = (s * 9301 + 49297) % 233280;
-        return s / 233280;
-    };
-}
-// --- END: NEW HELPER FUNCTION in generation.worker.js ---
-
-// 2. Worker-local helpers
-const getLocalIndex = (lx, ly) => ly * CHUNK_SIZE + lx;
-
-/**
- * Converts 2D coordinates to a single unique numeric key.
- */
-function coordToKey(x, y) {
-    return x * 374761393 + y * 668265263;
-}
-
-/**
- * Gets a chunk from a given map, creating it if it doesn't exist.
- * This is a simplified version for the worker's needs.
- */
-function getChunk(map, key, fillValue = 0) {
-    if (!map.has(key)) {
-        const newChunk = {
-            key: key,
-            data: new Uint8Array(CHUNK_SIZE_SQ).fill(fillValue),
-            // cx, cy will be added by setGrid when the chunk is first modified
-        };
-        map.set(key, newChunk);
-        return newChunk;
-    }
-    return map.get(key);
-}
-
-/**
- * Sets a pixel's material type within a specific map (e.g., the temporary terrainMap).
- * @param {number} x - The global world X coordinate.
- * @param {number} y - The global world Y coordinate.
- * @param {number} type - The material type to set.
- * @param {Map} map - The map (terrainMap or lightMap) to modify.
- */
-function setGrid(x, y, type, map) {
-    const cx = Math.floor(x / CHUNK_SIZE);
-    const cy = Math.floor(y / CHUNK_SIZE);
-    const key = coordToKey(cx, cy);
-    
-    const chunk = getChunk(map, key, MAT.EMPTY);
-
-    // If this is the first time we're touching this chunk, store its coordinates.
-    if (chunk.cx === undefined) {
-        chunk.cx = cx;
-        chunk.cy = cy;
-    }
-
-    const lx = x & (CHUNK_SIZE - 1);
-    const ly = y & (CHUNK_SIZE - 1);
-    const lIdx = ly * CHUNK_SIZE + lx;
-
-    chunk.data[lIdx] = type;
-}
-
-const SetPieceGenerators = {
-    AlchemistStation: {
-        generate: function(worldX, worldY, bounds) {
-            const localX = worldX - bounds.x;
-            const localY = worldY - bounds.y;
-
-            if (localX < 0 || localX >= bounds.width || localY < 0 || localY >= bounds.height) {
-                return null;
-            }
-
-            // --- 1. Define Geometry and Constants ---
-            const wallThickness = 12;
-            const roomPadding = 40;
-            const entranceHeight = 60;
-
-            const room = {
-                // Outer bounds of the wall
-                outerX1: roomPadding,
-                outerY1: 50,
-                outerX2: bounds.width - roomPadding,
-                outerY2: bounds.height, // Floor is part of the wall structure
-                // Inner bounds (the empty space)
-                innerX1: roomPadding + wallThickness,
-                innerY1: 50 + wallThickness,
-                innerX2: bounds.width - roomPadding - wallThickness,
-                innerY2: bounds.height - wallThickness
-            };
-            const entranceTopY = room.innerY2 - entranceHeight;
-
-            // --- 2. Draw Floor, Walls, and Entrances ---
-            const isInsideOuterBox = (localX >= room.outerX1 && localX <= room.outerX2 && localY >= room.outerY1 && localY <= room.outerY2);
-            const isInsideInnerBox = (localX >= room.innerX1 && localX <= room.innerX2 && localY >= room.innerY1 && localY <= room.innerY2);
-            const isEntrance = (localY > entranceTopY && (localX < room.innerX1 || localX > room.innerX2));
-
-            if (isInsideOuterBox && !isInsideInnerBox && !isEntrance) {
-                return MAT.ADAMANTIUM; // This is a wall pixel
-            }
-
-            // --- 3. Draw Internal Structures (Slab and Cauldrons) ---
-            if (isInsideInnerBox) {
-                // If we are inside the room, check for structures.
-                // The default for this area is MAT.EMPTY.
-
-                // A. The Runic Slab
-                const slabW = 70;
-                const slabH = 15;
-                const slabX = 130;
-                const slabY = room.innerY2 - slabH + 1; // Sits on the floor
-
-                if (localX >= slabX && localX < slabX + slabW && localY >= slabY && localY < slabY + slabH) {
-                    const linePad = 2; // How far from the edges the lines are
-                    const topLineY = slabY + linePad;
-                    const botLineY = slabY + slabH - 1 - linePad;
-                    
-                    // Draw horizontal lines
-                    if (localY === topLineY || localY === botLineY) {
-                        return MAT.RUNE_WALL;
-                    }
-                    // Draw runic texture on the face
-                    if (localY > topLineY && localY < botLineY) {
-                         // Simple hash creates a pseudo-random pattern
-                        let h = (localX * 374761393 + localY * 668265263);
-                        h = (h^(h>>13))*1274126177;
-                        if (((h^(h>>16))&0xff) > 220) {
-                             return MAT.RUNE_WALL;
-                        }
-                    }
-                    return MAT.ADAMANTIUM; // The rest of the slab is adamantium
-                }
-
-                // B. The Cauldrons
-                const cauldronR = 32, cauldronT = 4, cauldronInnerR = cauldronR - cauldronT;
-                const samplerR = 16, samplerT = 4, samplerInnerR = samplerR - samplerT;
-                
-                // Position the rim of the cauldrons just above the floor
-                const cauldronRimY = room.innerY2 - 28; 
-                const samplerRimY = room.innerY2 - 12;
-                
-                const leftCX = 260, rightCX = 390, samplerCX = 325;
-
-                // Only draw the parts of the circle that are above the rimY and floor
-                if (localY >= cauldronRimY && localY <= room.innerY2) {
-                     if (Math.hypot(localX - leftCX, localY - cauldronRimY) <= cauldronR && Math.hypot(localX - leftCX, localY - cauldronRimY) > cauldronInnerR) return MAT.RUNE_WALL;
-                     if (Math.hypot(localX - rightCX, localY - cauldronRimY) <= cauldronR && Math.hypot(localX - rightCX, localY - cauldronRimY) > cauldronInnerR) return MAT.RUNE_WALL;
-                }
-                if (localY >= samplerRimY && localY <= room.innerY2) {
-                     if (Math.hypot(localX - samplerCX, localY - samplerRimY) <= samplerR && Math.hypot(localX - samplerCX, localY - samplerRimY) > samplerInnerR) return MAT.RUNE_WALL;
-                }
-
-                // If not part of any structure, the space inside the room is empty
-                return MAT.EMPTY;
-            }
-
-            // If the pixel is not a wall and not inside the room, it's not part of the set piece.
-            return null;
-        }
-    }
-};
-
-function bakeLightingForSector(sectorX, sectorY, terrainMap, borderContext) {
+function bakeLightingForSector(sx, sy, terrainMap, borderContext) {
     const lightMap = new Map();
-
-    // --- START OF FIX ---
-    // Corrected helper functions that treat borderContext as a plain object.
     const getGrid = (x, y) => {
-        const cx = Math.floor(x / CHUNK_SIZE), cy = Math.floor(y / CHUNK_SIZE), key = coordToKey(cx, cy);
+        const cx = Math.floor(x / CHUNK_SIZE),
+            cy = Math.floor(y / CHUNK_SIZE),
+            key = coordToKey(cx, cy);
         if (terrainMap.has(key)) {
-            const chunk = terrainMap.get(key);
-            const lx = x - cx * CHUNK_SIZE, ly = y - cy * CHUNK_SIZE;
+            const chunk = terrainMap.get(key),
+                lx = x - cx * CHUNK_SIZE,
+                ly = y - cy * CHUNK_SIZE;
             return chunk.data[getLocalIndex(lx, ly)];
         }
-        // Use bracket notation for the plain object
         const borderPixel = borderContext[coordToKey(x, y)];
         return borderPixel ? borderPixel.terrain : MAT.EMPTY;
     };
     const getLight = (map, x, y) => {
-        const cx = Math.floor(x / CHUNK_SIZE), cy = Math.floor(y / CHUNK_SIZE), key = coordToKey(cx, cy);
+        const cx = Math.floor(x / CHUNK_SIZE),
+            cy = Math.floor(y / CHUNK_SIZE),
+            key = coordToKey(cx, cy);
         if (map.has(key)) {
-            const chunk = map.get(key);
-            const lx = x - cx * CHUNK_SIZE, ly = y - cy * CHUNK_SIZE;
+            const chunk = map.get(key),
+                lx = x - cx * CHUNK_SIZE,
+                ly = y - cy * CHUNK_SIZE;
             return chunk.data[getLocalIndex(lx, ly)];
         }
-        // Use bracket notation for the plain object
         const borderPixel = borderContext[coordToKey(x, y)];
         return borderPixel ? borderPixel.light : 0;
     };
-    // --- END OF FIX ---
-
     const setLight = (map, x, y, value) => {
-        const cx = Math.floor(x / CHUNK_SIZE), cy = Math.floor(y / CHUNK_SIZE), key = coordToKey(cx, cy);
+        const cx = Math.floor(x / CHUNK_SIZE),
+            cy = Math.floor(y / CHUNK_SIZE),
+            key = coordToKey(cx, cy);
         let chunkPayload;
         if (!map.has(key)) {
-            chunkPayload = { data: new Uint8Array(CHUNK_SIZE_SQ).fill(0), cx: cx, cy: cy };
+            chunkPayload = {
+                data: new Uint8Array(CHUNK_SIZE_SQ).fill(0),
+                cx: cx,
+                cy: cy
+            };
             map.set(key, chunkPayload);
         } else {
             chunkPayload = map.get(key);
         }
-        const lx = x - cx * CHUNK_SIZE, ly = y - cy * CHUNK_SIZE;
+        const lx = x - cx * CHUNK_SIZE,
+            ly = y - cy * CHUNK_SIZE;
         chunkPayload.data[getLocalIndex(lx, ly)] = value;
     };
-
-    const startX = sectorX * SECTOR_SIZE, startY = sectorY * SECTOR_SIZE, endX = startX + SECTOR_SIZE, endY = startY + SECTOR_SIZE;
-
-    // The rest of the baking logic remains the same.
-    // Step 1: Initial Seeding
+    const startX = sx * SECTOR_SIZE,
+        startY = sy * SECTOR_SIZE,
+        endX = startX + SECTOR_SIZE,
+        endY = startY + SECTOR_SIZE;
     for (let y = startY; y < endY; y++) {
         for (let x = startX; x < endX; x++) {
-            let initialLight = (getGrid(x, y) === MAT.EMPTY) ? MAX_LIGHT_LEVEL : 0;
-            const DIRS_8 = [[-1,0],[1,0],[0,-1],[0,1],[-1,-1],[-1,1],[1,-1],[1,1]];
+            let initialLight = getGrid(x, y) === MAT.EMPTY ? MAX_LIGHT_LEVEL : 0;
+            const DIRS_8 = [
+                [-1, 0],
+                [1, 0],
+                [0, -1],
+                [0, 1],
+                [-1, -1],
+                [-1, 1],
+                [1, -1],
+                [1, 1]
+            ];
             for (const dir of DIRS_8) {
-                const nX = x + dir[0], nY = y + dir[1];
-                const lightLoss = WALL_TYPES.has(getGrid(x, y)) ? 3 : 1;
+                const nX = x + dir[0],
+                    nY = y + dir[1],
+                    lightLoss = WALL_TYPES.has(getGrid(x, y)) ? 3 : 1;
                 initialLight = Math.max(initialLight, getLight(lightMap, nX, nY) - lightLoss);
             }
-            if(initialLight > 0) setLight(lightMap, x, y, initialLight);
+            if (initialLight > 0) setLight(lightMap, x, y, initialLight);
         }
     }
-    // Step 2: Pass 1 (Top-down)
-    for (let y = startY; y < endY; y++) for (let x = startX; x < endX; x++) {
-        const currentLight = getLight(lightMap, x, y);
-        const lightLoss = WALL_TYPES.has(getGrid(x, y)) ? 3 : 1;
-        const newLight = Math.max(currentLight, getLight(lightMap, x, y-1)-lightLoss, getLight(lightMap, x-1, y)-lightLoss);
-        if (newLight > currentLight) setLight(lightMap, x, y, newLight);
-    }
-    // Step 3: Pass 2 (Bottom-up)
-    for (let y = endY-1; y >= startY; y--) for (let x = endX-1; x >= startX; x--) {
-        const currentLight = getLight(lightMap, x, y);
-        const lightLoss = WALL_TYPES.has(getGrid(x, y)) ? 3 : 1;
-        const newLight = Math.max(currentLight, getLight(lightMap, x, y+1)-lightLoss, getLight(lightMap, x+1, y)-lightLoss);
-        if (newLight > currentLight) setLight(lightMap, x, y, newLight);
-    }
-    
+    for (let y = startY; y < endY; y++)
+        for (let x = startX; x < endX; x++) {
+            const currentLight = getLight(lightMap, x, y),
+                lightLoss = WALL_TYPES.has(getGrid(x, y)) ? 3 : 1,
+                newLight = Math.max(currentLight, getLight(lightMap, x, y - 1) - lightLoss, getLight(lightMap, x - 1, y) - lightLoss);
+            if (newLight > currentLight) setLight(lightMap, x, y, newLight);
+        }
+    for (let y = endY - 1; y >= startY; y--)
+        for (let x = endX - 1; x >= startX; x--) {
+            const currentLight = getLight(lightMap, x, y),
+                lightLoss = WALL_TYPES.has(getGrid(x, y)) ? 3 : 1,
+                newLight = Math.max(currentLight, getLight(lightMap, x, y + 1) - lightLoss, getLight(lightMap, x + 1, y) - lightLoss);
+            if (newLight > currentLight) setLight(lightMap, x, y, newLight);
+        }
     return lightMap;
 }
 
+// ====================================================================================
+// SECTION 4: MAIN WORKER MESSAGE HANDLER
+// ====================================================================================
 
-// 4. Main message handler
-self.onmessage = (event) => {
-    // Destructure all possible properties from the event data at the top
-    const { type, seed, sx, sy, borderContext, biomeInfo, setPieces } = event.data;
+self.onmessage = async (event) => {
+    const {
+        type,
+        seed,
+        sx,
+        sy,
+        borderContext,
+        biomeInfo,
+        setPieces
+    } = event.data;
 
     if (type === 'init') {
-        WORLD_SEED = seed; // Note: 'seed' is the correct property name from the event data
-        //console.log("init:" + WORLD_SEED)
+        WORLD_SEED = seed;
         PerlinNoise.seed(WORLD_SEED);
-        self.postMessage({ type: 'init-ack' });
+        self.postMessage({
+            type: 'init-ack'
+        });
         return;
     }
 
@@ -467,134 +832,71 @@ self.onmessage = (event) => {
             type: 'background-result',
             sx: sx,
             sy: sy,
-            background: sectorBackground,
+            background: sectorBackground
         }, [sectorBackground.data.buffer]);
         return;
     }
 
     if (type === 'generate-and-bake') {
-        if (setPieces && setPieces.length > 0) {
-            console.log(`[WORKER] Received generate-and-bake for sector [${sx}, ${sy}] with set pieces:`, setPieces);
-        }
-
-        // This map will be populated with the newly generated terrain data
         const terrainMap = new Map();
-        //console.log("Generate and bake", event.data)
-        const startX = sx * SECTOR_SIZE;
-        const startY = sy * SECTOR_SIZE;
 
-        for (let y = 0; y < SECTOR_SIZE; y++) {
-            for (let x = 0; x < SECTOR_SIZE; x++) {
-                const worldX = startX + x;
-                const worldY = startY + y;
-                
-                let finalTerrainType = null; // Use null to mean "not yet determined"
+        currentSectorSX = sx;
+        currentSectorSY = sy;
 
-                // --- Set Piece Pass: Check for any set piece modifications first ---
-                if (setPieces && setPieces.length > 0) {
-                    for (const piece of setPieces) {
-                        // Priority 1: Carve out space for rigid bodies defined in the set piece.
-                        // This takes precedence over everything else.
-                        if (piece.parsedData && piece.parsedData.rigidBodies) {
-                            for (const rbDef of piece.parsedData.rigidBodies) {
-                                const rbWorldX = piece.bounds.x + rbDef.x;
-                                const rbWorldY = piece.bounds.y + rbDef.y;
-                                // Check if the current pixel is inside this rigid body's rectangular area.
-                                if (worldX >= rbWorldX && worldX < rbWorldX + rbDef.width &&
-                                    worldY >= rbWorldY && worldY < rbWorldY + rbDef.height) {
-                                    finalTerrainType = MAT.EMPTY;
-                                    break; // Found our answer for this piece, stop checking its RBs.
-                                }
-                            }
+        const layerIndex = biomeInfo.params.layer ?? 1; // Default to layer 1 (ROCK_WALL) if not specified
+        const wallMaterial = LAYER_WALL_MATERIALS[layerIndex] || MAT.ROCK_WALL;
+
+        // Temporarily override the Wang Tile generator's material mapping for this run
+        COLOR_TO_MAT_MAP.set('ffffff', wallMaterial);
+        DEFAULT_MAT = wallMaterial;
+
+        // Step 1: Generate the base blocky cave structure.
+        await generateWangTileSector(sx, sy, terrainMap);
+
+        // Step 2: Apply the smoothing algorithm to the generated base.
+        applySmoothingPass(sx, sy, terrainMap, wallMaterial);
+
+        // Step 3: Carve out and stamp Set Pieces over the smoothed base.
+        if (setPieces && setPieces.length > 0) {
+            for (const piece of setPieces) {
+                if (piece.parsedData && piece.parsedData.pixels) {
+                    // 3a: Erase the entire bounding box.
+                    for (let y = 0; y < piece.bounds.height; y++) {
+                        for (let x = 0; x < piece.bounds.width; x++) {
+                            setGrid(piece.bounds.x + x, piece.bounds.y + y, MAT.EMPTY, terrainMap);
                         }
-                        // If we carved a space, we can stop checking other set pieces for this pixel.
-                        if (finalTerrainType !== null) break;
-
-                        // Priority 2: Stamp the static terrain from the set piece's image.
-                        if (piece.parsedData) {
-                            const localX = worldX - piece.bounds.x;
-                            const localY = worldY - piece.bounds.y;
-
-                            if (localX >= 0 && localX < piece.bounds.width && localY >= 0 && localY < piece.bounds.height) {
-                                const pixelIndex = localY * piece.bounds.width + localX;
-                                const pieceMaterial = piece.parsedData.pixels[pixelIndex];
-                                
-                                // A value of -1 means transparent. Any other value (including MAT.EMPTY) gets stamped.
-                                if (pieceMaterial !== -1) {
-                                    finalTerrainType = pieceMaterial;
-                                    break; // Found our answer, stop checking other pieces.
-                                } else {console.log("transparent pixel at" + worldX + "," + worldY)}
-                            }
-                        }
-                        // Priority 3: Handle procedural set pieces (like the Alchemist Station).
-                        else {
-                            const generator = SetPieceGenerators[piece.name];
-                            if (generator) {
-                                const pieceMaterial = generator.generate(worldX, worldY, piece.bounds);
-                                if (pieceMaterial !== null) {
-                                    finalTerrainType = pieceMaterial;
-                                    break; // Found our answer, stop checking other pieces.
-                                }
+                    }
+                    // 3b: Stamp the actual set piece pixels.
+                    for (let y = 0; y < piece.bounds.height; y++) {
+                        for (let x = 0; x < piece.bounds.width; x++) {
+                            const pixelIndex = y * piece.bounds.width + x;
+                            const pieceMaterial = piece.parsedData.pixels[pixelIndex];
+                            if (pieceMaterial !== -1) {
+                                setGrid(piece.bounds.x + x, piece.bounds.y + y, pieceMaterial, terrainMap);
                             }
                         }
                     }
                 }
-
-                // --- Biome Generation Pass (Fallback) ---
-                // If after checking all set pieces, the material is still undetermined, generate the biome.
-                if (finalTerrainType === null) {
-                    switch (biomeInfo.name) {
-                        case "Caves":
-                            finalTerrainType = generateCavesPixel(worldX, worldY, biomeInfo.params);
-                            //finalTerrainType = generateContinuousMazePixel(worldX, worldY, { wallMaterial: MAT.LABYRINTH_WALL });
-                            break;
-
-                        case "Labyrinth":
-                            // Use the new continuous generator for the Labyrinth layer
-                            finalTerrainType = generateContinuousMazePixel(worldX, worldY, { wallMaterial: MAT.LABYRINTH_WALL });
-                            break;
-
-                        case "MagicDungeon":
-                            // Also use it for the Magic Dungeon layer, just with a different wall type
-                            finalTerrainType = generateContinuousMazePixel(worldX, worldY, { wallMaterial: MAT.MAGIC_WALL });
-                            break;
-                        
-                        case "OceanOfRock":
-                        default:
-                            finalTerrainType = MAT.ROCK_WALL;
-                            break;
-                    }
-                }
-                
-                // Set the final calculated material into our temporary terrain map.
-                setGrid(worldX, worldY, finalTerrainType, terrainMap);
             }
         }
-        
-        // --- Post-Generation Processing ---
 
         const sectorBackground = generateSectorBackground(sx, sy, biomeInfo);
-
-        // Use the newly generated terrain to bake the lighting information.
         const lightMap = bakeLightingForSector(sx, sy, terrainMap, borderContext);
-        
-        // Prepare terrain data for efficient transfer back to the main thread.
-        const transferableChunks = [];
-        const terrainBuffers = [];
+
+        const transferableChunks = [],
+            terrainBuffers = [];
         for (const [key, payload] of terrainMap.entries()) {
             transferableChunks.push([key, payload]);
             terrainBuffers.push(payload.data.buffer);
         }
 
-        // Prepare light data for efficient transfer.
-        const transferableLightChunks = [];
-        const lightBuffers = [];
+        const transferableLightChunks = [],
+            lightBuffers = [];
         for (const [key, payload] of lightMap.entries()) {
             transferableLightChunks.push([key, payload]);
             lightBuffers.push(payload.data.buffer);
         }
 
-        // Send the complete result back to the main thread.
         self.postMessage({
             type: 'result',
             sx: sx,
@@ -602,173 +904,6 @@ self.onmessage = (event) => {
             chunks: transferableChunks,
             lightChunks: transferableLightChunks,
             background: sectorBackground,
-        }, [...terrainBuffers, ...lightBuffers, sectorBackground.data.buffer]); // Transfer all data buffers for performance
+        }, [...terrainBuffers, ...lightBuffers, sectorBackground.data.buffer]);
     }
 };
-
-// --- START: REPLACEMENT for the old generateLabyrinthPixel function ---
-/**
- * Generates a single pixel for a continuous, "blocky" labyrinth-style biome
- * using a hybrid of Prim's Algorithm and deterministic hashing.
- * @param {number} x - The global world X coordinate.
- * @param {number} y - The global world Y coordinate.
- * @param {object} params - Biome-specific parameters, including the wall material to use.
- * @returns {number} The material ID for the pixel.
- */
-function generateContinuousMazePixel(x, y, params) {
-    const { wallMaterial } = params;
-
-    // Scale down coordinates to create "fat" pixels and wider corridors
-    const scaledX = Math.floor(x / MAZE_SCALE);
-    const scaledY = Math.floor(y / MAZE_SCALE);
-
-    // Determine which chunk this SCALED coordinate belongs to
-    const mcx = Math.floor(scaledX / MAZE_CHUNK_SIZE);
-    const mcy = Math.floor(scaledY / MAZE_CHUNK_SIZE);
-    const key = coordToKey(mcx, mcy);
-
-    // Generate the chunk if it's not in our cache
-    if (!mazeChunkCache.has(key)) {
-        const mazeGrid = new Uint8Array(MAZE_CHUNK_SIZE * MAZE_CHUNK_SIZE).fill(MAT.EMPTY);
-        const chunkSeed = coordToKey(mcx, mcy);
-        const random = createSeededRandom(chunkSeed);
-        const randInt = (max) => Math.floor(random() * max);
-
-        // Part 1: Fill the INTERIOR with a Prim's Algorithm maze
-        const walls = [];
-        const startX = randInt(MAZE_CHUNK_SIZE / 2) * 2;
-        const startY = randInt(MAZE_CHUNK_SIZE / 2) * 2;
-        
-        const addWalls = (cx, cy) => {
-            if (cx > 0) walls.push({ x: cx - 1, y: cy, fromX: cx, fromY: cy });
-            if (cx < MAZE_CHUNK_SIZE - 1) walls.push({ x: cx + 1, y: cy, fromX: cx, fromY: cy });
-            if (cy > 0) walls.push({ x: cx, y: cy - 1, fromX: cx, fromY: cy });
-            if (cy < MAZE_CHUNK_SIZE - 1) walls.push({ x: cx, y: cy + 1, fromX: cx, fromY: cy });
-        };
-        
-        addWalls(startX, startY);
-        mazeGrid[startY * MAZE_CHUNK_SIZE + startX] = wallMaterial; // Mark as "visited"
-
-        while (walls.length > 0) {
-            const wallIndex = randInt(walls.length);
-            const wall = walls.splice(wallIndex, 1)[0];
-            const oppositeX = wall.x + (wall.x - wall.fromX);
-            const oppositeY = wall.y + (wall.y - wall.fromY);
-            if (oppositeX >= 0 && oppositeX < MAZE_CHUNK_SIZE && oppositeY >= 0 && oppositeY < MAZE_CHUNK_SIZE && mazeGrid[oppositeY * MAZE_CHUNK_SIZE + oppositeX] === MAT.EMPTY) {
-                mazeGrid[wall.y * MAZE_CHUNK_SIZE + wall.x] = wallMaterial;
-                mazeGrid[oppositeY * MAZE_CHUNK_SIZE + oppositeX] = wallMaterial;
-                addWalls(oppositeX, oppositeY);
-            }
-        }
-        
-        for (let i = 0; i < mazeGrid.length; i++) {
-            mazeGrid[i] = (mazeGrid[i] === wallMaterial) ? MAT.EMPTY : wallMaterial;
-        }
-
-        // Part 2: Use deterministic hashing for the BORDER pixels
-        for (let i = 0; i < MAZE_CHUNK_SIZE; i++) {
-            const boundarySeedH = coordToKey(mcx * MAZE_CHUNK_SIZE + i, mcy * MAZE_CHUNK_SIZE - 1);
-            const randH = createSeededRandom(boundarySeedH);
-            if (randH() < 0.5) mazeGrid[i] = MAT.EMPTY;
-            if (randH() < 0.5) mazeGrid[(MAZE_CHUNK_SIZE - 1) * MAZE_CHUNK_SIZE + i] = MAT.EMPTY;
-
-            const boundarySeedV = coordToKey(mcx * MAZE_CHUNK_SIZE - 1, mcy * MAZE_CHUNK_SIZE + i);
-            const randV = createSeededRandom(boundarySeedV);
-            if (randV() < 0.5) mazeGrid[i * MAZE_CHUNK_SIZE] = MAT.EMPTY;
-            if (randV() < 0.5) mazeGrid[i * MAZE_CHUNK_SIZE + (MAZE_CHUNK_SIZE - 1)] = MAT.EMPTY;
-        }
-
-        mazeChunkCache.set(key, mazeGrid);
-    }
-
-    const lx = scaledX & (MAZE_CHUNK_SIZE - 1);
-    const ly = scaledY & (MAZE_CHUNK_SIZE - 1);
-    return mazeChunkCache.get(key)[ly * MAZE_CHUNK_SIZE + lx];
-}
-// --- END: REPLACEMENT for the old generateLabyrinthPixel function ---
-
-/**
- * Generates a single terrain pixel for the Caves biome, including ore veins
- * that form in the "heart" of the cave walls using the same noise field.
- * @param {number} x - The global world X coordinate.
- * @param {number} y - The global world Y coordinate.
- * @param {object} params - Biome-specific parameters, like the layer and biome bounds.
- * @returns {number} The material ID (e.g., MAT.EMPTY, a wall type, or a metal type).
- */
-function generateCavesPixel(x, y, params) {
-    const { layer, bounds } = params;
-    const layerMaterial = getLayerMaterial(layer);
-
-    // --- Biome Barrier/Ceiling generation remains the same ---
-    const BARRIER_THICKNESS = 100;
-    const CEILING_NOISE_FREQUENCY = 0.01;
-    const CEILING_NOISE_AMPLITUDE = 25;
-    const biomeStartX = bounds.x1 * SECTOR_SIZE;
-    const biomeEndX = (bounds.x2 + 1) * SECTOR_SIZE;
-    if (x < biomeStartX + BARRIER_THICKNESS || x > biomeEndX - BARRIER_THICKNESS) {
-        return layerMaterial;
-    }
-    if (layer > 0) {
-        const sectorsPerLayer = 5;
-        const layerTopY = (bounds.y1 * SECTOR_SIZE) + (layer * sectorsPerLayer * SECTOR_SIZE);
-        const noiseOffset = PerlinNoise.noise(x * CEILING_NOISE_FREQUENCY, 42.5) * CEILING_NOISE_AMPLITUDE;
-        const ceilingEffectiveY = layerTopY + noiseOffset;
-        if (y > ceilingEffectiveY && y < ceilingEffectiveY + BARRIER_THICKNESS) {
-            return layerMaterial;
-        }
-    }
-
-    // --- Combined Cave and Ore Generation ---
-
-    // 1. CAVE GENERATION PARAMETERS (Unchanged)
-    const caveConfig = {
-        baseFrequency: 0.006, octaves: 2, lacunarity: 2.0, persistence: 0.5,
-        warpFrequency: 0.005, warpStrength: 40.0,
-        // --- NEW THRESHOLDS ---
-        // A pixel is empty space if noise is above this.
-        emptyThreshold: 0.49, 
-        // A pixel is ore if noise is BELOW this (and it's not empty space).
-        // This value MUST be lower than emptyThreshold.
-        oreThreshold: 0.31
-    };
-
-    // 2. CALCULATE CAVE NOISE (Unchanged)
-    const qx = PerlinNoise.noise(x * caveConfig.warpFrequency, y * caveConfig.warpFrequency, 100.5);
-    const qy = PerlinNoise.noise(x * caveConfig.warpFrequency, y * caveConfig.warpFrequency, 100.5);
-    const warpedX = x + (qx * caveConfig.warpStrength);
-    const warpedY = y + (qy * caveConfig.warpStrength);
-
-    let totalNoise = 0, frequency = caveConfig.baseFrequency, amplitude = 1.0, maxAmplitude = 0;
-    for (let i = 0; i < caveConfig.octaves; i++) {
-        totalNoise += PerlinNoise.noise(warpedX * frequency, warpedY * frequency, 0) * amplitude;
-        maxAmplitude += amplitude;
-        amplitude *= caveConfig.persistence;
-        frequency *= caveConfig.lacunarity;
-    }
-    // Noise values range from -1 to 1. We'll use this range directly.
-    const normalizedNoise = (totalNoise / maxAmplitude + 1) / 2;
-
-    // --- 3. APPLY THRESHOLDS ---
-    // The noise field can be visualized as a heightmap.
-    // High values are "peaks" which we carve out as empty space.
-    // Low values are "valleys" or the deep core of the rock, where ore forms.
-    // Mid-range values are regular rock walls.
-
-    if (normalizedNoise > caveConfig.emptyThreshold) {
-        // High noise value -> This is empty cave space.
-        return MAT.EMPTY;
-    } else if (normalizedNoise < caveConfig.oreThreshold) {
-        // Very low noise value -> This is the heart of the rock, place ore.
-        switch (layer) {
-            case 0: return MAT.COPPER;
-            case 1: return MAT.SILVER;
-            case 2: return MAT.GOLD;
-            case 3:
-            case 4: return MAT.PLATINUM;
-            default: return layerMaterial; // Fallback
-        }
-    } else {
-        // Mid-range noise value -> This is a standard wall.
-        return layerMaterial;
-    }
-}
