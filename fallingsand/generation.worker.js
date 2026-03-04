@@ -211,11 +211,12 @@ function rgbToHex(val) {
 function fullColorHex(r, g, b) {
     return rgbToHex(r) + rgbToHex(g) + rgbToHex(b);
 }
-const TILESET = 'inside.png';
+const TILESET = 'inside_debug.png';
 const COLOR_TO_MAT_MAP = new Map([
     ['000000', MAT.EMPTY],
     ['ffffff', MAT.ROCK_WALL],
     ['855e34', MAT.GROUND],
+    ['7a7a7a', MAT.IRON],
 ]);
 let DEFAULT_MAT = MAT.ROCK_WALL;
 let wangIsInitialized = false,
@@ -425,6 +426,7 @@ function stampTileToGrid(destTileX, destTileY, srcTileX, srcTileY, isHorizontal,
 }
 
 async function generateWangTileSector(sx, sy, terrainMap) {
+    const stampedTiles = [];
     if (!wangIsInitialized) {
         console.log("[WORKER] Initializing Wang Tile generator...");
         const imageBlob = await fetch(TILESET).then(res => res.blob());
@@ -462,6 +464,7 @@ async function generateWangTileSector(sx, sy, terrainMap) {
     const startTileY = Math.floor(sy * SECTOR_SIZE / scaledTileSize) - 2;
     const endTileX = Math.ceil((sx + 1) * SECTOR_SIZE / scaledTileSize) + 2;
     const endTileY = Math.ceil((sy + 1) * SECTOR_SIZE / scaledTileSize) + 2;
+    console.log(scaledTileSize, tileSize, WANG_TILE_SCALE);
     for (let y = startTileY; y < endTileY; y++) {
         for (let x = startTileX; x < endTileX; x++) {
             const tileTypeCheck = (x - y) % 4;
@@ -479,6 +482,7 @@ async function generateWangTileSector(sx, sy, terrainMap) {
                     randomTile = validTiles[randomIndex],
                     tileInfo = tileInfos.horizontal[`${randomTile.x}_${randomTile.y}`];
                 stampTileToGrid(x, y, randomTile.x, randomTile.y, true, terrainMap);
+                stampedTiles.push({ x, y, isHorizontal: true });
                 mapData[`${x}_${y}`] = {
                     tilePos: randomTile,
                     top: tileInfo.edges.topLeft,
@@ -504,6 +508,7 @@ async function generateWangTileSector(sx, sy, terrainMap) {
                     randomTile = validTiles[randomIndex],
                     tileInfo = tileInfos.vertical[`${randomTile.x}_${randomTile.y}`];
                 stampTileToGrid(x, y, randomTile.x, randomTile.y, false, terrainMap);
+                stampedTiles.push({ x, y, isHorizontal: false });
                 mapData[`${x}_${y}`] = {
                     tilePos: randomTile,
                     left: tileInfo.edges.topLeft,
@@ -519,6 +524,8 @@ async function generateWangTileSector(sx, sy, terrainMap) {
             }
         }
     }
+
+    return stampedTiles;
 }
 
 // ====================================================================================
@@ -851,7 +858,7 @@ self.onmessage = async (event) => {
         DEFAULT_MAT = wallMaterial;
 
         // Step 1: Generate the base blocky cave structure.
-        await generateWangTileSector(sx, sy, terrainMap);
+        const wangTileData = await generateWangTileSector(sx, sy, terrainMap);
 
         // Step 2: Apply the smoothing algorithm to the generated base.
         applySmoothingPass(sx, sy, terrainMap, wallMaterial);
@@ -904,6 +911,7 @@ self.onmessage = async (event) => {
             chunks: transferableChunks,
             lightChunks: transferableLightChunks,
             background: sectorBackground,
+            wangTileData: wangTileData,
         }, [...terrainBuffers, ...lightBuffers, sectorBackground.data.buffer]);
     }
 };
