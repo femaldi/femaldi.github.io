@@ -211,12 +211,14 @@ function rgbToHex(val) {
 function fullColorHex(r, g, b) {
     return rgbToHex(r) + rgbToHex(g) + rgbToHex(b);
 }
-const TILESET = 'inside_debug.png';
+const TILESET = 'inside.png';
 const COLOR_TO_MAT_MAP = new Map([
     ['000000', MAT.EMPTY],
     ['ffffff', MAT.ROCK_WALL],
     ['855e34', MAT.GROUND],
     ['7a7a7a', MAT.IRON],
+    ['ff6000', MAT.SAND],
+    ['8b4513', MAT.WOOD]
 ]);
 let DEFAULT_MAT = MAT.ROCK_WALL;
 let wangIsInitialized = false,
@@ -534,25 +536,33 @@ async function generateWangTileSector(sx, sy, terrainMap) {
 
 // --- GAUSSIAN BLUR CONFIGURATION ---
 
-// The "radius" of the blur, in pixels. This controls the size of the slopes.
-// A larger radius will create longer, more gentle slopes. 5-7 is a good start.
-const BLUR_RADIUS = 32;
-
 // The threshold for turning a blurred value back into solid ground. 0.5 is the standard.
 const SOLID_THRESHOLD = 0.5;
 
-// Helper to determine if a material is a structural, smoothable solid.
-const isSolid = (type) => WALL_TYPES.has(type) || type === MAT.GROUND;
 
 /**
- * Transforms "pixel stairways" into smooth slopes using a stable Gaussian Blur filter.
- * This is a standard image processing technique guaranteed to be non-destructive.
+ * Transforms all structural terrain into smooth, organic shapes by blurring each
+ * material type on a separate "layer" with its own unique blur radius, and then
+ * compositing the results.
  */
 function applySmoothingPass(sx, sy, terrainMap, wallMaterial) {
+    // --- NEW CONFIGURATION: Per-Material Blur Settings ---
+    
+    // The default blur radius for materials not specified below (e.g., rock, sand).
+    const DEFAULT_BLUR_RADIUS = 24;
+
+    // Define specific blur radii for materials that need special handling.
+    // A smaller radius results in sharper corners and preserves more detail.
+    const MATERIAL_BLUR_RADII = {
+        [MAT.WOOD]: 4, // Wood should have much sharper, less "blobby" edges.
+        // You can add other materials here, for example:
+        // [MAT.GLASS]: 2,
+    };
+    // --- END OF NEW CONFIGURATION ---
+
+
     const startX = sx * SECTOR_SIZE;
     const startY = sy * SECTOR_SIZE;
-    const endX = startX + SECTOR_SIZE;
-    const endY = startY + SECTOR_SIZE;
 
     const getGridFromMap = (x, y, map) => {
         const cx = Math.floor(x / CHUNK_SIZE), cy = Math.floor(y / CHUNK_SIZE), key = coordToKey(cx, cy);
@@ -562,86 +572,94 @@ function applySmoothingPass(sx, sy, terrainMap, wallMaterial) {
         return chunk.data[getLocalIndex(lx, ly)];
     };
 
-    // --- STAGE 1: Initialize Buffers ---
-    // We need floating-point buffers to store the blurred values.
-    const readBuffer = new Float32Array(SECTOR_SIZE * SECTOR_SIZE);
+    // --- STAGE 1: DECOMPOSITION (Unchanged) ---
+    const SMOOTHABLE_MATERIALS = new Set([wallMaterial, MAT.SAND, MAT.GROUND, MAT.WOOD]);
+    const materialBuffers = new Map();
+    for (const matId of SMOOTHABLE_MATERIALS) {
+        materialBuffers.set(matId, new Float32Array(SECTOR_SIZE * SECTOR_SIZE));
+    }
+    for (let y = 0; y < SECTOR_SIZE; y++) {
+        for (let x = 0; x < SECTOR_SIZE; x++) {
+            const type = getGridFromMap(startX + x, startY + y, terrainMap);
+            if (SMOOTHABLE_MATERIALS.has(type)) {
+                materialBuffers.get(type)[y * SECTOR_SIZE + x] = 1.0;
+            }
+        }
+    }
+
+    // --- STAGE 2: INDEPENDENT BLURRING (Modified) ---
     const writeBuffer = new Float32Array(SECTOR_SIZE * SECTOR_SIZE);
 
-    // Populate the initial read buffer: 1.0 for solid, 0.0 for empty.
-    for (let y = 0; y < SECTOR_SIZE; y++) {
-        for (let x = 0; x < SECTOR_SIZE; x++) {
-            readBuffer[y * SECTOR_SIZE + x] = isSolid(getGridFromMap(startX + x, startY + y, terrainMap)) ? 1.0 : 0.0;
+    // *** THE MAIN CHANGE IS HERE ***
+    // We now loop through the material buffers with their corresponding material IDs.
+    for (const [matId, readBuffer] of materialBuffers.entries()) {
+        
+        // Get the specific blur radius for this material, or use the default.
+        const blurRadius = MATERIAL_BLUR_RADII[matId] || DEFAULT_BLUR_RADIUS;
+        
+        // Generate a kernel specifically for this material's blur radius.
+        const kernel = [];
+        const sigma = blurRadius / 3;
+        const sigmaSq = sigma * sigma;
+        let kernelSum = 0;
+        for (let i = -blurRadius; i <= blurRadius; i++) {
+            const value = Math.exp(-0.5 * (i * i / sigmaSq));
+            kernel.push(value);
+            kernelSum += value;
         }
-    }
+        for (let i = 0; i < kernel.length; i++) { kernel[i] /= kernelSum; }
 
-    // --- STAGE 2: Generate Gaussian Kernel ---
-    const kernel = [];
-    const sigma = BLUR_RADIUS / 3;
-    const sigmaSq = sigma * sigma;
-    let kernelSum = 0;
-    for (let i = -BLUR_RADIUS; i <= BLUR_RADIUS; i++) {
-        const distanceSq = i * i;
-        const value = Math.exp(-0.5 * (distanceSq / sigmaSq));
-        kernel.push(value);
-        kernelSum += value;
-    }
-    // Normalize the kernel so that its values sum to 1.0
-    for (let i = 0; i < kernel.length; i++) {
-        kernel[i] /= kernelSum;
-    }
-
-    // --- STAGE 3: Apply Separable Gaussian Blur ---
-
-    // 3a: Horizontal pass
-    for (let y = 0; y < SECTOR_SIZE; y++) {
-        for (let x = 0; x < SECTOR_SIZE; x++) {
-            let weightedSum = 0;
-            for (let k = -BLUR_RADIUS; k <= BLUR_RADIUS; k++) {
-                const sampleX = Math.max(0, Math.min(SECTOR_SIZE - 1, x + k)); // Clamp to edges
-                const sampleValue = readBuffer[y * SECTOR_SIZE + sampleX];
-                weightedSum += sampleValue * kernel[k + BLUR_RADIUS];
+        // Apply the blur using this material-specific kernel.
+        // Horizontal pass
+        for (let y = 0; y < SECTOR_SIZE; y++) {
+            for (let x = 0; x < SECTOR_SIZE; x++) {
+                let weightedSum = 0;
+                for (let k = -blurRadius; k <= blurRadius; k++) {
+                    const sampleX = Math.max(0, Math.min(SECTOR_SIZE - 1, x + k));
+                    weightedSum += readBuffer[y * SECTOR_SIZE + sampleX] * kernel[k + blurRadius];
+                }
+                writeBuffer[y * SECTOR_SIZE + x] = weightedSum;
             }
-            writeBuffer[y * SECTOR_SIZE + x] = weightedSum;
         }
-    }
-
-    // 3b: Vertical pass
-    for (let y = 0; y < SECTOR_SIZE; y++) {
-        for (let x = 0; x < SECTOR_SIZE; x++) {
-            let weightedSum = 0;
-            for (let k = -BLUR_RADIUS; k <= BLUR_RADIUS; k++) {
-                const sampleY = Math.max(0, Math.min(SECTOR_SIZE - 1, y + k)); // Clamp to edges
-                const sampleValue = writeBuffer[sampleY * SECTOR_SIZE + x];
-                weightedSum += sampleValue * kernel[k + BLUR_RADIUS];
+        // Vertical pass
+        for (let y = 0; y < SECTOR_SIZE; y++) {
+            for (let x = 0; x < SECTOR_SIZE; x++) {
+                let weightedSum = 0;
+                for (let k = -blurRadius; k <= blurRadius; k++) {
+                    const sampleY = Math.max(0, Math.min(SECTOR_SIZE - 1, y + k));
+                    weightedSum += writeBuffer[sampleY * SECTOR_SIZE + x] * kernel[k + blurRadius];
+                }
+                readBuffer[y * SECTOR_SIZE + x] = weightedSum;
             }
-            readBuffer[y * SECTOR_SIZE + x] = weightedSum;
         }
     }
 
-    // --- STAGE 4: Apply Threshold and Write Final Terrain ---
-    // The final smoothed data is in readBuffer.
+    // --- STAGE 3: RECOMPOSITION (Unchanged) ---
     const finalMap = new Map();
-    for (const [key, chunk] of terrainMap.entries()) {
-        finalMap.set(key, { ...chunk, data: new Uint8Array(chunk.data) });
-    }
-
     for (let y = 0; y < SECTOR_SIZE; y++) {
         for (let x = 0; x < SECTOR_SIZE; x++) {
-            const value = readBuffer[y * SECTOR_SIZE + x];
-            if (value > SOLID_THRESHOLD) {
-                setGrid(startX + x, startY + y, wallMaterial, finalMap);
+            let maxStrength = 0.0;
+            let winningMaterial = MAT.EMPTY;
+            for (const [matId, buffer] of materialBuffers.entries()) {
+                const strength = buffer[y * SECTOR_SIZE + x];
+                if (strength > maxStrength) {
+                    maxStrength = strength;
+                    winningMaterial = matId;
+                }
+            }
+            if (maxStrength > SOLID_THRESHOLD) {
+                setGrid(startX + x, startY + y, winningMaterial, finalMap);
             } else {
                 setGrid(startX + x, startY + y, MAT.EMPTY, finalMap);
             }
         }
     }
-
-    // Copy the final result back to the original terrainMap
     terrainMap.clear();
     for(const [key, chunk] of finalMap.entries()) {
         terrainMap.set(key, chunk);
     }
 }
+// --- END OF REPLACEMENT ---
 
 const hash = (x, y, s = 0) => {
     let h = x * 374761393 + y * 668265263 + s * 1442695041;
