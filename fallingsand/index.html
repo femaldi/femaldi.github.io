@@ -2405,7 +2405,7 @@
         let generationQueue = [];
 
         generationWorker.onmessage = (event) => {
-            const { type, sx, sy, chunks, lightChunks, background, wangTileData  } = event.data; // Now receives lightChunks
+            const { type, sx, sy, chunks, lightChunks, background, wangTileData, stampedSetPieces } = event.data; // Now receives lightChunks
 
             if (type === 'result') {
                 // Integrate terrain chunks
@@ -2436,16 +2436,26 @@
                 sectorGrid.set(key, { state: 'ready', sx: sx, sy: sy });
                 markSectorBordersDirty(sx, sy);
 
-                const setPiecesInSector = SetPieceManager.getSetPiecesForSector(sx, sy);
-                for (const pieceInfo of setPiecesInSector) {
-                    // We must find the original full definition to get the hook *function*.
-                    const pieceDef = SetPieceManager.setPieces.find(p => p.name === pieceInfo.name);
-                    if (pieceDef && pieceDef.postGenerationHook) {
-                        // The 'pieceInfo' object already contains the final calculated world 'bounds'.
-                        // We execute the hook now.
-                        pieceDef.postGenerationHook(pieceInfo);
+                // 1. Add any newly stamped pieces to the pending queue if we haven't already executed them.
+                if (stampedSetPieces && stampedSetPieces.length > 0) {
+                    for (const pieceInfo of stampedSetPieces) {
+                        const pieceInstanceId = `${pieceInfo.name}_${pieceInfo.tx}_${pieceInfo.ty}`;
+
+                        // Only add it to the pending queue if we haven't already run its hook.
+                        if (!SetPieceManager.executedHooks.has(pieceInstanceId)) {
+                            // Also, prevent adding duplicates to the pending queue.
+                            const alreadyPending = SetPieceManager.pendingHooks.some(p => p.tx === pieceInfo.tx && p.ty === pieceInfo.ty);
+                            if (!alreadyPending) {
+                                console.log(`[HOOK] Queuing hook for ${pieceInstanceId}. Waiting for all sectors to load.`);
+                                SetPieceManager.pendingHooks.push(pieceInfo);
+                            }
+                        }
                     }
                 }
+
+                // 2. Now that a new sector is 'ready', check the entire pending queue.
+                // This will execute any hooks whose dependencies have just been met.
+                processPendingHooks();
 
                 isGenerating = false;
                 isRenderCacheInvalid = true; // Invalidate cache now that all data is ready
@@ -2500,14 +2510,24 @@
 
                 const sector = generationQueue.shift();
                 const biomeInfo = BiomeManager.getBiomeForSector(sector.sx, sector.sy) || { name: "OceanOfRock", params: {} };
-                const setPieces = SetPieceManager.getSetPiecesForSector(sector.sx, sector.sy);
+                
+                // Get the set pieces, which contain functions.
+                const setPiecesWithHooks = SetPieceManager.getSetPiecesForSector(sector.sx, sector.sy);
+
+                // --- THIS IS THE FIX ---
+                // Create a "transferable" version of the set pieces that *only* contains data.
+                // We use object destructuring to exclude the `postGenerationHook` function.
+                const transferableSetPieces = setPiecesWithHooks.map(piece => {
+                    const { postGenerationHook, ...cloneablePiece } = piece;
+                    return cloneablePiece;
+                });
 
                 generationWorker.postMessage({ 
                     type: 'generate-and-bake', 
                     sx: sector.sx, sy: sector.sy,
                     borderContext: gatherBorderContext(sector.sx, sector.sy),
                     biomeInfo: biomeInfo,
-                    setPieces: setPieces 
+                    setPieces: transferableSetPieces 
                 });
                 return; // Only do one task at a time
             }
@@ -4905,18 +4925,71 @@
             // Here you could trigger a UI notification or sound effect
         }
 
+        // in index.html, inside the main <script> tag
+
+        // in index.html, inside the main <script> tag
+
+        function processPendingHooks() {
+            const stillPending = []; // To hold hooks that can't be executed yet.
+
+            for (const pieceInfo of SetPieceManager.pendingHooks) {
+                let allSectorsReady = true;
+
+                // 1. Calculate all sectors this piece overlaps.
+                const { x, y, width, height } = pieceInfo.bounds;
+                const startSX = Math.floor(x / SECTOR_SIZE);
+                const endSX = Math.floor((x + width - 1) / SECTOR_SIZE);
+                const startSY = Math.floor(y / SECTOR_SIZE);
+                const endSY = Math.floor((y + height - 1) / SECTOR_SIZE);
+
+                // 2. Check if every required sector is in the 'ready' state.
+                for (let sy = startSY; sy <= endSY; sy++) {
+                    for (let sx = startSX; sx <= endSX; sx++) {
+                        const sectorKey = coordToKey(sx, sy);
+                        const sector = sectorGrid.get(sectorKey);
+                        if (!sector || sector.state !== 'ready') {
+                            allSectorsReady = false;
+                            break; // A sector is missing, no need to check further for this piece.
+                        }
+                    }
+                    if (!allSectorsReady) break;
+                }
+
+                // 3. If all sectors are ready, execute the hook. Otherwise, keep it pending.
+                if (allSectorsReady) {
+                    const pieceDef = SetPieceManager.setPieces.find(p => p.name === pieceInfo.name);
+                    const pieceInstanceId = `${pieceInfo.name}_${pieceInfo.tx}_${pieceInfo.ty}`;
+
+                    // Double-check it hasn't been executed (it shouldn't have, but this is safe).
+                    if (pieceDef && pieceDef.postGenerationHook && !SetPieceManager.executedHooks.has(pieceInstanceId)) {
+                        console.log(`[HOOK] All sectors ready. Executing for ${pieceInstanceId}`);
+                        pieceDef.postGenerationHook(pieceInfo);
+                        SetPieceManager.executedHooks.add(pieceInstanceId);
+                    }
+                } else {
+                    // This piece is still waiting on at least one sector, so add it back to the list.
+                    stillPending.push(pieceInfo);
+                }
+            }
+
+            // 4. The new pending list only contains hooks that are still waiting.
+            SetPieceManager.pendingHooks = stillPending;
+        }
+
         const SetPieceManager = {
+            placedPieces: [],
+            prng: null,
+            executedHooks: new Set(),
+            pendingHooks: [],
+
             setPieces: [
                 {
                     name: "AlchemistStation",
                     imagePath: 'assets/alembic.png',
                     backgroundImagePath: 'assets/alembic_bg.png',
-                    targetSectorOffsetX: 0,
-                    targetSectorOffsetY: 0,
-                    spawnLocalX: SECTOR_SIZE / 2,
-                    spawnLocalY: SECTOR_SIZE / 2,
+                    isSpawnPoint: true, // Special flag for the starting piece
+                    tileType: 'horizontal',
                     parsedData: null,
-                    // --- START OF REPLACEMENT ---
                     postGenerationHook: function(pieceInfo) {
                         if (!pieceInfo.parsedData || !pieceInfo.parsedData.functionalAreas) {
                             console.error("AlchemistStation postGenerationHook failed: No functional areas parsed!");
@@ -4930,22 +5003,20 @@
 
                         for (const key in areas) {
                             const area = areas[key];
-                            const worldPoints = [];
-                            for (const localPoint of area.points) {
-                                worldPoints.push({ x: pieceInfo.bounds.x + localPoint.x, y: pieceInfo.bounds.y + localPoint.y });
-                            }
+                            const worldPoints = area.points.map(localPoint => ({
+                                x: pieceInfo.bounds.x + localPoint.x,
+                                y: pieceInfo.bounds.y + localPoint.y
+                            }));
                             stationGeometry[key] = {
                                 x: pieceInfo.bounds.x + area.x, y: pieceInfo.bounds.y + area.y,
                                 width: area.width, height: area.height, worldPoints: worldPoints
                             };
 
-                            // --- TRIGGER LOGIC MODIFICATION ---
                             if (key === 'stationControls') {
                                 createTrigger({
                                     name: 'alembic_controls', x: stationGeometry[key].x, y: stationGeometry[key].y,
                                     width: stationGeometry[key].width, height: stationGeometry[key].height,
                                     onInteract: (trigger) => {
-                                        // THE FIX: Open the new Alembic UI instead of showing a message.
                                         isAlembicUIVisible = true;
                                         player.activeStationGeometry = trigger.associatedData.stationGeometry;
                                     },
@@ -4956,86 +5027,74 @@
 
                         if (areas.masterAlchemist) {
                             const npcArea = areas.masterAlchemist;
-                            createNpc({
+                            const npcId = createNpc({
                                 name: 'Ylialkemisti',
                                 x: worldX(npcArea.x, npcArea.width),
                                 y: worldY(npcArea.y, npcArea.height) - player.height / 2,
-                                dialogueTreeId: 'ylialkemisti_main',
-                                associatedData: { stationGeometry }
+                                dialogueTreeId: 'ylialkemisti_main'
                             });
+                             // Associate station geometry with the NPC for trading
+                            const npc = npcs.find(n => n.id === npcId);
+                            if (npc) {
+                                npc.associatedData.stationGeometry = stationGeometry;
+                            }
                         }
                         
                         if (areas.outputCrucible) {
                             const spawnArea = stationGeometry.outputCrucible;
                             playerSpawnLocation = {
                                 x: spawnArea.x + Math.floor(spawnArea.width / 2),
-                                y: spawnArea.y + Math.floor(spawnArea.height / 2)
+                                y: spawnArea.y + Math.floor(spawnArea.height / 2) - 10
                             };
                         }
                     }
-                    // --- END OF REPLACEMENT ---
                 },
-                // --- END OF REPLACEMENT ---
                 {
                     name: "ForgottenShrine",
                     imagePath: 'assets/wood_puzzle.png',
-                    spawnLocalX: 256,
-                    spawnLocalY: 256,
-                    targetSectorOffsetX: 2,
-                    targetSectorOffsetY: 0,
+                    tileType: 'horizontal',
+                    bounds: { minSectorX: -5, maxSectorX: 5, minSectorY: 1, maxSectorY: 4 },
                     parsedData: null,
                     postGenerationHook: function(piece) {
-                        if (!piece.parsedData) return;
-                        
-                        // Handle treasure
-                        const areas = piece.parsedData.functionalAreas;
-                        if (areas && areas.treasureMarker) {
-                            const treasureArea = areas.treasureMarker;
-                            const treasureWorldX = piece.bounds.x + treasureArea.x;
-                            const treasureWorldY = piece.bounds.y + treasureArea.y;
-                            createMagicTablet(treasureWorldX, treasureWorldY, 'increase_tool_slots');
-                        }
-                        
-                        // Handle rigid bodies
-                        if (piece.parsedData.rigidBodies) {
-                            console.log(`Spawning ${piece.parsedData.rigidBodies.length} rigid body/bodies for '${piece.name}'.`);
-                            for (const rbDef of piece.parsedData.rigidBodies) {
-                                const worldX = piece.bounds.x + rbDef.x;
-                                const worldY = piece.bounds.y + rbDef.y;
-                                createRigidBodyRectangle(worldX, worldY, rbDef.width, rbDef.height, rbDef.material, 'iron_door_27x33', 'Iron door');
-                            }
-                        }
+                        if (!piece.parsedData || !piece.parsedData.functionalAreas || !piece.parsedData.functionalAreas.treasureMarker) return;
+                        const treasureArea = piece.parsedData.functionalAreas.treasureMarker;
+                        createMagicTablet(piece.bounds.x + treasureArea.x, piece.bounds.y + treasureArea.y, 'increase_tool_slots');
                     }
                 },
                 {
                     name: "FloodedTunnel",
                     imagePath: 'assets/water_puzzle.png',
-                    spawnLocalX: 256,
-                    spawnLocalY: 256,
-                    targetSectorOffsetX: -2,
-                    targetSectorOffsetY: 0,
+                    tileType: 'horizontal',
+                    bounds: { minSectorX: -5, maxSectorX: 5, minSectorY: 1, maxSectorY: 4 },
                     parsedData: null,
                     postGenerationHook: function(piece) {
-                        if (!piece.parsedData) return;
-                        
-                        // Handle treasure
-                        const areas = piece.parsedData.functionalAreas;
-                        if (areas && areas.treasureMarker) {
-                            const treasureArea = areas.treasureMarker;
-                            const treasureWorldX = piece.bounds.x + treasureArea.x;
-                            const treasureWorldY = piece.bounds.y + treasureArea.y;
-                            createMagicTablet(treasureWorldX, treasureWorldY, 'increase_tool_slots');
-                        }
-                        
+                         if (!piece.parsedData || !piece.parsedData.functionalAreas || !piece.parsedData.functionalAreas.treasureMarker) return;
+                        const treasureArea = piece.parsedData.functionalAreas.treasureMarker;
+                        createMagicTablet(piece.bounds.x + treasureArea.x, piece.bounds.y + treasureArea.y, 'increase_tool_slots');
                     }
                 },
                 {
+                    name: "PhysicsScale",
+                    imagePath: 'assets/scale_base.png',
+                    tileType: 'horizontal',
+                    bounds: { minSectorX: -5, maxSectorX: 5, minSectorY: 1, maxSectorY: 4 },
+                    parsedData: null,
+                    postGenerationHook: function(piece) {
+                        if (!piece.parsedData) return;
+                        if (piece.parsedData.functionalAreas && piece.parsedData.functionalAreas.treasureMarker) {
+                            const treasureArea = piece.parsedData.functionalAreas.treasureMarker;
+                            createMagicTablet(piece.bounds.x + treasureArea.x, piece.bounds.y + treasureArea.y, 'increase_structure_slots');
+                        }
+                        const worldX = piece.bounds.x + (piece.parsedData.width / 2);
+                        const worldY = piece.bounds.y + piece.parsedData.height;
+                        createPhysicsScale(worldX, worldY);
+                    }
+                },
+                 {
                     name: "WaterTrap",
                     imagePath: 'assets/water_trap.png',
-                    spawnLocalX: 256,
-                    spawnLocalY: 256,
-                    targetSectorOffsetX: 0,
-                    targetSectorOffsetY: 1,
+                    tileType: 'vertical',
+                    bounds: { minSectorX: -5, maxSectorX: 5, minSectorY: 1, maxSectorY: 4 },
                     parsedData: null,
                     postGenerationHook: function(piece) {
                         if (!piece.parsedData) return;
@@ -5116,10 +5175,8 @@
                 {
                     name: "HollowMountain",
                     imagePath: 'assets/levitation_challenge.png',
-                    spawnLocalX: 256,
-                    spawnLocalY: 256,
-                    targetSectorOffsetX: 1,
-                    targetSectorOffsetY: 0,
+                    tileType: 'vertical',
+                    bounds: { minSectorX: -5, maxSectorX: 5, minSectorY: 1, maxSectorY: 4 },
                     parsedData: null,
                     postGenerationHook: function(piece) {
                         if (!piece.parsedData) return;
@@ -5134,97 +5191,140 @@
                         }
                     }
                 },
-                // --- START OF REPLACEMENT ---
-                {
-                    name: "PhysicsScale",
-                    imagePath: 'assets/scale_base.png',
-                    spawnLocalX: 256,
-                    spawnLocalY: 256,
-                    targetSectorOffsetX: -1,
-                    targetSectorOffsetY: 0,
-                    postGenerationHook: function(piece) {
-                        if (!piece.parsedData) return;
-
-                        const areas = piece.parsedData.functionalAreas;
-                        
-                        // --- THE FIX: Look inside functionalAreas for treasure ---
-                        if (areas && areas.treasureMarker) {
-                            const treasureArea = areas.treasureMarker;
-                            const treasureWorldX = piece.bounds.x + treasureArea.x;
-                            const treasureWorldY = piece.bounds.y + treasureArea.y;
-                            
-                            console.log(`Spawning treasure for '${piece.name}' at:`, treasureWorldX, treasureWorldY);
-                            createMagicTablet(treasureWorldX, treasureWorldY, 'increase_structure_slots'); // Example treasure
-                        }
-                        
-                        const worldX = piece.bounds.x + (piece.parsedData.width / 2);
-                        const worldY = piece.bounds.y + piece.parsedData.height;
-
-                        createPhysicsScale(worldX, worldY);
-                    }
-                },
             ],
-            
-            // --- START OF REPLACEMENT ---
-            getSetPiecesForSector: function(sx, sy) {
-                const piecesForSector = [];
 
-                for (const piece of this.setPieces) {
-                    // Case 1: Image-based piece with explicit sector assignment
-                    if (piece.targetSectorOffsetX !== undefined) {
-                        const targetSX = playerSpawnSX + piece.targetSectorOffsetX;
-                        const targetSY = playerSpawnSY + piece.targetSectorOffsetY;
+            _getSeededRandom: function() {
+                // Simple mulberry32 PRNG
+                let a = this.prng;
+                return function() {
+                  a |= 0; a = a + 0x6D2B79F5 | 0;
+                  let t = Math.imul(a ^ a >>> 15, 1 | a);
+                  t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+                  return ((t ^ t >>> 14) >>> 0) / 4294967296;
+                }
+            },
 
-                        // If the sector we are generating (sx, sy) is the exact target for this piece...
-                        if (sx === targetSX && sy === targetSY) {
-                            if (!piece.parsedData) {
-                                console.warn(`Set piece '${piece.name}' was matched to this sector but its image data is missing.`);
-                                continue; // Skip this piece if parsing failed
+            // in index.html, inside the SetPieceManager object
+
+            placeAllSetPieces: function(seed, spawnSX, spawnSY) {
+                this.prng = seed;
+                const random = this._getSeededRandom();
+                this.placedPieces = [];
+                
+                // --- THIS IS THE FIX ---
+                // The grid unit for placement is the width/height of a single square tile (22px) scaled up.
+                const gridUnit = 22 * WANG_TILE_SCALE; // 330 pixels
+                // --- END OF FIX ---
+
+                // 1. Place the mandatory spawn point piece
+                const spawnPiece = this.setPieces.find(p => p.isSpawnPoint);
+                if (spawnPiece) {
+                    const spawnTileX = Math.floor((spawnSX * SECTOR_SIZE + SECTOR_SIZE / 2) / gridUnit);
+                    const spawnTileY = Math.floor((spawnSY * SECTOR_SIZE + SECTOR_SIZE / 2) / gridUnit);
+                    this.placedPieces.push({ ...spawnPiece, tx: spawnTileX, ty: spawnTileY });
+                }
+
+                // 2. Place the rest of the pieces
+                const otherPieces = this.setPieces.filter(p => !p.isSpawnPoint);
+                for (const piece of otherPieces) {
+                    const { minSectorX, maxSectorX, minSectorY, maxSectorY } = piece.bounds;
+                    const minTileX = Math.floor(minSectorX * SECTOR_SIZE / gridUnit);
+                    const maxTileX = Math.floor((maxSectorX + 1) * SECTOR_SIZE / gridUnit);
+                    const minTileY = Math.floor(minSectorY * SECTOR_SIZE / gridUnit);
+                    const maxTileY = Math.floor((maxSectorY + 1) * SECTOR_SIZE / gridUnit);
+
+                    const validPositions = [];
+                    for (let ty = minTileY; ty <= maxTileY; ty++) {
+                        for (let tx = minTileX; tx <= maxTileX; tx++) {
+                            // Check tile type compatibility (this logic remains correct for the staggered grid)
+                            const isHorizontalSpot = (tx - ty) % 4 === 0 || (tx - ty) % 4 === -0;
+                            const isVerticalSpot = (tx - ty) % 4 === 3 || (tx - ty) % 4 === -1;
+                            if ((piece.tileType === 'horizontal' && !isHorizontalSpot) || (piece.tileType === 'vertical' && !isVerticalSpot)) {
+                                continue;
                             }
 
-                            // ...calculate its final world bounds and add it directly. No overlap check needed.
-                            const halfW = Math.floor(piece.parsedData.width / 2);
-                            const halfH = Math.floor(piece.parsedData.height / 2);
-                            const centerX = (sx * SECTOR_SIZE) + piece.spawnLocalX;
-                            const centerY = (sy * SECTOR_SIZE) + piece.spawnLocalY;
-
-                            const pieceBounds = {
-                                x: centerX - halfW,
-                                y: centerY - halfH,
-                                width: piece.parsedData.width,
-                                height: piece.parsedData.height
-                            };
-
-                            piecesForSector.push({
-                                name: piece.name,
-                                bounds: pieceBounds,
-                                parsedData: piece.parsedData
-                            });
+                            // Check distance from already placed pieces
+                            let isTooClose = false;
+                            const sectorsPerTile = gridUnit / SECTOR_SIZE;
+                            for (const placed of this.placedPieces) {
+                                // We approximate distance by checking the sector coordinates of the tile.
+                                const placedSectorX = Math.floor(placed.tx * gridUnit / SECTOR_SIZE);
+                                const placedSectorY = Math.floor(placed.ty * gridUnit / SECTOR_SIZE);
+                                const newSectorX = Math.floor(tx * gridUnit / SECTOR_SIZE);
+                                const newSectorY = Math.floor(ty * gridUnit / SECTOR_SIZE);
+                                
+                                if (Math.abs(newSectorX - placedSectorX) < 2 && Math.abs(newSectorY - placedSectorY) < 2) {
+                                    isTooClose = true;
+                                    break;
+                                }
+                            }
+                            if (!isTooClose) {
+                                validPositions.push({ tx, ty });
+                            }
                         }
                     }
-                    // Case 2: Procedural piece that can span multiple sectors (needs overlap check)
-                    else if (piece.getBounds) {
-                        const pieceBounds = piece.getBounds();
-                        const sectorBounds = {
-                            x1: sx * SECTOR_SIZE, y1: sy * SECTOR_SIZE,
-                            x2: (sx + 1) * SECTOR_SIZE, y2: (sy + 1) * SECTOR_SIZE
-                        };
-                        const pieceBoundsRect = { x1: pieceBounds.x, y1: pieceBounds.y, x2: pieceBounds.x + pieceBounds.width, y2: pieceBounds.y + pieceBounds.height };
 
-                        // Check if this procedural piece overlaps with the current sector
-                        if (sectorBounds.x1 < pieceBoundsRect.x2 && sectorBounds.x2 > pieceBoundsRect.x1 &&
-                            sectorBounds.y1 < pieceBoundsRect.y2 && sectorBounds.y2 > pieceBoundsRect.y1) {
-                            
-                            piecesForSector.push({
-                                name: piece.name,
-                                bounds: pieceBounds
-                            });
-                        }
+                    if (validPositions.length > 0) {
+                        const pos = validPositions[Math.floor(random() * validPositions.length)];
+                        this.placedPieces.push({ ...piece, tx: pos.tx, ty: pos.ty });
+                    } else {
+                        console.warn(`Could not find a valid placement for set piece: ${piece.name}`);
+                    }
+                }
+                console.log("Placed set pieces:", this.placedPieces);
+            },
+            
+            // in index.html, inside the SetPieceManager object
+
+            getSetPiecesForSector: function(sx, sy) {
+                const piecesForSector = [];
+                // --- THIS IS THE FIX ---
+                // Define the correct world dimensions based on the tileset's content size (22px) and the scale factor.
+                const TILE_UNIT_WIDTH = 22;
+                const TILE_UNIT_HEIGHT = 22;
+                const singleTileDimX = TILE_UNIT_WIDTH * WANG_TILE_SCALE;   // 22 * 15 = 330
+                const singleTileDimY = TILE_UNIT_HEIGHT * WANG_TILE_SCALE; // 22 * 15 = 330
+
+                const sectorBounds = {
+                    x1: sx * SECTOR_SIZE, y1: sy * SECTOR_SIZE,
+                    x2: (sx + 1) * SECTOR_SIZE, y2: (sy + 1) * SECTOR_SIZE
+                };
+
+                for (const piece of this.placedPieces) {
+                    if (!piece.parsedData) continue;
+                    
+                    // The tile grid itself is based on the 330x330 unit size.
+                    const pieceTopLeftX = piece.tx * singleTileDimX;
+                    const pieceTopLeftY = piece.ty * singleTileDimY;
+
+                    // The final dimensions depend on whether it's horizontal (2x1 units) or vertical (1x2 units).
+                    const pieceWorldWidth = piece.tileType === 'horizontal' ? singleTileDimX * 2 : singleTileDimX;
+                    const pieceWorldHeight = piece.tileType === 'horizontal' ? singleTileDimY : singleTileDimY * 2;
+                    // --- END OF FIX ---
+
+                    const pieceBoundsRect = {
+                        x1: pieceTopLeftX,
+                        y1: pieceTopLeftY,
+                        x2: pieceTopLeftX + pieceWorldWidth,
+                        y2: pieceTopLeftY + pieceWorldHeight
+                    };
+
+                    if (sectorBounds.x1 < pieceBoundsRect.x2 && sectorBounds.x2 > pieceBoundsRect.x1 &&
+                        sectorBounds.y1 < pieceBoundsRect.y2 && sectorBounds.y2 > pieceBoundsRect.y1) {
+                        
+                        piecesForSector.push({
+                            ...piece,
+                            bounds: {
+                                x: pieceTopLeftX,
+                                y: pieceTopLeftY,
+                                width: pieceWorldWidth,
+                                height: pieceWorldHeight
+                            }
+                        });
                     }
                 }
                 return piecesForSector;
             }
-            // --- END OF REPLACEMENT ---
         };
 
         /**
@@ -11315,7 +11415,7 @@
             
             WORLD_SEED = Math.floor(Math.random() * 1000000);
             // Initialize the main, persistent worker for in-game generation
-            generationWorker.postMessage({ type: 'init', seed: WORLD_SEED });
+            generationWorker.postMessage({ type: 'init', seed: WORLD_SEED, colors: COLORS });
 
             PerlinNoise.seed(WORLD_SEED);
 
@@ -11365,6 +11465,10 @@
             playerSpawnSX = Math.floor(player.x / SECTOR_SIZE);
             playerSpawnSY = Math.floor(player.y / SECTOR_SIZE);
 
+            updateLoadingStatus('Planning World Layout...');
+            await yieldToBrowser();
+            SetPieceManager.placeAllSetPieces(WORLD_SEED, playerSpawnSX, playerSpawnSY);
+
             updateLoadingStatus('Preparing Spawn Area...');
             await yieldToBrowser();
 
@@ -11389,8 +11493,17 @@
                             if (type === 'init-ack') {
                                 // The worker is ready. Now we can send it the generation command.
                                 const biomeInfo = BiomeManager.getBiomeForSector(sx, sy);
-                                const setPieces = SetPieceManager.getSetPiecesForSector(sx, sy);
                                 const finalBiomeInfo = biomeInfo || { name: "OceanOfRock", params: {} };
+
+                                const setPiecesWithHooks = SetPieceManager.getSetPiecesForSector(sx, sy);
+
+                                // --- THIS IS THE FIX ---
+                                // Create a "transferable" version of the set pieces that *only* contains data.
+                                // We use object destructuring to exclude the `postGenerationHook` function.
+                                const transferableSetPieces = setPiecesWithHooks.map(piece => {
+                                    const { postGenerationHook, ...cloneablePiece } = piece;
+                                    return cloneablePiece;
+                                });
 
                                 tempLocalGenerator.postMessage({
                                     type: 'generate-and-bake',
@@ -11398,7 +11511,7 @@
                                     sy: sy,
                                     borderContext: gatherBorderContext(sx, sy),
                                     biomeInfo: finalBiomeInfo,
-                                    setPieces: setPieces
+                                    setPieces: transferableSetPieces
                                 });
                             } 
                             else if (type === 'result') {
@@ -11436,7 +11549,7 @@
                         };
 
                         // Start the process by initializing the temporary worker.
-                        tempLocalGenerator.postMessage({ type: 'init', seed: WORLD_SEED });
+                        tempLocalGenerator.postMessage({ type: 'init', seed: WORLD_SEED, colors: COLORS });
                     });
                     
                     await sectorGenerationPromise; // Wait for the current sector to finish before starting the next
@@ -11461,6 +11574,7 @@
                             // Find the full set piece definition to get its hook function
                             const pieceDef = SetPieceManager.setPieces.find(p => p.name === pieceInfo.name);
                             if (pieceDef && pieceDef.postGenerationHook) {
+                                console.log("calling postGenerationHook at mainLoader");
                                 pieceDef.postGenerationHook(pieceInfo);
                                 processedHooks.add(pieceInfo.name);
                             }

@@ -212,14 +212,39 @@ function fullColorHex(r, g, b) {
     return rgbToHex(r) + rgbToHex(g) + rgbToHex(b);
 }
 const TILESET = 'inside.png';
-const COLOR_TO_MAT_MAP = new Map([
-    ['000000', MAT.EMPTY],
-    ['ffffff', MAT.ROCK_WALL],
-    ['855e34', MAT.GROUND],
-    ['7a7a7a', MAT.IRON],
-    ['ff6000', MAT.SAND],
-    ['8b4513', MAT.WOOD]
-]);
+let COLOR_TO_MAT_MAP = new Map();
+function rgbArrayToHex(rgb) {
+    return ((1 << 24) + (rgb[0] << 16) + (rgb[1] << 8) + rgb[2]).toString(16).slice(1);
+}
+
+function initializeColorMap(colorsObject) {
+    COLOR_TO_MAT_MAP.clear();
+    for (const matId in colorsObject) {
+        const key = parseInt(matId, 10);
+        const rgbArray = colorsObject[key];
+        const hexString = rgbArrayToHex(rgbArray);
+        COLOR_TO_MAT_MAP.set(hexString, key);
+    }
+    
+    // Add the special overrides for the tileset mapping.
+    // This ensures these two colors always map to these specific materials.
+    COLOR_TO_MAT_MAP.set('000000', MAT.EMPTY);
+    // 'ffffff' will be handled dynamically based on biome layer.
+    
+    console.log("[WORKER] Color map initialized from main thread data.");
+}
+// const COLOR_TO_MAT_MAP = new Map([
+//     ['000000', MAT.EMPTY],
+//     ['ffffff', MAT.ROCK_WALL],
+//     ['855e34', MAT.GROUND],
+//     ['7a7a7a', MAT.IRON],
+//     ['ff6000', MAT.SAND],
+//     ['8b4513', MAT.WOOD],
+//     ['4d5257', MAT.ADAMANTIUM],
+//     ['c8c864', MAT.RUNE_WALL],
+//     ['c8c864', MAT.IRON],
+//     ['c8c864', MAT.RUSTED_IRON],
+// ]);
 let DEFAULT_MAT = MAT.ROCK_WALL;
 let wangIsInitialized = false,
     rng, num_tiles_h_x, num_tiles_h_y, num_tiles_v_x, num_tiles_v_y, tileSize, tileInfos = {
@@ -427,8 +452,35 @@ function stampTileToGrid(destTileX, destTileY, srcTileX, srcTileY, isHorizontal,
     }
 }
 
-async function generateWangTileSector(sx, sy, terrainMap) {
-    const stampedTiles = [];
+// in generation.worker.js, near the other stamping functions
+
+function stampSetPiece(piece, terrainMap) {
+    const destWorldX = piece.bounds.x;
+    const destWorldY = piece.bounds.y;
+
+    if (piece.parsedData && piece.parsedData.pixels) {
+        // 1. Erase the entire bounding box area first.
+        for (let y = 0; y < piece.parsedData.height; y++) {
+            for (let x = 0; x < piece.parsedData.width; x++) {
+                setGrid(destWorldX + x, destWorldY + y, MAT.EMPTY, terrainMap);
+            }
+        }
+        // 2. Stamp the actual set piece pixels.
+        for (let y = 0; y < piece.parsedData.height; y++) {
+            for (let x = 0; x < piece.parsedData.width; x++) {
+                const pixelIndex = y * piece.parsedData.width + x;
+                const pieceMaterial = piece.parsedData.pixels[pixelIndex];
+                if (pieceMaterial !== -1) { // -1 means transparent/no-op
+                    setGrid(destWorldX + x, destWorldY + y, pieceMaterial, terrainMap);
+                }
+            }
+        }
+    }
+}
+
+// in generation.worker.js
+
+async function generateWangTileSector(sx, sy, terrainMap, setPieces, stampedPieces, allStampedTiles) {
     if (!wangIsInitialized) {
         console.log("[WORKER] Initializing Wang Tile generator...");
         const imageBlob = await fetch(TILESET).then(res => res.blob());
@@ -460,74 +512,77 @@ async function generateWangTileSector(sx, sy, terrainMap) {
         wangIsInitialized = true;
         console.log("[WORKER] Wang Tile generator initialized.");
     }
+
+    const setPieceTileMap = new Map();
+    if (setPieces && setPieces.length > 0) {
+        for (const piece of setPieces) {
+            setPieceTileMap.set(`${piece.tx}_${piece.ty}`, piece);
+        }
+    }
+
     const mapData = {};
-    const scaledTileSize = tileSize * WANG_TILE_SCALE;
-    const startTileX = Math.floor(sx * SECTOR_SIZE / scaledTileSize) - 2;
-    const startTileY = Math.floor(sy * SECTOR_SIZE / scaledTileSize) - 2;
-    const endTileX = Math.ceil((sx + 1) * SECTOR_SIZE / scaledTileSize) + 2;
-    const endTileY = Math.ceil((sy + 1) * SECTOR_SIZE / scaledTileSize) + 2;
-    console.log(scaledTileSize, tileSize, WANG_TILE_SCALE);
+    const gridUnit = 22 * WANG_TILE_SCALE; // 330 pixels
+    const startTileX = Math.floor(sx * SECTOR_SIZE / gridUnit) - 2;
+    const startTileY = Math.floor(sy * SECTOR_SIZE / gridUnit) - 2;
+    const endTileX = Math.ceil((sx + 1) * SECTOR_SIZE / gridUnit) + 2;
+    const endTileY = Math.ceil((sy + 1) * SECTOR_SIZE / gridUnit) + 2;
+    
     for (let y = startTileY; y < endTileY; y++) {
         for (let x = startTileX; x < endTileX; x++) {
+            
+            const piece = setPieceTileMap.get(`${x}_${y}`);
+            if (piece) {
+                stampSetPiece(piece, terrainMap);
+                stampedPieces.push(piece);
+                allStampedTiles.push({ x: piece.tx, y: piece.ty, isHorizontal: piece.tileType === 'horizontal' }); // RESTORED
+
+                if (piece.tileType === 'horizontal') {
+                    x++; 
+                }
+                continue;
+            }
+
             const tileTypeCheck = (x - y) % 4;
             if (tileTypeCheck === 0) {
-                const constraints = {
-                    edges: {}
-                };
+                const constraints = { edges: {} };
                 if (mapData[`${x - 1}_${y}`]) constraints.edges.left = mapData[`${x - 1}_${y}`].right;
                 if (mapData[`${x}_${y - 1}`]) constraints.edges.topLeft = mapData[`${x}_${y - 1}`].bottom;
                 if (mapData[`${x + 1}_${y - 1}`]) constraints.edges.topRight = mapData[`${x + 1}_${y - 1}`].bottom;
                 if (mapData[`${x + 2}_${y}`]) constraints.edges.right = mapData[`${x + 2}_${y}`].left;
+                
                 const validTiles = getValidTiles(constraints, 'horizontal');
                 if (validTiles.length === 0) continue;
+                
                 const randomIndex = Math.floor(rng(x, y) * validTiles.length),
                     randomTile = validTiles[randomIndex],
                     tileInfo = tileInfos.horizontal[`${randomTile.x}_${randomTile.y}`];
+                
                 stampTileToGrid(x, y, randomTile.x, randomTile.y, true, terrainMap);
-                stampedTiles.push({ x, y, isHorizontal: true });
-                mapData[`${x}_${y}`] = {
-                    tilePos: randomTile,
-                    top: tileInfo.edges.topLeft,
-                    left: tileInfo.edges.left,
-                    bottom: tileInfo.edges.bottomLeft
-                };
-                mapData[`${x + 1}_${y}`] = {
-                    tilePos: randomTile,
-                    top: tileInfo.edges.topRight,
-                    right: tileInfo.edges.right,
-                    bottom: tileInfo.edges.bottomRight
-                };
+                allStampedTiles.push({ x, y, isHorizontal: true }); // RESTORED
+                
+                mapData[`${x}_${y}`] = { tilePos: randomTile, top: tileInfo.edges.topLeft, left: tileInfo.edges.left, bottom: tileInfo.edges.bottomLeft };
+                mapData[`${x + 1}_${y}`] = { tilePos: randomTile, top: tileInfo.edges.topRight, right: tileInfo.edges.right, bottom: tileInfo.edges.bottomRight };
             }
             if (tileTypeCheck === 3 || tileTypeCheck === -1) {
-                const constraints = {
-                    edges: {}
-                };
+                 const constraints = { edges: {} };
                 if (mapData[`${x - 1}_${y}`]) constraints.edges.topLeft = mapData[`${x - 1}_${y}`].right;
                 if (mapData[`${x}_${y - 1}`]) constraints.edges.top = mapData[`${x}_${y - 1}`].bottom;
+                
                 const validTiles = getValidTiles(constraints, 'vertical');
                 if (validTiles.length === 0) continue;
+                
                 const randomIndex = Math.floor(rng(x, y) * validTiles.length),
                     randomTile = validTiles[randomIndex],
                     tileInfo = tileInfos.vertical[`${randomTile.x}_${randomTile.y}`];
+                
                 stampTileToGrid(x, y, randomTile.x, randomTile.y, false, terrainMap);
-                stampedTiles.push({ x, y, isHorizontal: false });
-                mapData[`${x}_${y}`] = {
-                    tilePos: randomTile,
-                    left: tileInfo.edges.topLeft,
-                    top: tileInfo.edges.top,
-                    right: tileInfo.edges.topRight
-                };
-                mapData[`${x}_${y + 1}`] = {
-                    tilePos: randomTile,
-                    left: tileInfo.edges.bottomLeft,
-                    bottom: tileInfo.edges.bottom,
-                    right: tileInfo.edges.bottomRight
-                };
+                allStampedTiles.push({ x, y, isHorizontal: false }); // RESTORED
+
+                mapData[`${x}_${y}`] = { tilePos: randomTile, left: tileInfo.edges.topLeft, top: tileInfo.edges.top, right: tileInfo.edges.topRight };
+                mapData[`${x}_${y + 1}`] = { tilePos: randomTile, left: tileInfo.edges.bottomLeft, bottom: tileInfo.edges.bottom, right: tileInfo.edges.bottomRight };
             }
         }
     }
-
-    return stampedTiles;
 }
 
 // ====================================================================================
@@ -540,26 +595,17 @@ async function generateWangTileSector(sx, sy, terrainMap) {
 const SOLID_THRESHOLD = 0.5;
 
 
+// in generation.worker.js
+
 /**
- * Transforms all structural terrain into smooth, organic shapes by blurring each
- * material type on a separate "layer" with its own unique blur radius, and then
- * compositing the results.
+ * Transforms all structural terrain into smooth, organic shapes, while preserving
+ * the pixels of pre-stamped Set Pieces.
  */
-function applySmoothingPass(sx, sy, terrainMap, wallMaterial) {
-    // --- NEW CONFIGURATION: Per-Material Blur Settings ---
-    
-    // The default blur radius for materials not specified below (e.g., rock, sand).
+function applySmoothingPass(sx, sy, terrainMap, wallMaterial, stampedPieces) {
     const DEFAULT_BLUR_RADIUS = 24;
-
-    // Define specific blur radii for materials that need special handling.
-    // A smaller radius results in sharper corners and preserves more detail.
     const MATERIAL_BLUR_RADII = {
-        [MAT.WOOD]: 4, // Wood should have much sharper, less "blobby" edges.
-        // You can add other materials here, for example:
-        // [MAT.GLASS]: 2,
+        [MAT.WOOD]: 4,
     };
-    // --- END OF NEW CONFIGURATION ---
-
 
     const startX = sx * SECTOR_SIZE;
     const startY = sy * SECTOR_SIZE;
@@ -572,7 +618,51 @@ function applySmoothingPass(sx, sy, terrainMap, wallMaterial) {
         return chunk.data[getLocalIndex(lx, ly)];
     };
 
-    // --- STAGE 1: DECOMPOSITION (Unchanged) ---
+    // --- NEW: STAGE 0: CREATE PROTECTION MASK ---
+    const protectionMask = new Uint8Array(SECTOR_SIZE * SECTOR_SIZE).fill(0);
+    if (stampedPieces) {
+        for (const piece of stampedPieces) {
+            // Check if the piece has pixel data to protect
+            if (!piece.parsedData || !piece.parsedData.pixels) continue;
+
+            const pieceStartX = piece.bounds.x;
+            const pieceStartY = piece.bounds.y;
+            const pieceWidth = piece.bounds.width;
+            const pieceHeight = piece.bounds.height;
+
+            const sourcePixels = piece.parsedData.pixels;
+            const sourceWidth = piece.parsedData.width;
+            const sourceHeight = piece.parsedData.height;
+
+            // Iterate through the world area this piece occupies
+            for (let y = 0; y < pieceHeight; y++) {
+                for (let x = 0; x < pieceWidth; x++) {
+                    const worldX = pieceStartX + x;
+                    const worldY = pieceStartY + y;
+
+                    // Only process pixels within the current sector
+                    if (worldX >= startX && worldX < startX + SECTOR_SIZE &&
+                        worldY >= startY && worldY < startY + SECTOR_SIZE) 
+                    {
+                        // Scale world coords to source image coords to find the material
+                        const sourceX = Math.floor((x / pieceWidth) * sourceWidth);
+                        const sourceY = Math.floor((y / pieceHeight) * sourceHeight);
+                        const sourcePixelIndex = sourceY * sourceWidth + sourceX;
+                        const pieceMaterial = sourcePixels[sourcePixelIndex];
+
+                        // If the set piece pixel is not transparent, mark this location for protection.
+                        if (pieceMaterial !== -1) {
+                            const sectorLX = worldX - startX;
+                            const sectorLY = worldY - startY;
+                            protectionMask[sectorLY * SECTOR_SIZE + sectorLX] = 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // --- STAGE 1: DECOMPOSITION (Modified) ---
     const SMOOTHABLE_MATERIALS = new Set([wallMaterial, MAT.SAND, MAT.GROUND, MAT.WOOD]);
     const materialBuffers = new Map();
     for (const matId of SMOOTHABLE_MATERIALS) {
@@ -580,86 +670,73 @@ function applySmoothingPass(sx, sy, terrainMap, wallMaterial) {
     }
     for (let y = 0; y < SECTOR_SIZE; y++) {
         for (let x = 0; x < SECTOR_SIZE; x++) {
+            const index = y * SECTOR_SIZE + x;
+            // *** THE CHANGE IS HERE: Check the mask before processing a pixel ***
+            if (protectionMask[index] === 1) {
+                continue; // Skip protected pixels
+            }
+
             const type = getGridFromMap(startX + x, startY + y, terrainMap);
             if (SMOOTHABLE_MATERIALS.has(type)) {
-                materialBuffers.get(type)[y * SECTOR_SIZE + x] = 1.0;
+                materialBuffers.get(type)[index] = 1.0;
             }
         }
     }
 
-    // --- STAGE 2: INDEPENDENT BLURRING (Modified) ---
+    // --- STAGE 2: INDEPENDENT BLURRING (Unchanged) ---
+    // This part remains the same, as it only operates on the (now-filtered) buffers.
     const writeBuffer = new Float32Array(SECTOR_SIZE * SECTOR_SIZE);
-
-    // *** THE MAIN CHANGE IS HERE ***
-    // We now loop through the material buffers with their corresponding material IDs.
     for (const [matId, readBuffer] of materialBuffers.entries()) {
-        
-        // Get the specific blur radius for this material, or use the default.
         const blurRadius = MATERIAL_BLUR_RADII[matId] || DEFAULT_BLUR_RADIUS;
-        
-        // Generate a kernel specifically for this material's blur radius.
         const kernel = [];
         const sigma = blurRadius / 3;
         const sigmaSq = sigma * sigma;
         let kernelSum = 0;
-        for (let i = -blurRadius; i <= blurRadius; i++) {
-            const value = Math.exp(-0.5 * (i * i / sigmaSq));
-            kernel.push(value);
-            kernelSum += value;
-        }
+        for (let i = -blurRadius; i <= blurRadius; i++) { const value = Math.exp(-0.5 * (i * i / sigmaSq)); kernel.push(value); kernelSum += value; }
         for (let i = 0; i < kernel.length; i++) { kernel[i] /= kernelSum; }
-
-        // Apply the blur using this material-specific kernel.
-        // Horizontal pass
-        for (let y = 0; y < SECTOR_SIZE; y++) {
-            for (let x = 0; x < SECTOR_SIZE; x++) {
-                let weightedSum = 0;
-                for (let k = -blurRadius; k <= blurRadius; k++) {
-                    const sampleX = Math.max(0, Math.min(SECTOR_SIZE - 1, x + k));
-                    weightedSum += readBuffer[y * SECTOR_SIZE + sampleX] * kernel[k + blurRadius];
-                }
-                writeBuffer[y * SECTOR_SIZE + x] = weightedSum;
-            }
-        }
-        // Vertical pass
-        for (let y = 0; y < SECTOR_SIZE; y++) {
-            for (let x = 0; x < SECTOR_SIZE; x++) {
-                let weightedSum = 0;
-                for (let k = -blurRadius; k <= blurRadius; k++) {
-                    const sampleY = Math.max(0, Math.min(SECTOR_SIZE - 1, y + k));
-                    weightedSum += writeBuffer[sampleY * SECTOR_SIZE + x] * kernel[k + blurRadius];
-                }
-                readBuffer[y * SECTOR_SIZE + x] = weightedSum;
-            }
-        }
+        for (let y = 0; y < SECTOR_SIZE; y++) { for (let x = 0; x < SECTOR_SIZE; x++) { let weightedSum = 0; for (let k = -blurRadius; k <= blurRadius; k++) { const sampleX = Math.max(0, Math.min(SECTOR_SIZE - 1, x + k)); weightedSum += readBuffer[y * SECTOR_SIZE + sampleX] * kernel[k + blurRadius]; } writeBuffer[y * SECTOR_SIZE + x] = weightedSum; } }
+        for (let y = 0; y < SECTOR_SIZE; y++) { for (let x = 0; x < SECTOR_SIZE; x++) { let weightedSum = 0; for (let k = -blurRadius; k <= blurRadius; k++) { const sampleY = Math.max(0, Math.min(SECTOR_SIZE - 1, y + k)); weightedSum += writeBuffer[sampleY * SECTOR_SIZE + x] * kernel[k + blurRadius]; } readBuffer[y * SECTOR_SIZE + x] = weightedSum; } }
     }
 
-    // --- STAGE 3: RECOMPOSITION (Unchanged) ---
+    // --- STAGE 3: RECOMPOSITION (Modified) ---
     const finalMap = new Map();
     for (let y = 0; y < SECTOR_SIZE; y++) {
         for (let x = 0; x < SECTOR_SIZE; x++) {
-            let maxStrength = 0.0;
-            let winningMaterial = MAT.EMPTY;
-            for (const [matId, buffer] of materialBuffers.entries()) {
-                const strength = buffer[y * SECTOR_SIZE + x];
-                if (strength > maxStrength) {
-                    maxStrength = strength;
-                    winningMaterial = matId;
-                }
-            }
-            if (maxStrength > SOLID_THRESHOLD) {
-                setGrid(startX + x, startY + y, winningMaterial, finalMap);
+            const index = y * SECTOR_SIZE + x;
+            const worldX = startX + x;
+            const worldY = startY + y;
+
+            // *** THE CHANGE IS HERE: Check the mask before recomposing ***
+            if (protectionMask[index] === 1) {
+                // If it's a protected pixel, just copy its original material from the input map.
+                const originalType = getGridFromMap(worldX, worldY, terrainMap);
+                setGrid(worldX, worldY, originalType, finalMap);
             } else {
-                setGrid(startX + x, startY + y, MAT.EMPTY, finalMap);
+                // Otherwise, run the normal smoothing recomposition logic.
+                let maxStrength = 0.0;
+                let winningMaterial = MAT.EMPTY;
+                for (const [matId, buffer] of materialBuffers.entries()) {
+                    const strength = buffer[index];
+                    if (strength > maxStrength) {
+                        maxStrength = strength;
+                        winningMaterial = matId;
+                    }
+                }
+                if (maxStrength > SOLID_THRESHOLD) {
+                    setGrid(worldX, worldY, winningMaterial, finalMap);
+                } else {
+                    setGrid(worldX, worldY, MAT.EMPTY, finalMap);
+                }
             }
         }
     }
+
+    // Final step: replace the old terrain map with the newly composed one.
     terrainMap.clear();
     for(const [key, chunk] of finalMap.entries()) {
         terrainMap.set(key, chunk);
     }
 }
-// --- END OF REPLACEMENT ---
 
 const hash = (x, y, s = 0) => {
     let h = x * 374761393 + y * 668265263 + s * 1442695041;
@@ -845,6 +922,9 @@ self.onmessage = async (event) => {
     if (type === 'init') {
         WORLD_SEED = seed;
         PerlinNoise.seed(WORLD_SEED);
+        if (event.data.colors) {
+            initializeColorMap(event.data.colors);
+        }
         self.postMessage({
             type: 'init-ack'
         });
@@ -874,36 +954,14 @@ self.onmessage = async (event) => {
         // Temporarily override the Wang Tile generator's material mapping for this run
         COLOR_TO_MAT_MAP.set('ffffff', wallMaterial);
         DEFAULT_MAT = wallMaterial;
+        const stampedPieces = [];
+        const allStampedTiles = [];
 
         // Step 1: Generate the base blocky cave structure.
-        const wangTileData = await generateWangTileSector(sx, sy, terrainMap);
+        await generateWangTileSector(sx, sy, terrainMap, setPieces, stampedPieces, allStampedTiles);
 
         // Step 2: Apply the smoothing algorithm to the generated base.
-        applySmoothingPass(sx, sy, terrainMap, wallMaterial);
-
-        // Step 3: Carve out and stamp Set Pieces over the smoothed base.
-        if (setPieces && setPieces.length > 0) {
-            for (const piece of setPieces) {
-                if (piece.parsedData && piece.parsedData.pixels) {
-                    // 3a: Erase the entire bounding box.
-                    for (let y = 0; y < piece.bounds.height; y++) {
-                        for (let x = 0; x < piece.bounds.width; x++) {
-                            setGrid(piece.bounds.x + x, piece.bounds.y + y, MAT.EMPTY, terrainMap);
-                        }
-                    }
-                    // 3b: Stamp the actual set piece pixels.
-                    for (let y = 0; y < piece.bounds.height; y++) {
-                        for (let x = 0; x < piece.bounds.width; x++) {
-                            const pixelIndex = y * piece.bounds.width + x;
-                            const pieceMaterial = piece.parsedData.pixels[pixelIndex];
-                            if (pieceMaterial !== -1) {
-                                setGrid(piece.bounds.x + x, piece.bounds.y + y, pieceMaterial, terrainMap);
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        applySmoothingPass(sx, sy, terrainMap, wallMaterial, stampedPieces);
 
         const sectorBackground = generateSectorBackground(sx, sy, biomeInfo);
         const lightMap = bakeLightingForSector(sx, sy, terrainMap, borderContext);
@@ -929,7 +987,8 @@ self.onmessage = async (event) => {
             chunks: transferableChunks,
             lightChunks: transferableLightChunks,
             background: sectorBackground,
-            wangTileData: wangTileData,
+            wangTileData: allStampedTiles,
+            stampedSetPieces: stampedPieces,
         }, [...terrainBuffers, ...lightBuffers, sectorBackground.data.buffer]);
     }
 };
