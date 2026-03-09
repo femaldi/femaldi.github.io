@@ -5053,7 +5053,7 @@
                     name: "ForgottenShrine",
                     imagePath: 'assets/wood_puzzle.png',
                     tileType: 'horizontal',
-                    bounds: { minSectorX: -5, maxSectorX: 5, minSectorY: 1, maxSectorY: 4 },
+                    bounds: { minSectorX: -2, maxSectorX: 2, minSectorY: 1, maxSectorY: 4 },
                     parsedData: null,
                     postGenerationHook: function(piece) {
                         if (!piece.parsedData || !piece.parsedData.functionalAreas || !piece.parsedData.functionalAreas.treasureMarker) return;
@@ -5065,7 +5065,7 @@
                     name: "FloodedTunnel",
                     imagePath: 'assets/water_puzzle.png',
                     tileType: 'horizontal',
-                    bounds: { minSectorX: -5, maxSectorX: 5, minSectorY: 1, maxSectorY: 4 },
+                    bounds: { minSectorX: -2, maxSectorX: 2, minSectorY: 1, maxSectorY: 4 },
                     parsedData: null,
                     postGenerationHook: function(piece) {
                          if (!piece.parsedData || !piece.parsedData.functionalAreas || !piece.parsedData.functionalAreas.treasureMarker) return;
@@ -5077,7 +5077,7 @@
                     name: "PhysicsScale",
                     imagePath: 'assets/scale_base.png',
                     tileType: 'horizontal',
-                    bounds: { minSectorX: -5, maxSectorX: 5, minSectorY: 1, maxSectorY: 4 },
+                    bounds: { minSectorX: -2, maxSectorX: 2, minSectorY: 1, maxSectorY: 4 },
                     parsedData: null,
                     postGenerationHook: function(piece) {
                         if (!piece.parsedData) return;
@@ -5094,7 +5094,7 @@
                     name: "WaterTrap",
                     imagePath: 'assets/water_trap.png',
                     tileType: 'vertical',
-                    bounds: { minSectorX: -5, maxSectorX: 5, minSectorY: 1, maxSectorY: 4 },
+                    bounds: { minSectorX: -2, maxSectorX: 2, minSectorY: 1, maxSectorY: 4 },
                     parsedData: null,
                     postGenerationHook: function(piece) {
                         if (!piece.parsedData) return;
@@ -5176,7 +5176,7 @@
                     name: "HollowMountain",
                     imagePath: 'assets/levitation_challenge.png',
                     tileType: 'vertical',
-                    bounds: { minSectorX: -5, maxSectorX: 5, minSectorY: 1, maxSectorY: 4 },
+                    bounds: { minSectorX: -2, maxSectorX: 2, minSectorY: 1, maxSectorY: 4 },
                     parsedData: null,
                     postGenerationHook: function(piece) {
                         if (!piece.parsedData) return;
@@ -10783,19 +10783,22 @@
             manageSectorMemory();  // Check if we need to unload a sector
             Profiler.stop('UpdateSectors');
 
-            Profiler.start('UpdateLogic');
             const t0 = performance.now();
             
+            Profiler.start('FindAndActivate');
             if (frameCount % VISIBLE_LIQUID_SCAN_INTERVAL === 0) {
                 findAndActivateLiquidOutlines(); 
                 findAndActivateGasOutlines();
                 findAndActivateFireChunks();
                 findAndActivateGlowingChunks();
             }
-
-            prioritizeAndLimitActiveChunks();
+            Profiler.stop('FindAndActivate');
             
+            Profiler.start('ActiveChunks');
+            prioritizeAndLimitActiveChunks();
+            Profiler.stop('ActiveChunks');
             // --- UPDATE LOGIC ---
+            Profiler.start('UpdatePlayer');
             if (toolUseCooldown > 0) toolUseCooldown--;
             updateSpawnAnimation();
             updatePlayer();
@@ -10803,12 +10806,17 @@
             if (player.body) {
                 PlayerSandColliderManager.update();
             }
+            Profiler.stop('UpdatePlayer');
 
+            Profiler.start('UpdateRigidBodies');
             updateRigidBodyInteractions();
             // --- THIS IS THE FIX ---
             // This call advances the PlanckJS physics simulation, applying gravity and forces.
             tOtherMs2 = performance.now() - t0;
             updateRigidBodies(now);
+            Profiler.stop('UpdateRigidBodies');
+            
+            Profiler.start('UpdateLogic');
             updateDeathAnimation();
             // --- END OF FIX ---
             
