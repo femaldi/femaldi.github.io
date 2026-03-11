@@ -2033,10 +2033,12 @@
             [MAT.STEAM]: 1,
         };
 
-        const ALWAYS_VISIBLE_MATERIALS = new Set([
-            MAT.RUNE_WALL,
-            MAT.ADAMANTIUM // Also used for the alchemy station and world borders
-        ]);
+        // const ALWAYS_VISIBLE_MATERIALS = new Set([
+        //     MAT.RUNE_WALL,
+        //     MAT.ADAMANTIUM // Also used for the alchemy station and world borders
+        // ]);
+
+        const ALWAYS_VISIBLE_MATERIALS = new Set();
 
         const SHIMMERING_METALS = new Set([
             MAT.ADAMANTIUM,
@@ -6603,7 +6605,7 @@
                     shapeSize: 128,
                     particleCount: 3000
                 });
-                
+
                 const alchemist = npcs.find(npc => npc.name === 'Ylialkemisti');
                 if (alchemist) {
                     spawnFloatingArrow(alchemist.x + alchemist.width / 2 - 2, alchemist.y - 24);
@@ -9080,14 +9082,24 @@
             }
         }
         
+        // --- START OF COMPLETE REPLACEMENT for renderNpcs ---
         function renderNpcs(anim) {
             for (const npc of npcs) {
-                // --- START OF REPLACEMENT ---
-                // THE FIX: Calculate floating-point position. The render function will handle rounding.
                 const npcScreenX = npc.x - camera.x;
                 const npcScreenY = npc.y - camera.y;
-                // --- END OF REPLACEMENT ---
-                renderPlayerSprite(npcScreenX, npcScreenY, false, anim.frameIdx, false);
+                
+                // Calculate brightness for the NPC based on its world position
+                const revealLevel = getAuxData(fogChunkMap, Math.floor(npc.x), Math.floor(npc.y));
+                const lightLevel = getAuxData(lightChunkMap, Math.floor(npc.x), Math.floor(npc.y));
+                const visibilityFactor = revealLevel / MAX_REVEAL_LEVEL;
+                
+                if (visibilityFactor <= 0) continue; // Don't draw if in pitch black
+
+                const baseLightFactor = Math.max(lightLevel / MAX_REVEAL_LEVEL, AMBIENT_EXPLORED_LIGHT_FACTOR);
+                const finalBrightness = baseLightFactor * visibilityFactor;
+                
+                // Pass the calculated brightness to the sprite rendering function
+                renderPlayerSprite(npcScreenX, npcScreenY, false, anim.frameIdx, false, finalBrightness);
             }
         }
 
@@ -9162,16 +9174,31 @@
         // --- RENDERING ---
         function setPixel(x,y,r,g,b,a=255){ const i=(y*renderWidth+x)*4; pixels[i]=r; pixels[i+1]=g; pixels[i+2]=b; pixels[i+3]=a; }
 
-        // --- START OF REPLACEMENT ---
+        // --- START OF COMPLETE REPLACEMENT for renderRigidBodies ---
         function renderRigidBodies(startX, startY) {
             ctx.imageSmoothingEnabled = false; 
             ctx.globalCompositeOperation = 'source-over';
-            ctx.globalAlpha = 1.0;
 
             for (const body of rigidBodies) {
                 if (!body.body || body.isDestroyed) continue;
 
-                // Cache update logic remains the same...
+                // --- NEW: Calculate brightness for this body ---
+                const pos = body.body.getPosition();
+                const worldX = Math.floor(pos.x * B2_SCALE);
+                const worldY = Math.floor(pos.y * B2_SCALE);
+
+                const revealLevel = getAuxData(fogChunkMap, worldX, worldY);
+                const lightLevel = getAuxData(lightChunkMap, worldX, worldY);
+                const visibilityFactor = revealLevel / MAX_REVEAL_LEVEL;
+
+                if (visibilityFactor <= 0) continue; // Don't draw if in pitch black darkness
+
+                const baseLightFactor = Math.max(lightLevel / MAX_REVEAL_LEVEL, AMBIENT_EXPLORED_LIGHT_FACTOR);
+                const finalBrightness = baseLightFactor * visibilityFactor;
+
+                if (finalBrightness < 0.05) continue; // Skip rendering if too dark
+                
+                // --- Cache update logic (Complete and Unchanged) ---
                 const hasSprite = body.spritePixels !== null;
                 let needsCacheUpdate = !body.renderCacheCanvas;
                 let currentHash = 0;
@@ -9218,11 +9245,11 @@
                     tempCtx.putImageData(imageData, 0, 0);
                 }
 
-                // Drawing logic
-                const pos = body.body.getPosition(), angle = body.body.getAngle();
+                // --- Drawing logic ---
+                const angle = body.body.getAngle();
                 ctx.save();
-                
-                // THE FIX: Calculate screen position relative to the stable integer origin (startX, startY).
+                ctx.globalAlpha = finalBrightness; // Apply the calculated brightness
+
                 const screenX = pos.x * B2_SCALE - startX;
                 const screenY = pos.y * B2_SCALE - startY;
                 
@@ -9239,6 +9266,7 @@
                 ctx.restore();
             }
         }
+// --- END OF COMPLETE REPLACEMENT ---
 
         // --- START OF NEW FUNCTION ---
         /**
@@ -9408,7 +9436,6 @@
             const currentFrameImageData = ctx.getImageData(0, 0, renderWidth, renderHeight);
             const currentFramePixels = currentFrameImageData.data;
 
-            // Loop through only the identified dirty rectangles
             for (const rect of dirtyRects) {
                 const rStartX = Math.max(0, Math.floor(rect.x));
                 const rStartY = Math.max(0, Math.floor(rect.y));
@@ -9421,28 +9448,41 @@
                         const worldY = screenY + startY;
                         const destI = (screenY * renderWidth + screenX) * 4;
 
-                        // --- STEP 1: Calculate Visibility and Light Factors ---
-                        const revealLevel = getAuxData(fogChunkMap, worldX, worldY);
-                        const lightLevel = getAuxData(lightChunkMap, worldX, worldY);
+                        // --- STEP 1: Calculate Brightness Factors ---
+                        let finalBrightness = 0;
 
-                        // The reveal level acts as a master visibility mask (0.0 to 1.0)
-                        const visibilityFactor = revealLevel / MAX_REVEAL_LEVEL;
+                        if (player.isSpawning) {
+                            // --- NEW: Temporary Spawn Light Logic ---
+                            const dx = worldX - player.spawnX;
+                            const dy = worldY - player.spawnY;
+                            const distSq = dx * dx + dy * dy;
+                            const radiusSq = REVEAL_RADIUS * REVEAL_RADIUS;
+                            
+                            if (distSq < radiusSq) {
+                                // Calculate a soft falloff for the temporary light
+                                finalBrightness = 1.0 - (distSq / radiusSq);
+                            }
+                        } else {
+                            // --- Existing Fog of War Logic ---
+                            const revealLevel = getAuxData(fogChunkMap, worldX, worldY);
+                            const lightLevel = getAuxData(lightChunkMap, worldX, worldY);
+                            
+                            const visibilityFactor = revealLevel / MAX_REVEAL_LEVEL;
+                            if (visibilityFactor > 0) {
+                                const dynamicLightFactor = lightLevel / MAX_REVEAL_LEVEL;
+                                const baseLightFactor = Math.max(dynamicLightFactor, AMBIENT_EXPLORED_LIGHT_FACTOR);
+                                finalBrightness = baseLightFactor * visibilityFactor;
+                            }
+                        }
 
-                        // If the area is completely shrouded, it's pitch black.
-                        if (visibilityFactor <= 0) {
+                        // If brightness is effectively zero, just draw black.
+                        if (finalBrightness <= 0) {
                             currentFramePixels[destI] = 0;
                             currentFramePixels[destI + 1] = 0;
                             currentFramePixels[destI + 2] = 0;
                             currentFramePixels[destI + 3] = 255;
                             continue;
                         }
-
-                        // Determine the base brightness from dynamic lights and ambient explored light
-                        const dynamicLightFactor = lightLevel / MAX_REVEAL_LEVEL;
-                        const baseLightFactor = Math.max(dynamicLightFactor, AMBIENT_EXPLORED_LIGHT_FACTOR);
-                        
-                        // The final brightness is the base light modulated by the fog visibility. This creates the gradual fade!
-                        const finalBrightness = baseLightFactor * visibilityFactor;
 
                         // --- STEP 2: Draw Background and Apply Final Brightness ---
                         // (This section correctly sources the background pixel first)
