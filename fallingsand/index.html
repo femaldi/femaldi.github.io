@@ -477,8 +477,8 @@
          * @param {number} [options.holdDuration=30] - Frames the shape stays intact and blinks.
          * @param {number} [options.wispDuration=80] - Frames the particles drift as wisps.
          */
-        function createShapeDissolveEffect({ x, y, shapeImage, particleCount = 200, shapeSize = 48, color = [255, 80, 80], appearDuration = 15, holdDuration = 30, wispDuration = 80, bloomIntensity = 0.1 }) {
-            const targetPoints = getCoordinatesFromImage(shapeImage);
+        function createShapeDissolveEffect({ x, y, shapeImage, particleCount = 200, shapeSize = 48, color = [255, 80, 80], appearDuration = 15, holdDuration = 30, wispDuration = 80, bloomIntensity = 0.1, useWhiteForShape = false }) {
+            const targetPoints = getCoordinatesFromImage(shapeImage, useWhiteForShape);
             if (targetPoints.length === 0) return;
 
             const scale = shapeSize / shapeImage.width;
@@ -530,6 +530,39 @@
             }
         }
 
+        /**
+         * Creates a dynamic rigid body representing a physical rune.
+         * @param {number} x - The world X coordinate for the rune's center.
+         * @param {number} y - The world Y coordinate for the rune's center.
+         * @param {object} runeData - The full rune object, including id, stats, and color.
+         */
+        function createRuneInWorld(x, y, runeData) {
+            const width = 16;
+            const height = 16;
+            const name = `Rune of ${runeData.id.replace(/_/g, ' ')}`;
+
+            const body = new RigidBody(x, y, width, height, MAT.RUNE_WALL, name);
+            
+            // Add a visual pattern to the rune
+            const pattern = DWARVEN_RUNES.PATTERNS[Math.floor(Math.random() * DWARVEN_RUNES.PATTERNS.length)];
+            body.pixels.fill(MAT.MAGIC_WALL); // Base color
+            for (let py = 0; py < DWARVEN_RUNES.RUNE_HEIGHT; py++) {
+                for (let px = 0; px < DWARVEN_RUNES.RUNE_WIDTH; px++) {
+                    if (pattern[py][px] === 1) {
+                        body.pixels[(3 + py) * width + (4 + px)] = MAT.RUNE_WALL;
+                    }
+                }
+            }
+            body.rebuildFixtures();
+
+            const userData = body.body.getUserData();
+            userData.isPickup = true;
+            userData.isRune = true; // New flag to identify this as a rune
+            userData.runeData = runeData; // Store the full rune data
+
+            rigidBodies.push(body);
+        }
+
         function pickupObject(body) {
             if (body.isDestroyed || !body.body) return;
 
@@ -567,6 +600,11 @@
                 } else {
                     displayMessage("Inventory Full", "Cannot pick up the material chunk.", 240);
                 }
+            }
+            else if (userData.isRune) {
+                player.runeInventory.collectedRunes.push(userData.runeData);
+                pickedUp = true;
+                displayMessage("Rune Acquired", `Added Rune of ${userData.runeData.id.replace(/_/g, ' ')} to your repertoire.`, 300);
             }
             // --- END NEW LOGIC ---
             // Handle all other defined objects (tools, empty potions, barrels, etc.)
@@ -2158,49 +2196,55 @@
             return 255;
         }
 
-        /**
-         * Parses a loaded image and returns an array of coordinates for pixels that define a shape.
-         * The coordinates are relative to the center of the image.
-         * This function treats both transparent pixels AND white pixels as empty space.
-         * @param {HTMLImageElement} img - The pre-loaded image object.
-         * @returns {Array<{x: number, y: number}>} An array of coordinate points.
-         */
-        function getCoordinatesFromImage(img) {
-            if (!img) return [];
+        // --- START OF REPLACEMENT for getCoordinatesFromImage ---
 
-            const tempCanvas = document.createElement('canvas');
-            tempCanvas.width = img.width;
-            tempCanvas.height = img.height;
-            const tempCtx = tempCanvas.getContext('2d');
-            tempCtx.drawImage(img, 0, 0);
+    /**
+     * Parses a loaded image and returns an array of coordinates for pixels that define a shape.
+     * The coordinates are relative to the center of the image.
+     * @param {HTMLImageElement} img - The pre-loaded image object.
+     * @param {boolean} [useWhiteForShape=false] - If true, treats white pixels as the shape. Otherwise, treats non-white pixels as the shape.
+     * @returns {Array<{x: number, y: number}>} An array of coordinate points.
+     */
+    function getCoordinatesFromImage(img, useWhiteForShape = false) {
+        if (!img) return [];
 
-            const imageData = tempCtx.getImageData(0, 0, img.width, img.height);
-            const data = imageData.data;
-            const coordinates = [];
-            const centerX = img.width / 2;
-            const centerY = img.height / 2;
-            const whiteThreshold = 250; // Use a threshold to account for near-white JPEG artifacts
+        const tempCanvas = document.createElement('canvas');
+        tempCanvas.width = img.width;
+        tempCanvas.height = img.height;
+        const tempCtx = tempCanvas.getContext('2d');
+        tempCtx.drawImage(img, 0, 0);
 
-            for (let i = 0; i < data.length; i += 4) {
-                const r = data[i];
-                const g = data[i + 1];
-                const b = data[i + 2];
-                const alpha = data[i + 3];
+        const imageData = tempCtx.getImageData(0, 0, img.width, img.height);
+        const data = imageData.data;
+        const coordinates = [];
+        const centerX = img.width / 2;
+        const centerY = img.height / 2;
+        const whiteThreshold = 250;
 
-                // --- THIS IS THE NEW, ROBUST LOGIC ---
-                // A pixel is considered part of the shape if it's visible (alpha > 50)
-                // AND it's not white (at least one color channel is below the threshold).
-                const isShapePixel = alpha > 50 && (r < whiteThreshold || g < whiteThreshold || b < whiteThreshold);
+        for (let i = 0; i < data.length; i += 4) {
+            const r = data[i];
+            const g = data[i + 1];
+            const b = data[i + 2];
+            const alpha = data[i + 3];
 
-                if (isShapePixel) {
-                    const pixelIndex = i / 4;
-                    const x = pixelIndex % img.width;
-                    const y = Math.floor(pixelIndex / img.width);
-                    coordinates.push({ x: x - centerX, y: y - centerY });
-                }
+            let isShapePixel = false;
+            if (useWhiteForShape) {
+                isShapePixel = alpha > 50 && (r > whiteThreshold && g > whiteThreshold && b > whiteThreshold);
+            } else {
+                // ORIGINAL LOGIC: The shape is defined by dark/colored pixels on a light/transparent background.
+                isShapePixel = alpha > 50 && (r < whiteThreshold || g < whiteThreshold || b < whiteThreshold);
             }
-            return coordinates;
+
+            if (isShapePixel) {
+                const pixelIndex = i / 4;
+                const x = pixelIndex % img.width;
+                const y = Math.floor(pixelIndex / img.width);
+                coordinates.push({ x: x - centerX, y: y - centerY });
+            }
         }
+        return coordinates;
+    }
+    // --- END OF REPLACEMENT ---
 
         function isFluid(type) {
             return GASES.has(type) || LIQUIDS.has(type);
@@ -4432,14 +4476,18 @@
             return counts;
         }
 
-        // --- START: REPLACEMENT for removeMaterialsFromArea in index.html ---
+        // --- START OF REPLACEMENT for removeMaterialsFromArea ---
         /**
-         * Removes a specific quantity of materials from a defined area, prioritizing rigid body chunks first.
+         * Removes materials from an area, with an option to animate the removal.
          * @param {Array<{x, y}>} areaPoints - The world coordinates to remove materials from.
          * @param {Map<number, number>} materialsToRemove - A map of MAT IDs and quantities to remove.
+         * @param {object} [options={}] - Options for the removal process.
+         * @param {boolean} [options.animateRemoval=false] - If true, creates fading particles for removed materials.
          */
-        function removeMaterialsFromArea(areaPoints, materialsToRemove) {
+        function removeMaterialsFromArea(areaPoints, materialsToRemove, options = {}) {
             if (!areaPoints || areaPoints.length === 0) return;
+            
+            const { animateRemoval = false } = options;
             const materialsLeft = new Map(materialsToRemove);
 
             // --- Step 1: Consume rigid body chunks first ---
@@ -4447,15 +4495,44 @@
             for (const p of areaPoints) { minX = Math.min(minX, p.x); minY = Math.min(minY, p.y); maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y); }
             const pMin = pl.Vec2(minX / B2_SCALE, minY / B2_SCALE), pMax = pl.Vec2(maxX / B2_SCALE, maxY / B2_SCALE);
             const aabb = new pl.AABB(pMin, pMax);
+            
+            // Find all potential chunks in the area
             const chunksInArea = [];
-            world.queryAABB(aabb, f => { const b = f.getBody(); if(b.getUserData()?.isMaterialChunk) chunksInArea.push(b.getUserData()); return true; });
+            world.queryAABB(aabb, f => {
+                const body = f.getBody();
+                // Important: check that it's a dynamic body and has the right user data
+                if (body.getType() === 'dynamic' && body.getUserData()?.isMaterialChunk) {
+                    chunksInArea.push(body.getUserData());
+                }
+                return true;
+            });
             
             for (const chunk of chunksInArea) {
+                if (chunk.isDestroyed) continue; // Skip if already marked for deletion
                 const matType = chunk.materialType;
                 const neededAmount = materialsLeft.get(matType);
+
                 if (neededAmount && neededAmount > 0) {
                     materialsLeft.set(matType, neededAmount - chunk.quantity);
                     chunk.isDestroyed = true; // Mark the rigid body for deletion
+
+                    if (animateRemoval) {
+                        // Animate the dissolution of the entire chunk
+                        for (let y = 0; y < chunk.height; y++) {
+                            for (let x = 0; x < chunk.width; x++) {
+                                const lIdx = y * chunk.width + x;
+                                const pixelType = chunk.pixels[lIdx];
+                                if (pixelType !== MAT.EMPTY) {
+                                    const lPos = pl.Vec2((x - chunk.width / 2 + 0.5) / B2_SCALE, (y - chunk.height / 2 + 0.5) / B2_SCALE);
+                                    const wPos = chunk.body.getWorldPoint(lPos);
+                                    const wX = wPos.x * B2_SCALE;
+                                    const wY = wPos.y * B2_SCALE;
+                                    const color = COLORS[pixelType] || [255, 0, 255];
+                                    createFadingPixelParticle(wX, wY, color,  15 + Math.random() * 45);
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
@@ -4466,11 +4543,16 @@
                 const countLeft = materialsLeft.get(type);
 
                 if (countLeft && countLeft > 0) {
+                    if (animateRemoval) {
+                        const color = COLORS[type] || [255, 0, 255];
+                        createFadingPixelParticle(point.x, point.y, color, 15 + Math.random() * 45);
+                    }
                     setGrid(point.x, point.y, MAT.EMPTY, true);
                     materialsLeft.set(type, countLeft - 1);
                 }
             }
         }
+        // --- END OF REPLACEMENT ---
 
         /**
          * Spawns a collection of materials into empty spaces within a defined area.
@@ -4499,343 +4581,487 @@
             }
         }
 
-        // --- START OF REPLACEMENT (Complete executeRecipe function) ---
+        const RUNE_LOGIC = {
+            'from_input_crucible': {
+                isTerminal: false,
+                // --- START: ADD ANIMATION ---
+                animate: (context, rune) => {
+                    const area = context.stationGeometry.inputCrucible;
+                    const centerX = area.x + area.width / 2;
+                    const centerY = area.y + area.height / 2;
+
+                    // 1. General particle burst
+                    //spawnMagicParticles(15, centerX, centerY, [220, 220, 255], 0.8);
+
+                    // 2. Render the rune sprite using particles
+                    const runeSprite = SpriteManager.sprites.get('rune_from_input');
+                    createShapeDissolveEffect({
+                        x: centerX, y: centerY - 32,
+                        shapeImage: runeSprite,
+                        color: [220, 255, 220],
+                        particleCount: 100,
+                        shapeSize: 16,
+                        appearDuration: 30,
+                        holdDuration: 180,
+                        wispDuration: 30,
+                        useWhiteForShape: true
+                    });
+                },
+                dryRun: (context, rune, runeIndex) => {
+                    if (runeIndex !== 0) {
+                        return { success: false, message: "Recipe must start with [From Input Crucible]." };
+                    }
+                    return { success: true };
+                },
+                execute: (context, rune) => {
+                    context.batch = getMaterialsInArea(context.stationGeometry.inputCrucible.worldPoints);
+                    if (context.batch.size === 0) {
+                        context.fail("Input Crucible is empty.");
+                    }
+                }
+            },
+            'filter_by': {
+                isTerminal: false,
+                animate: (context, rune) => { // Generic placeholder animation
+                    const area = context.stationGeometry.stationControls;
+                    spawnMagicParticles(10, area.x + area.width/2, area.y + area.height/2, [180, 255, 180], 0.5);
+                },
+                dryRun: (context, rune, runeIndex) => ({ success: true }),
+                execute: (context, rune) => {
+                    const targetMaterial = rune.target;
+                    if (context.batch.has(targetMaterial)) {
+                        const quantity = context.batch.get(targetMaterial);
+                        context.batch = new Map([[targetMaterial, quantity]]);
+                    } else {
+                        context.batch.clear();
+                    }
+                }
+            },
+            'infuse_from_input': {
+                isTerminal: false,
+                animate: (context, rune) => {
+                    const area = context.stationGeometry.inputCrucible;
+                    const centerX = area.x + area.width / 2;
+                    const centerY = area.y + area.height / 2;
+
+                    // 1. General particle burst
+                    //spawnMagicParticles(15, centerX, centerY, [255, 220, 220], 0.8);
+
+                    // 2. Render the rune sprite using particles
+                    const runeSprite = SpriteManager.sprites.get('rune_infuse');
+                    createShapeDissolveEffect({
+                        x: centerX, y: centerY,
+                        shapeImage: runeSprite,
+                        color: [220, 255, 220],
+                        particleCount: 100,
+                        shapeSize: 16,
+                        appearDuration: 30,
+                        holdDuration: 180,
+                        wispDuration: 30,
+                        useWhiteForShape: true
+                    });
+                },
+                dryRun: (context, rune, runeIndex) => { context.isPotionBatch = true; return { success: true }; },
+                execute: (context, rune) => {
+                    const sourceMaterials = getMaterialsInArea(context.stationGeometry.inputCrucible.worldPoints);
+                    const essences = new Map();
+                    let baseLiquid = null, baseLiquidQuantity = 0;
+                    for (const [matId, quantity] of sourceMaterials.entries()) {
+                        if (matId >= 200) essences.set(matId, quantity);
+                        else if (isLiquid(matId) && matId !== MAT.LAVA) { baseLiquid = matId; baseLiquidQuantity = quantity; }
+                    }
+                    if (essences.size === 0) return context.fail("No unstable essences found in Input Crucible.");
+                    if (baseLiquid === null) return context.fail("No base liquid found in Input Crucible.");
+                    
+                    removeMaterialsFromArea(context.stationGeometry.inputCrucible.worldPoints, sourceMaterials, { animateRemoval: true });
+                    context.batch = { essences, base: baseLiquid, baseQuantity: baseLiquidQuantity };
+                    context.isPotionBatch = true;
+                }
+            },
+            'infuse_from_retort': {
+                isTerminal: false,
+                dryRun: (context, rune, runeIndex) => { context.isPotionBatch = true; return { success: true }; },
+                execute: (context, rune) => {
+                    const sourceMaterials = getMaterialsInArea(context.stationGeometry.retort.worldPoints);
+                    const essences = new Map();
+                    let baseLiquid = null, baseLiquidQuantity = 0;
+                    for (const [matId, quantity] of sourceMaterials.entries()) {
+                        if (matId >= 200) essences.set(matId, quantity);
+                        else if (isLiquid(matId) && matId !== MAT.LAVA) { baseLiquid = matId; baseLiquidQuantity = quantity; }
+                    }
+                    if (essences.size === 0) return context.fail("No unstable essences found in Retort.");
+                    if (baseLiquid === null) return context.fail("No base liquid found in Retort.");
+
+                    removeMaterialsFromArea(context.stationGeometry.retort.worldPoints, sourceMaterials, { animateRemoval: true });
+                    context.batch = { essences, base: baseLiquid, baseQuantity: baseLiquidQuantity };
+                    context.isPotionBatch = true;
+                }
+            },
+            'combine': {
+                isTerminal: false,
+                animate: (context, rune) => {
+                    const area = context.stationGeometry.inputCrucible;
+                    const centerX = area.x + area.width / 2;
+                    const centerY = area.y + area.height / 2;
+
+                    // 1. General particle burst
+                    //spawnMagicParticles(15, centerX, centerY, [220, 255, 220], 0.8);
+
+                    // 2. Render the rune sprite using particles
+                    const runeSprite = SpriteManager.sprites.get('rune_combine');
+                    createShapeDissolveEffect({
+                        x: centerX, y: centerY,
+                        shapeImage: runeSprite,
+                        color: [220, 255, 220],
+                        particleCount: 100,
+                        shapeSize: 16,
+                        appearDuration: 30,
+                        holdDuration: 180,
+                        wispDuration: 30,
+                        useWhiteForShape: true
+                    });
+                },
+                dryRun: (context, rune, runeIndex) => ({ success: true }), // Simple dry run, real check needs materials
+                execute: (context, rune) => {
+                    if (context.batch.size === 0) return;
+                    const currentMaterials = Array.from(context.batch.keys()).sort((a, b) => a - b);
+                    const matchedRecipe = ALCHEMY_COMBINATIONS.find(def => JSON.stringify(def.inputs) === JSON.stringify(currentMaterials));
+
+                    if (matchedRecipe) {
+                        const quantities = matchedRecipe.inputs.map(id => context.batch.get(id));
+                        const outputQuantity = Math.min(...quantities);
+                        if (outputQuantity > 0) {
+                            for (const inputId of matchedRecipe.inputs) {
+                                const newAmount = context.batch.get(inputId) - outputQuantity;
+                                if (newAmount > 0) context.batch.set(inputId, newAmount);
+                                else context.batch.delete(inputId);
+                            }
+                            context.batch.set(matchedRecipe.output, (context.batch.get(matchedRecipe.output) || 0) + outputQuantity);
+                        }
+                    } else {
+                        context.fail("Materials do not form a known combination.");
+                    }
+                }
+            },
+            'transform': {
+                isTerminal: false,
+                dryRun: (context, rune, runeIndex) => ({ success: true }),
+                execute: (context, rune) => {
+                    const { from, to } = rune;
+                    if (context.batch.has(from)) {
+                        const quantity = context.batch.get(from);
+                        context.batch.delete(from);
+                        context.batch.set(to, (context.batch.get(to) || 0) + quantity);
+                    }
+                }
+            },
+            'extract_essence': {
+                isTerminal: false,
+                animate: (context, rune) => {
+                    const area = context.stationGeometry.inputCrucible;
+                    const centerX = area.x + area.width / 2;
+                    const centerY = area.y + area.height / 2;
+
+                    // 1. General particle burst
+                    //spawnMagicParticles(15, centerX, centerY, [255, 255, 220], 0.8);
+
+                    // 2. Render the rune sprite using particles
+                    const runeSprite = SpriteManager.sprites.get('rune_extract');
+                    createShapeDissolveEffect({
+                        x: centerX, y: centerY,
+                        shapeImage: runeSprite,
+                        color: [220, 255, 220],
+                        particleCount: 100,
+                        shapeSize: 16,
+                        appearDuration: 30,
+                        holdDuration: 180,
+                        wispDuration: 30,
+                        useWhiteForShape: true
+                    });
+                },
+                dryRun: (context, rune, runeIndex) => ({ success: true }),
+                execute: (context, rune) => {
+                    const essenceToExtract = rune.target;
+                    if (!essenceToExtract) return context.fail("Extract Essence rune is not set.");
+                    
+                    let sourceMaterial = -1, sourceQuantity = 0;
+                    for (const [matId, quantity] of context.batch.entries()) {
+                        if ((MATERIAL_ESSENCES[matId] || []).includes(essenceToExtract)) {
+                            sourceMaterial = matId; sourceQuantity = quantity; break;
+                        }
+                    }
+                    if (sourceMaterial !== -1) {
+                        context.batch = new Map([[ESSENCE_TO_MAT[essenceToExtract], sourceQuantity]]);
+                    } else {
+                        context.fail(`No material containing [${essenceToExtract.replace(/_/g, ' ')}] was found.`);
+                    }
+                }
+            },
+            'yield_to_retort': {
+                isTerminal: false, // Not terminal, as it sets up the next step
+                dryRun: (context, rune, runeIndex) => ({ success: true }),
+                execute: (context, rune) => {
+                    if (context.batch.size === 0) return;
+                    removeMaterialsFromArea(context.stationGeometry.inputCrucible.worldPoints, context.batch, { animateRemoval: true });
+                    spawnMaterialsInArea(context.stationGeometry.retort.worldPoints, context.batch);
+                    // Visual feedback...
+                    const inputCenter = { x: context.stationGeometry.inputCrucible.x + context.stationGeometry.inputCrucible.width / 2, y: context.stationGeometry.inputCrucible.y + context.stationGeometry.inputCrucible.height / 2 };
+                    //createShapeDissolveEffect({ x: inputCenter.x, y: inputCenter.y, shapeImage: SpriteManager.sprites.get('filter_shape'), color: [255, 180, 180], shapeSize: 32, particleCount: 500, wispDuration: 40 });
+                    // Reset batch to what's left in the input crucible
+                    context.batch = getMaterialsInArea(context.stationGeometry.inputCrucible.worldPoints);
+                }
+            },
+            'yield_to_output': {
+                isTerminal: true,
+                animate: (context, rune) => {
+                    const area = context.stationGeometry.outputCrucible;
+                    const centerX = area.x + area.width / 2;
+                    const centerY = area.y + area.height / 2;
+
+                    // 1. General particle burst
+                    //spawnMagicParticles(15, centerX, centerY, [200, 255, 255], 0.8);
+
+                    // 2. Render the rune sprite using particles
+                    const runeSprite = SpriteManager.sprites.get('rune_yield');
+                    createShapeDissolveEffect({
+                        x: centerX, y: centerY,
+                        shapeImage: runeSprite,
+                        color: [220, 255, 220],
+                        particleCount: 100,
+                        shapeSize: 16,
+                        appearDuration: 30,
+                        holdDuration: 180,
+                        wispDuration: 30,
+                        useWhiteForShape: true
+                    });
+                },
+                dryRun: (context, rune, runeIndex) => {
+                    if (context.isPotionBatch) return { success: false, message: "An infused liquid cannot be yielded. Use a [Forma] rune." };
+                    return { success: true };
+                },
+                execute: (context, rune) => {
+                    const originalContents = getMaterialsInArea(context.stationGeometry.inputCrucible.worldPoints);
+                    removeMaterialsFromArea(context.stationGeometry.inputCrucible.worldPoints, originalContents, { animateRemoval: true });
+                    spawnMaterialsInArea(context.stationGeometry.outputCrucible.worldPoints, context.batch);
+                    
+                    //const outputCenter = { x: context.stationGeometry.outputCrucible.x + context.stationGeometry.outputCrucible.width / 2, y: context.stationGeometry.outputCrucible.y + context.stationGeometry.outputCrucible.height / 2 };
+                    //createShapeDissolveEffect({ x: outputCenter.x, y: outputCenter.y, shapeImage: SpriteManager.sprites.get('filter_shape'), color: [220, 255, 220], shapeSize: 48, particleCount: 1000 });
+                    context.end(`Recipe "${context.recipe.name}" complete.`);
+                }
+            },
+            'forma_potion': {
+                isTerminal: true,
+                animate: (context, rune) => {
+                    const area = context.stationGeometry.vessel;
+                    const centerX = area.x + area.width / 2;
+                    const centerY = area.y + area.height / 2;
+
+                    // Render the 'forma_potion' sprite above the vessel
+                    const runeSprite = SpriteManager.sprites.get('rune_forma_potion');
+                    createShapeDissolveEffect({
+                        x: centerX, y: centerY - 24, // Position it higher
+                        shapeImage: runeSprite,
+                        color: [200, 180, 255],
+                        particleCount: 100,
+                        shapeSize: 16,
+                        appearDuration: 30,
+                        holdDuration: 180,
+                        wispDuration: 30,
+                        useWhiteForShape: true
+                    });
+                },
+                dryRun: (context, rune, runeIndex) => {
+                    if (!context.isPotionBatch) return { success: false, message: "[Forma: Potion] requires an infused liquid." };
+                    const vesselBody = getRigidBodyAt(context.stationGeometry.vessel.x + context.stationGeometry.vessel.width / 2, context.stationGeometry.vessel.y + context.stationGeometry.vessel.height / 2);
+                    if (!vesselBody || vesselBody.body.getUserData().definitionId !== 'empty_potion') {
+                        return { success: false, message: "[Forma: Potion] requires an Empty Potion in the Vessel Slot." };
+                    }
+                    return { success: true };
+                },
+                execute: (context, rune) => {
+                    const vesselBody = getRigidBodyAt(context.stationGeometry.vessel.x + context.stationGeometry.vessel.width / 2, context.stationGeometry.vessel.y + context.stationGeometry.vessel.height / 2);
+                    
+                    let potionId = null;
+                    if (context.batch.essences.has(ESSENCE_TO_MAT[ESSENCES.INTENSE_HEAT])) {
+                        potionId = 'ashen_skin';
+                    }
+                    if (!potionId) return context.fail("Essences did not produce a known potion.");
+
+                    player.knownPotions.add(potionId);
+                    vesselBody.isDestroyed = true; 
+                    
+                    let totalEssence = 0;
+                    for (const quantity of context.batch.essences.values()) { totalEssence += quantity; }
+                    const multiplier = BASE_LIQUID_MULTIPLIERS[context.batch.base] || 1.0;
+                    
+                    // NEW: Use accumulated stats. Let's say 1 duration point = 10 frames.
+                    const baseDuration = Math.round(totalEssence * multiplier * 60);
+                    const durationInFrames = Math.max(1, baseDuration + (context.stats.duration * 10)); // Ensure duration is at least 1.
+
+                    console.log("Final Potion Stats:", context.stats);
+                    
+                    const spawnX = context.stationGeometry.vessel.x + context.stationGeometry.vessel.width / 2;
+                    const spawnY = context.stationGeometry.vessel.y + context.stationGeometry.vessel.height / 2;
+                    const potionDef = POTION_DEFINITIONS[potionId];
+                    const finishedPotion = new RigidBody(spawnX, spawnY, 8, 12, MAT.GLASS, potionDef.name);
+                    finishedPotion.pixels = new Uint8Array(OBJECT_DEFINITIONS.empty_potion.pixels);
+                    for(let y = 5; y < 10; y++) for(let x = 2; x < 6; x++) {
+                        finishedPotion.pixels[y * 8 + x] = ESSENCE_TO_MAT[ESSENCES.INTENSE_HEAT];
+                    }
+                    finishedPotion.rebuildFixtures();
+                    
+                    const userData = finishedPotion.body.getUserData();
+                    userData.isPickup = true;
+                    userData.isPotion = true;
+                    userData.potionData = {
+                        definitionId: potionId,
+                        charges: 1,
+                        duration: durationInFrames,
+                    };
+                    rigidBodies.push(finishedPotion);
+
+                    const vesselCenter = { x: spawnX, y: spawnY };
+                    createShapeDissolveEffect({ x: vesselCenter.x, y: vesselCenter.y, shapeImage: SpriteManager.sprites.get('pickup_shape'), color: [220, 180, 255], shapeSize: 48, particleCount: 1500 });
+                    context.end(`You brewed a "${potionDef.name}".`);
+                }
+            },
+            // 'separate' and other runes can be added here following the same pattern
+        };
+
+        const AlchemyJobManager = {
+            activeJobs: [],
+            ALCHEMY_STEP_DELAY_FRAMES: 120, // ~0.75 seconds between steps
+
+            /**
+             * Kicks off a new alchemy job after a successful dry run.
+             */
+            startJob: function(recipe, stationGeometry) {
+                // --- 1. Dry Run Phase (moved from executeRecipe) ---
+                const runes = recipe.runes.filter(r => r !== null);
+                let dryRunContext = { isPotionBatch: false, stationGeometry: stationGeometry };
+                let hasTerminalRune = false;
+                
+                for (let i = 0; i < runes.length; i++) {
+                    const rune = runes[i];
+                    const logic = RUNE_LOGIC[rune.id];
+                    if (!logic) { displayMessage("Internal Error", `Unknown rune logic for ${rune.id}.`, 300); return; }
+                    const result = logic.dryRun(dryRunContext, rune, i);
+                    if (!result.success) { displayMessage("Recipe Invalid", result.message, 360); return; }
+                    if (logic.isTerminal) hasTerminalRune = true;
+                }
+
+                if (!hasTerminalRune) {
+                    displayMessage("Recipe Incomplete", "The recipe must end with a [Yield] or [Forma] rune.", 300);
+                    return;
+                }
+
+                // --- 2. Create and queue the job for execution ---
+                const newJob = {
+                    recipe: recipe,
+                    runes: runes,
+                    stationGeometry: stationGeometry,
+                    currentStep: 0,
+                    delayTimer: 0, // Start the first step immediately
+                    isFinished: false,
+                    executionContext: {
+                        batch: new Map(),
+                        isPotionBatch: false,
+                        stats: { instability: 0, potency: 0, duration: 0, hazard: 0 },
+                        stationGeometry: stationGeometry,
+                        player: player,
+                        recipe: recipe,
+                        fail: (message) => {
+                            displayMessage("Reaction Failed", message, 300);
+                            newJob.isFinished = true; // Mark job to be cleaned up
+                        },
+                        end: (message) => {
+                            //displayMessage("Success", message, 300);
+                            newJob.isFinished = true; // Mark job to be cleaned up
+                        }
+                    }
+                };
+                
+                this.activeJobs.push(newJob);
+
+                const AETHER_COST = 0;
+                if (player.aether < AETHER_COST) {
+                    newJob.executionContext.fail("Not enough Aether.");
+                    return;
+                }
+                player.aether -= AETHER_COST;
+            },
+
+            /**
+             * Called every frame by the main game loop to advance alchemy jobs.
+             */
+            update: function() {
+                if (this.activeJobs.length === 0) return;
+
+                for (let i = this.activeJobs.length - 1; i >= 0; i--) {
+                    const job = this.activeJobs[i];
+
+                    if (job.isFinished) {
+                        this.activeJobs.splice(i, 1);
+                        continue;
+                    }
+
+                    job.delayTimer--;
+
+                    if (job.delayTimer <= 0) {
+                        // Time to execute the next step
+                        if (job.currentStep >= job.runes.length) {
+                            job.isFinished = true;
+                            console.warn("Recipe finished without calling a terminal 'end' or 'fail' state.");
+                            continue;
+                        }
+
+                        const rune = job.runes[job.currentStep];
+                        const logic = RUNE_LOGIC[rune.id];
+
+                        if (!logic) {
+                            job.executionContext.fail(`Unknown rune logic for ${rune.id}.`);
+                            continue;
+                        }
+
+                        // 1. Trigger the animation for this rune
+                        if (logic.animate) {
+                            logic.animate(job.executionContext, rune);
+                        }
+
+                        // 2. Accumulate stats
+                        for (const stat in job.executionContext.stats) {
+                            if (rune.stats && rune.stats[stat]) {
+                                job.executionContext.stats[stat] += rune.stats[stat];
+                            }
+                        }
+
+                        // 3. Execute the rune's logic
+                        logic.execute(job.executionContext, rune);
+                        
+                        // 4. Advance to the next step and reset the timer
+                        job.currentStep++;
+                        job.delayTimer = this.ALCHEMY_STEP_DELAY_FRAMES;
+                    }
+                }
+            }
+        };
+        // --- END OF NEW CODE ---
+
         /**
-         * The core engine for processing an alchemical recipe.
+         * Finds the specified recipe and passes it to the AlchemyJobManager to start a new job.
          * @param {number} recipePageIndex - The index of the recipe in the player's grimoire.
          * @param {object} stationGeometry - The geometry of the active Alembic station.
          */
         function executeRecipe(recipePageIndex, stationGeometry) {
             const recipe = player.grimoire.pages[recipePageIndex];
-            if (!recipe || recipe.runes.length === 0) {
+            if (!recipe || recipe.runes.every(r => r === null)) {
                 displayMessage("Reaction Failed", "The selected recipe is empty.", 240);
                 return;
             }
-
-            console.log(`--- Executing Recipe: ${recipe.name} ---`);
-            const AETHER_COST = 10; // Base cost for any reaction
-            if (player.aether < AETHER_COST) {
-                displayMessage("Reaction Failed", "Not enough Aether to start the reaction.", 240);
-                return;
-            }
-            player.aether -= AETHER_COST;
-
-            // --- Step 1: Initialize the Processing Batch ---
-            let processingBatch = new Map();
-            const firstRune = recipe.runes[0];
-            if (firstRune.id === 'from_input_crucible') {
-                processingBatch = getMaterialsInArea(stationGeometry.inputCrucible.worldPoints);
-            } else {
-                displayMessage("Reaction Failed", "Recipe must start with [From Input Crucible].", 300);
-                return;
-            }
-
-            if (processingBatch.size === 0) {
-                displayMessage("Reaction Failed", "Input Crucible is empty.", 240);
-                return;
-            }
-
-            // --- Step 2: Process Runes Sequentially ---
-            for (let i = 1; i < recipe.runes.length; i++) {
-                const rune = recipe.runes[i];
-                console.log(`Processing Rune ${i}: ${rune.id}`);
-
-                switch (rune.id) {
-                    case 'filter_by': {
-                        const targetMaterial = rune.target;
-                        if (processingBatch.has(targetMaterial)) {
-                            const quantity = processingBatch.get(targetMaterial);
-                            // The new batch contains ONLY the filtered material
-                            processingBatch = new Map([[targetMaterial, quantity]]);
-                        } else {
-                            processingBatch.clear(); // Filter found nothing, batch is now empty
-                        }
-                        break;
-                    }
-
-                    case 'infuse_from_input':
-                    case 'infuse_from_retort': {
-                        const sourceArea = (rune.id === 'infuse_from_input') 
-                            ? stationGeometry.inputCrucible.worldPoints 
-                            : stationGeometry.retort.worldPoints;
-                        
-                        const sourceName = (rune.id === 'infuse_from_input') ? "Input Crucible" : "Retort";
-
-                        const sourceMaterials = getMaterialsInArea(sourceArea);
-                        
-                        // Separate essences from base liquids
-                        const essences = new Map();
-                        let baseLiquid = null;
-                        let baseLiquidQuantity = 0;
-
-                        for (const [matId, quantity] of sourceMaterials.entries()) {
-                            if (matId >= 200) { // All unstable essences have ID >= 200
-                                essences.set(matId, quantity);
-                            } else if (isLiquid(matId) && matId !== MAT.LAVA) { // Assume the first non-essence liquid is the base
-                                baseLiquid = matId;
-                                baseLiquidQuantity = quantity;
-                            }
-                        }
-
-                        if (essences.size === 0) {
-                            displayMessage("Infusion Failed", `No unstable essences found in the ${sourceName}.`, 300);
-                            processingBatch.clear();
-                            break;
-                        }
-                        if (baseLiquid === null) {
-                            displayMessage("Infusion Failed", `No base liquid (like water or oil) found in the ${sourceName}.`, 300);
-                            processingBatch.clear();
-                            break;
-                        }
-
-                        // Consume the materials from the source
-                        removeMaterialsFromArea(sourceArea, sourceMaterials);
-
-                        // The new processing batch is a special object representing the potion's ingredients
-                        processingBatch = {
-                            isPotionBatch: true,
-                            essences: essences,
-                            base: baseLiquid,
-                            baseQuantity: baseLiquidQuantity
-                        };
-
-                        break;
-                    }
-
-                    case 'combine': {
-                        if (processingBatch.size === 0) {
-                            // Nothing to combine, just continue to the next rune
-                            break;
-                        }
-
-                        // Get a sorted array of the material types currently in the batch
-                        const currentMaterials = Array.from(processingBatch.keys()).sort((a, b) => a - b);
-                        let matchedRecipe = null;
-
-                        // Find a recipe in our master list that exactly matches the inputs
-                        for (const recipeDef of ALCHEMY_COMBINATIONS) {
-                            // We compare the stringified arrays for a simple and reliable match check
-                            if (JSON.stringify(currentMaterials) === JSON.stringify(recipeDef.inputs)) {
-                                matchedRecipe = recipeDef;
-                                break;
-                            }
-                        }
-
-                        if (matchedRecipe) {
-                            // --- Success: A valid combination was found ---
-
-                            // Determine the quantity of the output. It's limited by the ingredient with the smallest quantity.
-                            const quantities = matchedRecipe.inputs.map(inputId => processingBatch.get(inputId));
-                            const outputQuantity = Math.min(...quantities);
-
-                            if (outputQuantity > 0) {
-                                // 1. Consume the inputs from the processing batch
-                                for (const inputId of matchedRecipe.inputs) {
-                                    const currentAmount = processingBatch.get(inputId);
-                                    if (currentAmount - outputQuantity > 0) {
-                                        // If there's leftover material, update its count
-                                        processingBatch.set(inputId, currentAmount - outputQuantity);
-                                    } else {
-                                        // Otherwise, remove it completely
-                                        processingBatch.delete(inputId);
-                                    }
-                                }
-
-                                // 2. Add the output material to the batch
-                                processingBatch.set(matchedRecipe.output, (processingBatch.get(matchedRecipe.output) || 0) + outputQuantity);
-
-                                console.log(`Combined to produce ${outputQuantity} of ${MATERIAL_NAME[matchedRecipe.output]}`);
-                            }
-
-                        } else {
-                            // --- Failure: No matching combination ---
-                            displayMessage("Combination Failed", "The materials in the crucible do not form a known combination.", 300);
-                            processingBatch.clear(); // Clear the batch to signify failure
-                            return; // Stop processing the rest of the recipe
-                        }
-                        break;
-                    }
-
-                    case 'forma_potion': {
-                        if (!processingBatch.isPotionBatch) {
-                            displayMessage("Creation Failed", "[Forma: Potion] requires an infused liquid from an [Infuse] rune.", 400);
-                            processingBatch.clear();
-                            break;
-                        }
-
-                        const vesselBody = getRigidBodyAt(stationGeometry.vessel.x + stationGeometry.vessel.width / 2, stationGeometry.vessel.y + stationGeometry.vessel.height / 2);
-
-                        if (!vesselBody || vesselBody.body.getUserData().definitionId !== 'empty_potion') {
-                             displayMessage("Creation Failed", "[Forma: Potion] requires an Empty Potion in the Vessel Slot.", 400);
-                             processingBatch.clear();
-                             break;
-                        }
-                        
-                        // --- START: REVISED POTION SPAWNING LOGIC ---
-                        
-                        let potionId = null;
-                        if (processingBatch.essences.has(ESSENCE_TO_MAT[ESSENCES.INTENSE_HEAT])) {
-                            potionId = 'ashen_skin';
-                        }
-                        // Add `else if` for other potions later
-
-                        if (!potionId) {
-                            displayMessage("Creation Failed", "The combination of essences did not produce a known potion.", 300);
-                            processingBatch.clear();
-                            break;
-                        }
-
-                        player.knownPotions.add(potionId);
-
-                        // Consume the empty potion vessel
-                        vesselBody.isDestroyed = true; 
-                        
-                        // Calculate duration
-                        let totalEssence = 0;
-                        for (const quantity of processingBatch.essences.values()) { totalEssence += quantity; }
-                        const multiplier = BASE_LIQUID_MULTIPLIERS[processingBatch.base] || 1.0;
-                        const durationInFrames = Math.round(totalEssence * multiplier * 60);
-
-                        // Get the position of the vessel slot to spawn the new potion
-                        const spawnX = stationGeometry.vessel.x + stationGeometry.vessel.width / 2;
-                        const spawnY = stationGeometry.vessel.y + stationGeometry.vessel.height / 2;
-                        const potionDef = POTION_DEFINITIONS[potionId];
-
-                        // Create a new RigidBody for the finished potion
-                        const finishedPotion = new RigidBody(spawnX, spawnY, 8, 12, MAT.GLASS, potionDef.name);
-                        finishedPotion.pixels = new Uint8Array(OBJECT_DEFINITIONS.empty_potion.pixels); // Reuse pixel art for now
-                        
-                        // Fill the potion visually (simple version for now)
-                        for(let y = 5; y < 10; y++) {
-                            for(let x = 2; x < 6; x++) {
-                                finishedPotion.pixels[y * 8 + x] = ESSENCE_TO_MAT[ESSENCES.INTENSE_HEAT]; // Color it with the primary essence
-                            }
-                        }
-                        
-                        finishedPotion.rebuildFixtures();
-                        
-                        // Store the potion's data in the RigidBody's UserData
-                        const userData = finishedPotion.body.getUserData();
-                        userData.isPickup = true;
-                        userData.isPotion = true; // Flag it as a potion
-                        userData.potionData = {
-                            definitionId: potionId,
-                            charges: 1,
-                            duration: durationInFrames,
-                        };
-                        rigidBodies.push(finishedPotion); // Add it to the world
-
-                        // --- END: REVISED POTION SPAWNING LOGIC ---
-
-                        displayMessage("Potion Created!", `You brewed a "${potionDef.name}". Pick it up from the vessel slot.`, 480);
-                        
-                        const vesselCenter = { x: stationGeometry.vessel.x + stationGeometry.vessel.width / 2, y: stationGeometry.vessel.y + stationGeometry.vessel.height / 2 };
-                        createShapeDissolveEffect({ x: vesselCenter.x, y: vesselCenter.y, shapeImage: SpriteManager.sprites.get('pickup_shape'), color: [220, 180, 255], shapeSize: 48, particleCount: 1500 });
-                        
-                        return; // End the recipe
-                    }
-
-                    case 'extract_essence': {
-                        const essenceToExtract = rune.target;
-                        if (!essenceToExtract) {
-                            displayMessage("Reaction Failed", "Extract Essence rune is not set.", 300);
-                            processingBatch.clear();
-                            return;
-                        }
-
-                        let sourceMaterial = -1;
-                        let sourceQuantity = 0;
-
-                        for (const [matId, quantity] of processingBatch.entries()) {
-                            const essencesInMaterial = MATERIAL_ESSENCES[matId] || [];
-                            if (essencesInMaterial.includes(essenceToExtract)) {
-                                sourceMaterial = matId;
-                                sourceQuantity = quantity;
-                                break;
-                            }
-                        }
-
-                        if (sourceMaterial !== -1) {
-                            // Use the hardcoded mapping to get the correct material ID for the essence.
-                            const essenceMaterialId = ESSENCE_TO_MAT[essenceToExtract];
-                            
-                            processingBatch = new Map([[essenceMaterialId, sourceQuantity]]);
-                        } else {
-                            displayMessage("Reaction Fizzled", `No material containing [${essenceToExtract.replace(/_/g, ' ')}] was found.`, 300);
-                            processingBatch.clear();
-                            return;
-                        }
-                        break;
-                    }
-
-                    case 'transform': {
-                        const fromMat = rune.from;
-                        const toMat = rune.to;
-                        if (processingBatch.has(fromMat)) {
-                            const quantity = processingBatch.get(fromMat);
-                            processingBatch.delete(fromMat);
-                            processingBatch.set(toMat, (processingBatch.get(toMat) || 0) + quantity);
-                        }
-                        break;
-                    }
-
-                    case 'yield_to_retort': {
-                        if (processingBatch.size === 0) {
-                            // If the batch is empty, there's nothing to move. Just continue.
-                            break;
-                        }
-
-                        // Physically move the materials from the input crucible to the retort
-                        removeMaterialsFromArea(stationGeometry.inputCrucible.worldPoints, processingBatch);
-                        spawnMaterialsInArea(stationGeometry.retort.worldPoints, processingBatch);
-
-                        // Provide some visual feedback for the transfer
-                        const inputCenter = { x: stationGeometry.inputCrucible.x + stationGeometry.inputCrucible.width / 2, y: stationGeometry.inputCrucible.y + stationGeometry.inputCrucible.height / 2 };
-                        createShapeDissolveEffect({ x: inputCenter.x, y: inputCenter.y, shapeImage: SpriteManager.sprites.get('filter_shape'), color: [255, 180, 180], shapeSize: 32, particleCount: 500, wispDuration: 40 });
-                        
-                        const retortCenter = { x: stationGeometry.retort.x + stationGeometry.retort.width / 2, y: stationGeometry.retort.y + stationGeometry.retort.height / 2 };
-                        createShapeDissolveEffect({ x: retortCenter.x, y: retortCenter.y, shapeImage: SpriteManager.sprites.get('filter_shape'), color: [180, 255, 180], shapeSize: 32, particleCount: 500, appearDuration: 15 });
-
-                        // *** CRITICAL STEP ***
-                        // Reset the processing batch to what is now LEFT in the input crucible.
-                        // This allows the next rune in the recipe to operate on the remaining materials.
-                        processingBatch = getMaterialsInArea(stationGeometry.inputCrucible.worldPoints);
-
-                        break; // Continue to the next rune in the recipe
-                    }
-
-                    case 'yield_to_output': {
-                        if (processingBatch.isPotionBatch) {
-                            displayMessage("Reaction Failed", "An infused liquid cannot be yielded to the output. Use a [Forma] rune instead.", 400);
-                            processingBatch.clear();
-                            break;
-                        }
-
-                        const originalContents = getMaterialsInArea(stationGeometry.inputCrucible.worldPoints);
-                        removeMaterialsFromArea(stationGeometry.inputCrucible.worldPoints, originalContents);
-
-                        spawnMaterialsInArea(stationGeometry.outputCrucible.worldPoints, processingBatch);
-                        
-                        const outputCenter = { x: stationGeometry.outputCrucible.x + stationGeometry.outputCrucible.width / 2, y: stationGeometry.outputCrucible.y + stationGeometry.outputCrucible.height / 2 };
-                        createShapeDissolveEffect({ x: outputCenter.x, y: outputCenter.y, shapeImage: SpriteManager.sprites.get('filter_shape'), color: [220, 255, 220], shapeSize: 48, particleCount: 1000 });
-                        displayMessage("Reaction Complete!", `${recipe.name} finished successfully.`, 300);
-                        return;
-                    }
-
-                    default:
-                        console.warn(`Unimplemented rune in recipe: ${rune.id}`);
-                        break;
-                }
-                
-                if (processingBatch.size === 0) {
-                    displayMessage("Reaction Fizzled", "A step in the recipe resulted in no material.", 300);
-                    return;
-                }
-            }
-
-            displayMessage("Reaction Incomplete", "The recipe does not have a [Yield] or [Forma] rune at the end.", 300);
+            
+            // The manager now handles the dry run and execution.
+            AlchemyJobManager.startJob(recipe, stationGeometry);
         }
-        // --- END OF REPLACEMENT ---
 
         const GrimoireManager = {
             isVisible: false,
@@ -5612,6 +5838,8 @@
                 
                 // Learned, specific versions of attunable runes
                 known_filters: new Set([MAT.SAND]),
+
+                collectedRunes: [],
             },
             
             grimoire: {
@@ -5621,10 +5849,12 @@
                         name: "1",
                         maxRunes: 5,
                         runes: [
-                            { id: 'from_input_crucible' },
-                            { id: 'filter_by', target: MAT.GLASS },
-                            { id: 'transform', from: MAT.SAND, to: MAT.GLASS },
-                            { id: 'yield_to_output' },
+                        // Each rune is now an object with stats and color.
+                            { id: 'from_input_crucible', stats: { instability: 0, potency: 0, duration: 0, hazard: 0 }, color: 'colorless' },
+                            { id: 'filter_by', target: MAT.SAND, stats: { instability: -2, potency: 0, duration: 0, hazard: -1 }, color: 'colorless' },
+                            { id: 'transform', from: MAT.SAND, to: MAT.GLASS, stats: { instability: 1, potency: 0, duration: 0, hazard: 0 }, color: 'colorless' },
+                            { id: 'yield_to_output', stats: { instability: 0, potency: 0, duration: 0, hazard: 0 }, color: 'colorless' },
+                            null // Empty slot
                         ]
                     },
                     { 
@@ -10510,6 +10740,40 @@
             }
         }
 
+        // --- START OF NEW FUNCTION ---
+        /**
+         * Creates a single, stationary particle that fades out over time.
+         * @param {number} x - The world X coordinate.
+         * @param {number} y - The world Y coordinate.
+         * @param {Array<number>} color - The base [r, g, b] color of the particle.
+         * @param {number} [lifespan=30] - The duration of the fade in frames (0.5 seconds).
+         */
+        function createFadingPixelParticle(x, y, color, lifespan = 30) {
+            for (let i = 0; i < MAX_MAGIC_PARTICLES; i++) {
+                const p = magicParticlePool[i];
+                if (!p.active) {
+                    p.active = true;
+                    p.x = x + 0.5;
+                    p.y = y + 0.5;
+                    p.vx = 0;
+                    p.vy = 0;
+                    p.gravity = 0;
+                    p.lifespan = lifespan;
+                    p.initialLifespan = lifespan; // Store this for alpha calculation
+                    p.color = [...color];
+                    p.isFadingParticle = true; // New flag for the update loop
+                    p.alpha = 1.0; // Start fully opaque
+                    
+                    // Reset other custom flags to ensure clean state
+                    p.isShapeParticle = false;
+                    p.isStoringParticle = false;
+                    
+                    return; // Found a slot, we're done.
+                }
+            }
+        }
+        // --- END OF NEW FUNCTION ---
+
         function spawnMagicParticles(count, x, y, mainColor, variance = 1.0) {
             let spawnedCount = 0;
             for (let i = 0; i < MAX_MAGIC_PARTICLES; i++) {
@@ -10547,7 +10811,11 @@
                 // --- START: Particle State Machine ---
 
                 // --- NEW SHAPE PARTICLE STATE MACHINE ---
-                if (p.isShapeParticle) {
+                if (p.isFadingParticle) {
+                    // New logic: This particle just fades out in place.
+                    p.alpha = p.lifespan / p.initialLifespan;
+                }
+                else if (p.isShapeParticle) {
                     switch (p.phase) {
                         case 'waiting':
                             // The particle is invisible during this phase.
@@ -10620,6 +10888,7 @@
                     p.bloomIntensity = 0;
                     p.alpha = undefined;
                     p.isStoringParticle = false;
+                    p.isFadingParticle = false;
                 }
             }
         }
@@ -10815,7 +11084,7 @@
             tOtherMs2 = performance.now() - t0;
             updateRigidBodies(now);
             Profiler.stop('UpdateRigidBodies');
-            
+
             Profiler.start('UpdateLogic');
             updateDeathAnimation();
             // --- END OF FIX ---
@@ -10858,6 +11127,7 @@
             updateMessageSystem();
             updateBuffs();
             updateZoneMessage();
+            AlchemyJobManager.update();
 
             if (frameCount % 30 === 0) {
                 ZoneManager.checkZones(player);
@@ -11624,6 +11894,12 @@
             world.destroyBody(startingPotion.body); // Remove from physics world until placed
             startingPotion.body = null;
             player.structurePocket.push(startingPotion);
+
+            createRuneInWorld(player.x + 50, player.y - 10, {
+                id: 'combine',
+                stats: { instability: 5, potency: 2, duration: -10, hazard: 3 },
+                color: 'colorless'
+            });
 
             updateLoadingStatus('Done!');
             await new Promise(resolve => setTimeout(resolve, 100));
