@@ -602,9 +602,19 @@
                 }
             }
             else if (userData.isRune) {
+                // 1. Add the specific rune instance to the player's collection.
                 player.runeInventory.collectedRunes.push(userData.runeData);
                 pickedUp = true;
-                displayMessage("Rune Acquired", `Added Rune of ${userData.runeData.id.replace(/_/g, ' ')} to your repertoire.`, 300);
+                
+                // 2. Check if this is the first time they've seen this *type* of rune.
+                const runeType = userData.runeData.id;
+                if (!player.runeInventory.knownRunes.has(runeType)) {
+                    // If it's new, add it to their permanent knowledge base.
+                    player.runeInventory.knownRunes.add(runeType);
+                    displayMessage("New Rune Type Discovered!", `You now understand the concept of [${runeType.replace(/_/g, ' ')}].`, 400);
+                } else {
+                    displayMessage("Rune Acquired", `Added Rune of ${runeType.replace(/_/g, ' ')} to your repertoire.`, 300);
+                }
             }
             // --- END NEW LOGIC ---
             // Handle all other defined objects (tools, empty potions, barrels, etc.)
@@ -1369,6 +1379,24 @@
             MAT.LABYRINTH_WALL, MAT.MAGIC_WALL
         ]);
 
+        // --- START OF NEW CODE: RUNE COLOR DEFINITIONS ---
+        const RUNE_COLORS = {
+            ruby: '#e53e3e',       // Red
+            sapphire: '#4299e1',   // Blue
+            emerald: '#48bb78',    // Green
+            prismatic: '#d6bcfa', // Purple/White
+            colorless: '#718096'   // Gray
+        };
+
+        const RUNE_COLOR_NAMES = {
+            ruby: 'Ruby',
+            sapphire: 'Sapphire',
+            emerald: 'Emerald',
+            prismatic: 'Prismatic',
+            colorless: 'Colorless'
+        };
+        // --- END OF NEW CODE ---
+
         const RUNE_CATEGORY_COLORS = {
             Source: '#80DEEA',   // Cyan
             Action: '#FFAB91',   // Orange
@@ -1382,7 +1410,8 @@
         // --- START OF REPLACEMENT (UPDATE RUNE_DEFINITIONS AND STATE MANAGERS) ---
         const RUNE_DEFINITIONS = {
             // --- Source ---
-            'from_input_crucible': { name: "From Input Crucible", category: 'Source', sprite: 'rune_from_input' },
+            'from_left_crucible': { name: "From Left Crucible", category: 'Source', sprite: 'rune_from_input' },
+            'from_right_crucible': { name: "From Right Crucible", category: 'Source', sprite: 'rune_from_input' },
 
             // --- Action ---
             'transform': { name: "Transform X to Y", category: 'Action', type: 'transform', sprite: 'rune_transform' },
@@ -1396,7 +1425,8 @@
             'filter_by': { name: "Filter By", category: 'Control', isVariable: true, type: 'material', sprite: 'rune_filter' },
             'batch': { name: "Batch", category: 'Control', isVariable: true, type: 'material_amount', sprite: 'rune_batch' },
             'yield_to_retort': { name: "Yield To Retort", category: 'Control', sprite: 'rune_yield' },
-            'yield_to_output': { name: "Yield To Output", category: 'Control', sprite: 'rune_yield' },
+            'yield_to_right_crucible': { name: "Yield To Right Crucible", category: 'Control', sprite: 'rune_yield' },
+            'yield_to_left_crucible': { name: "Yield To Left Crucible", category: 'Control', sprite: 'rune_yield' },
 
             // --- Forma ---
             'forma_potion': { name: "Forma: Potion", category: 'Forma', sprite: 'rune_forma_potion' },
@@ -4582,7 +4612,7 @@
         }
 
         const RUNE_LOGIC = {
-            'from_input_crucible': {
+            'from_left_crucible': {
                 isTerminal: false,
                 // --- START: ADD ANIMATION ---
                 animate: (context, rune) => {
@@ -4608,9 +4638,9 @@
                     });
                 },
                 dryRun: (context, rune, runeIndex) => {
-                    if (runeIndex !== 0) {
-                        return { success: false, message: "Recipe must start with [From Input Crucible]." };
-                    }
+                    // if (runeIndex !== 0) {
+                    //     return { success: false, message: "Recipe must start with [From Input Crucible]." };
+                    // }
                     return { success: true };
                 },
                 execute: (context, rune) => {
@@ -4618,6 +4648,86 @@
                     if (context.batch.size === 0) {
                         context.fail("Input Crucible is empty.");
                     }
+                    removeMaterialsFromArea(context.stationGeometry.inputCrucible.worldPoints, context.batch, { animateRemoval: true });
+                }
+            },
+            'from_right_crucible': {
+                isTerminal: false,
+                animate: (context, rune) => {
+                    const area = context.stationGeometry.outputCrucible;
+                    const centerX = area.x + area.width / 2;
+                    const centerY = area.y + area.height / 2;
+
+                    // 1. General particle burst
+                    //spawnMagicParticles(15, centerX, centerY, [220, 220, 255], 0.8);
+
+                    // 2. Render the rune sprite using particles
+                    const runeSprite = SpriteManager.sprites.get('rune_from_input');
+                    createShapeDissolveEffect({
+                        x: centerX, y: centerY - 32,
+                        shapeImage: runeSprite,
+                        color: [220, 255, 220],
+                        particleCount: 100,
+                        shapeSize: 16,
+                        appearDuration: 30,
+                        holdDuration: 180,
+                        wispDuration: 30,
+                        useWhiteForShape: true
+                    });
+                },
+                dryRun: (context, rune, runeIndex) => {
+                    // This rune starts a new chain, so it resets the batch type.
+                    context.isPotionBatch = false;
+                    if (runeIndex === 0) {
+                        return { success: false, message: "Recipe cannot start with [From Output Crucible]." };
+                    }
+                    return { success: true };
+                },
+                execute: (context, rune) => {
+                    // It replaces the current processing batch with the contents of the output crucible.
+                    context.batch = getMaterialsInArea(context.stationGeometry.outputCrucible.worldPoints);
+                    if (context.batch.size === 0) {
+                        context.fail("Output Crucible is empty.");
+                    }
+                    // Also clear the output crucible after taking its contents.
+                    removeMaterialsFromArea(context.stationGeometry.outputCrucible.worldPoints, context.batch, { animateRemoval: true });
+                }
+            },
+            'yield_to_left_crucible': {
+                isTerminal: true, // This is a form of output, so it's a terminal action for this sub-chain.
+                animate: (context, rune) => {
+                    const area = context.stationGeometry.inputCrucible;
+                    const centerX = area.x + area.width / 2;
+                    const centerY = area.y + area.height / 2;
+
+                    // 1. General particle burst
+                    //spawnMagicParticles(15, centerX, centerY, [200, 255, 255], 0.8);
+
+                    // 2. Render the rune sprite using particles
+                    const runeSprite = SpriteManager.sprites.get('rune_yield');
+                    createShapeDissolveEffect({
+                        x: centerX, y: centerY,
+                        shapeImage: runeSprite,
+                        color: [220, 255, 220],
+                        particleCount: 100,
+                        shapeSize: 16,
+                        appearDuration: 30,
+                        holdDuration: 180,
+                        wispDuration: 30,
+                        useWhiteForShape: true
+                    });
+                },
+                dryRun: (context, rune, runeIndex) => {
+                    if (context.isPotionBatch) {
+                        return { success: false, message: "An infused liquid cannot be yielded back to the Input Crucible." };
+                    }
+                    return { success: true };
+                },
+                execute: (context, rune) => {
+                    // Spawns the current processing batch into the input crucible.
+                    // This doesn't need to remove from anywhere, as the batch is an abstract concept at this point.
+                    spawnMaterialsInArea(context.stationGeometry.inputCrucible.worldPoints, context.batch);
+                    //context.end(`Materials moved to Input Crucible.`);
                 }
             },
             'filter_by': {
@@ -4680,6 +4790,28 @@
             },
             'infuse_from_retort': {
                 isTerminal: false,
+                animate: (context, rune) => {
+                    const area = context.stationGeometry.retort;
+                    const centerX = area.x + area.width / 2;
+                    const centerY = area.y + area.height / 2;
+
+                    // 1. General particle burst
+                    //spawnMagicParticles(15, centerX, centerY, [255, 220, 220], 0.8);
+
+                    // 2. Render the rune sprite using particles
+                    const runeSprite = SpriteManager.sprites.get('rune_infuse');
+                    createShapeDissolveEffect({
+                        x: centerX, y: centerY,
+                        shapeImage: runeSprite,
+                        color: [220, 255, 220],
+                        particleCount: 100,
+                        shapeSize: 16,
+                        appearDuration: 30,
+                        holdDuration: 180,
+                        wispDuration: 30,
+                        useWhiteForShape: true
+                    });
+                },
                 dryRun: (context, rune, runeIndex) => { context.isPotionBatch = true; return { success: true }; },
                 execute: (context, rune) => {
                     const sourceMaterials = getMaterialsInArea(context.stationGeometry.retort.worldPoints);
@@ -4798,7 +4930,29 @@
                 }
             },
             'yield_to_retort': {
-                isTerminal: false, // Not terminal, as it sets up the next step
+                isTerminal: true, // Not terminal, as it sets up the next step
+                animate: (context, rune) => {
+                    const area = context.stationGeometry.retort;
+                    const centerX = area.x + area.width / 2;
+                    const centerY = area.y + area.height / 2;
+
+                    // 1. General particle burst
+                    //spawnMagicParticles(15, centerX, centerY, [200, 255, 255], 0.8);
+
+                    // 2. Render the rune sprite using particles
+                    const runeSprite = SpriteManager.sprites.get('rune_yield');
+                    createShapeDissolveEffect({
+                        x: centerX, y: centerY,
+                        shapeImage: runeSprite,
+                        color: [220, 255, 220],
+                        particleCount: 100,
+                        shapeSize: 16,
+                        appearDuration: 30,
+                        holdDuration: 180,
+                        wispDuration: 30,
+                        useWhiteForShape: true
+                    });
+                },
                 dryRun: (context, rune, runeIndex) => ({ success: true }),
                 execute: (context, rune) => {
                     if (context.batch.size === 0) return;
@@ -4811,7 +4965,7 @@
                     context.batch = getMaterialsInArea(context.stationGeometry.inputCrucible.worldPoints);
                 }
             },
-            'yield_to_output': {
+            'yield_to_right_crucible': {
                 isTerminal: true,
                 animate: (context, rune) => {
                     const area = context.stationGeometry.outputCrucible;
@@ -4846,7 +5000,7 @@
                     
                     //const outputCenter = { x: context.stationGeometry.outputCrucible.x + context.stationGeometry.outputCrucible.width / 2, y: context.stationGeometry.outputCrucible.y + context.stationGeometry.outputCrucible.height / 2 };
                     //createShapeDissolveEffect({ x: outputCenter.x, y: outputCenter.y, shapeImage: SpriteManager.sprites.get('filter_shape'), color: [220, 255, 220], shapeSize: 48, particleCount: 1000 });
-                    context.end(`Recipe "${context.recipe.name}" complete.`);
+                    //context.end(`Recipe "${context.recipe.name}" complete.`);
                 }
             },
             'forma_potion': {
@@ -5011,7 +5165,11 @@
                         // Time to execute the next step
                         if (job.currentStep >= job.runes.length) {
                             job.isFinished = true;
-                            console.warn("Recipe finished without calling a terminal 'end' or 'fail' state.");
+                            // NEW: Check if the final rune was actually terminal
+                            const lastRune = job.runes[job.runes.length - 1];
+                            if (lastRune && !RUNE_LOGIC[lastRune.id]?.isTerminal) {
+                                displayMessage("Recipe Incomplete", "The recipe must end with a [Yield] or [Forma] rune.", 300);
+                            }
                             continue;
                         }
 
@@ -5023,24 +5181,25 @@
                             continue;
                         }
 
-                        // 1. Trigger the animation for this rune
                         if (logic.animate) {
                             logic.animate(job.executionContext, rune);
                         }
 
-                        // 2. Accumulate stats
                         for (const stat in job.executionContext.stats) {
                             if (rune.stats && rune.stats[stat]) {
                                 job.executionContext.stats[stat] += rune.stats[stat];
                             }
                         }
 
-                        // 3. Execute the rune's logic
                         logic.execute(job.executionContext, rune);
                         
-                        // 4. Advance to the next step and reset the timer
                         job.currentStep++;
                         job.delayTimer = this.ALCHEMY_STEP_DELAY_FRAMES;
+
+                        // --- THIS IS THE FIX ---
+                        // The job only truly ends if the 'fail' or 'end' callbacks are triggered.
+                        // A terminal rune's 'execute' logic is now responsible for calling one of these.
+                        // This allows a recipe to have multiple terminal runes for multi-stage processing.
                     }
                 }
             }
@@ -5816,8 +5975,8 @@
             runeInventory: {
                 // This is the player's RUNE REPERTOIRE (knowledge base)
                 knownRunes: new Set([
-                    'from_input_crucible',
-                    'yield_to_output',
+                    'from_left_crucible',
+                    'yield_to_right_crucible',
                     'yield_to_retort',
                     'combine',
                     'forma_potion',
@@ -5839,7 +5998,19 @@
                 // Learned, specific versions of attunable runes
                 known_filters: new Set([MAT.SAND]),
 
-                collectedRunes: [],
+                collectedRunes: [
+                    { id: 'from_left_crucible', stats: { instability: 0, potency: 0, duration: 0, hazard: 0 }, color: 'colorless' },
+                    { id: 'from_right_crucible', stats: { instability: 0, potency: 0, duration: 0, hazard: 0 }, color: 'colorless' },
+                    { id: 'filter_by', target: MAT.SAND, stats: { instability: -2, potency: 0, duration: 0, hazard: -1 }, color: 'colorless' },
+                    { id: 'transform', from: MAT.SAND, to: MAT.GLASS, stats: { instability: 1, potency: 0, duration: 0, hazard: 0 }, color: 'colorless' },
+                    { id: 'extract_essence', stats: { instability: 0, potency: 0, duration: 0, hazard: 0 }, color: 'colorless' },
+                    { id: 'combine', stats: { instability: 0, potency: 0, duration: 0, hazard: 0 }, color: 'colorless' },
+                    { id: 'infuse_from_input', stats: { instability: 0, potency: 0, duration: 0, hazard: 0 }, color: 'colorless' },
+                    { id: 'yield_to_retort', stats: { instability: 0, potency: 0, duration: 0, hazard: 0 }, color: 'colorless' },
+                    { id: 'yield_to_right_crucible', stats: { instability: 0, potency: 0, duration: 0, hazard: 0 }, color: 'colorless' },
+                    { id: 'yield_to_left_crucible', stats: { instability: 0, potency: 0, duration: 0, hazard: 0 }, color: 'colorless' },
+                    { id: 'forma_potion', stats: { instability: 0, potency: 0, duration: 0, hazard: 0 }, color: 'colorless' },
+                ],
             },
             
             grimoire: {
@@ -5847,15 +6018,8 @@
                 pages: [
                     { 
                         name: "1",
-                        maxRunes: 5,
-                        runes: [
-                        // Each rune is now an object with stats and color.
-                            { id: 'from_input_crucible', stats: { instability: 0, potency: 0, duration: 0, hazard: 0 }, color: 'colorless' },
-                            { id: 'filter_by', target: MAT.SAND, stats: { instability: -2, potency: 0, duration: 0, hazard: -1 }, color: 'colorless' },
-                            { id: 'transform', from: MAT.SAND, to: MAT.GLASS, stats: { instability: 1, potency: 0, duration: 0, hazard: 0 }, color: 'colorless' },
-                            { id: 'yield_to_output', stats: { instability: 0, potency: 0, duration: 0, hazard: 0 }, color: 'colorless' },
-                            null // Empty slot
-                        ]
+                        maxRunes: 10,
+                        runes: []
                     },
                     { 
                         name: "2",
@@ -7065,6 +7229,7 @@
                     let recipeY = contentY + 15;
                     for (let i = 0; i < player.grimoire.maxPages; i++) {
                         if (mouseY >= recipeY && mouseY < recipeY + RECIPE_ROW_HEIGHT) {
+                            // Click on page number to select it
                             if (mouseX >= contentX + 5 && mouseX < contentX + 35) {
                                 GrimoireManager.selectedRecipeIndex = i; return;
                             }
@@ -7074,9 +7239,13 @@
                                 for (let j = 0; j < page.maxRunes; j++) {
                                     if (mouseX >= slotX && mouseX < slotX + RUNE_SLOT_SIZE) {
                                         if (GrimoireManager.heldRune) {
-                                            page.runes[j] = GrimoireManager.heldRune; GrimoireManager.heldRune = null;
-                                        } else if (page.runes[j] === null) {
-                                            // TODO: Open a general "select rune" popup here if desired
+                                            // Place held rune
+                                            page.runes[j] = GrimoireManager.heldRune; 
+                                            GrimoireManager.heldRune = null;
+                                        } else if (page.runes[j]) {
+                                            // Pick up existing rune from recipe
+                                            GrimoireManager.heldRune = page.runes[j];
+                                            page.runes[j] = null;
                                         }
                                         return;
                                     }
@@ -7087,63 +7256,57 @@
                         recipeY += RECIPE_ROW_HEIGHT;
                     }
                 }
+                // --- B. Click in Rune Repertoire Area (Bottom Grid) ---
                 else {
-                    if (GrimoireManager.heldRune) { GrimoireManager.heldRune = null; return; }
-                    const runeAreaY = contentY + recipeAreaHeight;
-
-                    // --- NEW: Check for clicks on known filters FIRST ---
-                    const FILTERS_PER_ROW = 4;
-                    const startX = contentX + contentW - 100;
-                    let filterY = runeAreaY + 40;
-                    const knownFilters = Array.from(player.runeInventory.known_filters);
-                    for (let i = 0; i < knownFilters.length; i++) {
-                        const col = i % FILTERS_PER_ROW;
-                        const row = Math.floor(i / FILTERS_PER_ROW);
-                        const filterX = startX + col * (RUNE_SLOT_SIZE + RUNE_SLOT_SPACING);
-                        filterY = runeAreaY + 40 + row * (RUNE_SLOT_SIZE + RUNE_SLOT_SPACING);
-                        if (mouseX >= filterX && mouseX < filterX + RUNE_SLOT_SIZE && mouseY >= filterY && mouseY < filterY + RUNE_SLOT_SIZE) {
-                            const matId = knownFilters[i];
-                            GrimoireManager.heldRune = { id: 'filter_by', target: matId };
-                            return;
-                        }
+                    // If we are holding a rune and click in the empty space of the repertoire, drop it.
+                    if (GrimoireManager.heldRune) {
+                        GrimoireManager.heldRune = null;
+                        return;
                     }
-
-                    // --- Check for clicks on general runes ---
-                    const categories = ['Source', 'Action', 'Control', 'Forma', 'Meta'];
-                    let runeY = runeAreaY + 20;
-                    for (const category of categories) {
-                        let runeX = contentX + 80;
-                        for (const runeId in RUNE_DEFINITIONS) {
-                            const runeDef = RUNE_DEFINITIONS[runeId];
-                            if (runeDef.category === category) {
-                                if (mouseX >= runeX && mouseX < runeX + RUNE_SLOT_SIZE && mouseY >= runeY && mouseY < runeY + RUNE_SLOT_SIZE) {
-                                    if (player.runeInventory.knownRunes.has(runeId)) {
-                                        if (runeId === 'extract_essence') {
-                                            GrimoireManager.isSelectingEssence = true;
-                                            GrimoireManager.essenceSelectionContext = { purpose: 'pick_up' };
-                                        } else {
-                                            GrimoireManager.heldRune = { id: runeId };
-                                        }
-                                    }
-                                    return;
-                                }
-                                runeX += RUNE_SLOT_SIZE + RUNE_SLOT_SPACING;
-                            }
-                        }
-                        runeY += RUNE_SLOT_SIZE + RUNE_SLOT_SPACING;
-                    }
-
-                    // --- Check for click on plus button (grid-aware position) ---
-                    const numKnownFilters = player.runeInventory.known_filters.size;
-                    const plusCol = numKnownFilters % FILTERS_PER_ROW;
-                    const plusRow = Math.floor(numKnownFilters / FILTERS_PER_ROW);
-                    const plusX = startX + plusCol * (RUNE_SLOT_SIZE + RUNE_SLOT_SPACING);
-                    const plusY = runeAreaY + 40 + plusRow * (RUNE_SLOT_SIZE + RUNE_SLOT_SPACING);
                     
-                    if (mouseX >= plusX && mouseX < plusX + RUNE_SLOT_SIZE && mouseY >= plusY && mouseY < plusY + RUNE_SLOT_SIZE) {
-                        GrimoireManager.isAwaitingAttunement = true;
-                        GrimoireManager.attunementContext = { purpose: 'new_filter' };
+                    const runeAreaY = contentY + recipeAreaHeight;
+                    const RUNES_PER_ROW = Math.floor((contentW - 20) / (RUNE_SLOT_SIZE + RUNE_SLOT_SPACING));
+                    
+                    const categoryOrder = ['Source', 'Action', 'Control', 'Forma', 'Meta'];
+                    const sortedRunes = [...player.runeInventory.collectedRunes].sort((a, b) => {
+                        const defA = RUNE_DEFINITIONS[a.id];
+                        const defB = RUNE_DEFINITIONS[b.id];
+                        const categoryIndexA = categoryOrder.indexOf(defA.category);
+                        const categoryIndexB = categoryOrder.indexOf(defB.category);
+                        if (categoryIndexA !== categoryIndexB) return categoryIndexA - categoryIndexB;
+                        return a.id.localeCompare(b.id);
+                    });
+
+                    // Iterate through the grid positions to find which rune was clicked
+                    for (let i = 0; i < sortedRunes.length; i++) {
+                        const row = Math.floor(i / RUNES_PER_ROW);
+                        const col = i % RUNES_PER_ROW;
+                        
+                        const runeX = contentX + 10 + col * (RUNE_SLOT_SIZE + RUNE_SLOT_SPACING);
+                        const runeY = runeAreaY + 20 + row * (RUNE_SLOT_SIZE + RUNE_SLOT_SPACING);
+                        
+                        if (mouseX >= runeX && mouseX < runeX + RUNE_SLOT_SIZE &&
+                            mouseY >= runeY && mouseY < runeY + RUNE_SLOT_SIZE) {
+                            
+                            const clickedRune = sortedRunes[i];
+                            
+                            // Check for special runes that require a pop-up
+                            if (clickedRune.id === 'extract_essence') {
+                                GrimoireManager.isSelectingEssence = true;
+                                GrimoireManager.essenceSelectionContext = { purpose: 'pick_up' };
+                            } else if (clickedRune.id === 'filter_by') {
+                                GrimoireManager.isAwaitingAttunement = true;
+                                GrimoireManager.attunementContext = { purpose: 'new_filter_pickup' }; // New context
+                            } else {
+                                // For simple runes, just pick them up
+                                GrimoireManager.heldRune = { ...clickedRune }; // Pick up a copy
+                            }
+                            return; // Stop after handling the click
+                        }
                     }
+                    
+                    // The old logic for general categories and filters is now removed,
+                    // as we are picking up specific instances from the `collectedRunes` grid.
                 }
             }
         });
@@ -9758,26 +9921,52 @@
             ctx.fillText("Delete", buttonX + buttonW / 2, buttonY + buttonH / 2);
         }
 
+        // --- START OF REPLACEMENT for getRuneTooltipText ---
+        /**
+         * Generates a structured tooltip object for a given rune.
+         * @param {object} rune - The full rune object.
+         * @returns {object|null} - An object with formatted details for rendering a tooltip.
+         */
         function getRuneTooltipText(rune) {
             if (!rune) return null;
             const runeDef = RUNE_DEFINITIONS[rune.id];
             if (!runeDef) return null;
-            
-            let text = runeDef.name;
+
+            let name = runeDef.name;
+            // Add specific details for variable runes
             switch (rune.id) {
                 case 'transform':
-                    if (rune.from !== undefined) text = `Transform: ${MATERIAL_NAME[rune.from]} -> ${MATERIAL_NAME[rune.to]}`;
+                    if (rune.from !== undefined) name = `Transform: ${MATERIAL_NAME[rune.from]} -> ${MATERIAL_NAME[rune.to]}`;
                     break;
                 case 'extract_essence':
-                    text = `Extract: [${rune.target ? rune.target.replace(/_/g, ' ') : 'Not Set'}]`;
+                    name = `Extract: [${rune.target ? rune.target.replace(/_/g, ' ') : 'Not Set'}]`;
                     break;
                 case 'filter_by':
-                    text = `Filter By: ${rune.target !== undefined ? MATERIAL_NAME[rune.target] : '[Not Set]'}`;
+                    name = `Filter By: ${rune.target !== undefined ? MATERIAL_NAME[rune.target] : '[Not Set]'}`;
                     break;
             }
-            return text;
-        }
+            
+            const statsText = [];
+            if (rune.stats) {
+                for (const [stat, value] of Object.entries(rune.stats)) {
+                    if (value !== 0) {
+                        const sign = value > 0 ? '+' : '';
+                        statsText.push(`${stat.charAt(0).toUpperCase() + stat.slice(1)}: ${sign}${value}`);
+                    }
+                }
+            }
 
+            return {
+                name: name,
+                color: RUNE_COLOR_NAMES[rune.color] || 'Unknown',
+                stats: statsText
+            };
+        }
+        // --- END OF REPLACEMENT ---
+
+        /**
+         * Updates the tooltip state based on the mouse position over the Grimoire UI.
+         */
         function updateGrimoireHover() {
             GrimoireManager.hoveredRune = null;
             if (!GrimoireManager.isVisible || GrimoireManager.activeTab !== 'grimoire_runes') return;
@@ -9786,10 +9975,10 @@
             const mouseY = mouse.y / scale;
 
             const boxW = 440, boxH = 260, boxX = (renderWidth - boxW) / 2, boxY = (renderHeight - boxH) / 2;
-            const contentX = boxX, contentY = boxY + 20, contentW = boxW;
+            const contentX = boxX, contentY = boxY + 20;
             const RUNE_SLOT_SIZE = 16, RUNE_SLOT_SPACING = 4;
 
-            // Check recipe area
+            // 1. Check Recipe Area (top part)
             const RECIPE_ROW_HEIGHT = RUNE_SLOT_SIZE + 6;
             let recipeY = contentY + 15;
             for (let i = 0; i < player.grimoire.maxPages; i++) {
@@ -9798,7 +9987,8 @@
                     let slotX = contentX + 40;
                     for (let j = 0; j < page.maxRunes; j++) {
                         if (mouseX >= slotX && mouseX < slotX + RUNE_SLOT_SIZE && page.runes[j]) {
-                            GrimoireManager.hoveredRune = { text: getRuneTooltipText(page.runes[j]), x: slotX, y: recipeY }; return;
+                            GrimoireManager.hoveredRune = { details: getRuneTooltipText(page.runes[j]), x: slotX, y: recipeY }; 
+                            return;
                         }
                         slotX += RUNE_SLOT_SIZE + RUNE_SLOT_SPACING;
                     }
@@ -9806,71 +9996,135 @@
                 recipeY += RECIPE_ROW_HEIGHT;
             }
             
-            // Check rune repertoire area
+            // 2. Check Rune Repertoire Area (bottom grid)
             const recipeAreaHeight = (player.grimoire.maxPages * RECIPE_ROW_HEIGHT) + 30;
             const runeAreaY = contentY + recipeAreaHeight;
-            const categories = ['Source', 'Action', 'Control', 'Forma', 'Meta'];
-            let currentY = runeAreaY + 20;
-            for (const category of categories) {
-                let currentX = contentX + 80;
-                for (const runeId in RUNE_DEFINITIONS) {
-                    const runeDef = RUNE_DEFINITIONS[runeId];
-                    if (runeDef.category === category) {
-                        if (mouseX >= currentX && mouseX < currentX + RUNE_SLOT_SIZE && mouseY >= currentY && mouseY < currentY + RUNE_SLOT_SIZE) {
-                            if (player.runeInventory.knownRunes.has(runeId)) {
-                                GrimoireManager.hoveredRune = { text: getRuneTooltipText({id: runeId}), x: currentX, y: currentY }; return;
-                            }
-                        }
-                        currentX += RUNE_SLOT_SIZE + RUNE_SLOT_SPACING;
-                    }
+            const RUNES_PER_ROW = Math.floor((boxW - 20) / (RUNE_SLOT_SIZE + RUNE_SLOT_SPACING));
+            
+            const categoryOrder = ['Source', 'Action', 'Control', 'Forma', 'Meta'];
+            const sortedRunes = [...player.runeInventory.collectedRunes].sort((a, b) => {
+                const defA = RUNE_DEFINITIONS[a.id];
+                const defB = RUNE_DEFINITIONS[b.id];
+                const categoryIndexA = categoryOrder.indexOf(defA.category);
+                const categoryIndexB = categoryOrder.indexOf(defB.category);
+                if (categoryIndexA !== categoryIndexB) {
+                    return categoryIndexA - categoryIndexB;
                 }
-                currentY += RUNE_SLOT_SIZE + RUNE_SLOT_SPACING;
-            }
+                return a.id.localeCompare(b.id);
+            });
 
-            // --- NEW: Check filter area ---
-            const FILTERS_PER_ROW = 4;
-            const startX = contentX + contentW - 100;
-            let filterY = runeAreaY + 40;
-            const knownFilters = Array.from(player.runeInventory.known_filters);
-            for (let i = 0; i < knownFilters.length; i++) {
-                const col = i % FILTERS_PER_ROW;
-                const row = Math.floor(i / FILTERS_PER_ROW);
-                const filterX = startX + col * (RUNE_SLOT_SIZE + RUNE_SLOT_SPACING);
-                filterY = runeAreaY + 40 + row * (RUNE_SLOT_SIZE + RUNE_SLOT_SPACING);
-                if (mouseX >= filterX && mouseX < filterX + RUNE_SLOT_SIZE && mouseY >= filterY && mouseY < filterY + RUNE_SLOT_SIZE) {
-                    const matId = knownFilters[i];
-                    GrimoireManager.hoveredRune = { text: getRuneTooltipText({id: 'filter_by', target: matId}), x: filterX, y: filterY };
+            for (let i = 0; i < sortedRunes.length; i++) {
+                const row = Math.floor(i / RUNES_PER_ROW);
+                const col = i % RUNES_PER_ROW;
+                
+                const runeX = contentX + 10 + col * (RUNE_SLOT_SIZE + RUNE_SLOT_SPACING);
+                const runeY = runeAreaY + 20 + row * (RUNE_SLOT_SIZE + RUNE_SLOT_SPACING);
+                
+                if (mouseX >= runeX && mouseX < runeX + RUNE_SLOT_SIZE && mouseY >= runeY && mouseY < runeY + RUNE_SLOT_SIZE) {
+                    const rune = sortedRunes[i];
+                    GrimoireManager.hoveredRune = { details: getRuneTooltipText(rune), x: runeX, y: runeY };
                     return;
                 }
             }
         }
 
+        // --- START OF REPLACEMENT for getRuneTooltipText ---
+        /**
+         * Generates a structured tooltip object for a given rune.
+         * @param {object} rune - The full rune object.
+         * @returns {object|null} - An object with formatted details for rendering a tooltip.
+         */
+        function getRuneTooltipText(rune) {
+            if (!rune) return null;
+            const runeDef = RUNE_DEFINITIONS[rune.id];
+            if (!runeDef) return null;
+
+            let name = runeDef.name;
+            // Add specific details for variable runes
+            switch (rune.id) {
+                case 'transform':
+                    if (rune.from !== undefined) name = `Transform: ${MATERIAL_NAME[rune.from]} -> ${MATERIAL_NAME[rune.to]}`;
+                    break;
+                case 'extract_essence':
+                    name = `Extract: [${rune.target ? rune.target.replace(/_/g, ' ') : 'Not Set'}]`;
+                    break;
+                case 'filter_by':
+                    name = `Filter By: ${rune.target !== undefined ? MATERIAL_NAME[rune.target] : '[Not Set]'}`;
+                    break;
+            }
+            
+            const statsText = [];
+            if (rune.stats) {
+                for (const [stat, value] of Object.entries(rune.stats)) {
+                    if (value !== 0) {
+                        const sign = value > 0 ? '+' : '';
+                        statsText.push(`${stat.charAt(0).toUpperCase() + stat.slice(1)}: ${sign}${value}`);
+                    }
+                }
+            }
+
+            return {
+                name: name,
+                color: RUNE_COLOR_NAMES[rune.color] || 'Unknown',
+                stats: statsText
+            };
+        }
+        // --- END OF REPLACEMENT ---
+
+
+        // --- START OF REPLACEMENT for renderGrimoireTooltip ---
+        /**
+         * Renders a multi-line tooltip for hovered runes.
+         */
         function renderGrimoireTooltip() {
             const hover = GrimoireManager.hoveredRune;
-            if (!hover || !hover.text) return;
+            // THE FIX IS HERE: We now check for the 'details' object instead of 'text'
+            if (!hover || !hover.details) return;
+
+            const { name, color, stats } = hover.details;
+            const lines = [name, `Color: ${color}`, ...stats];
 
             ctx.font = '8px monospace';
-            const textWidth = ctx.measureText(hover.text).width;
-            const boxW = textWidth + 8;
-            const boxH = 14;
-            let boxX = hover.x + 8;
-            let boxY = hover.y - 16;
+            const textWidth = Math.max(...lines.map(line => ctx.measureText(line).width));
+            
+            const boxW = textWidth + 12;
+            const boxH = 8 + (lines.length * 10);
+            let boxX = hover.x + 16;
+            let boxY = hover.y - (boxH / 2);
             
             // Prevent tooltip from going off-screen
             if (boxX + boxW > renderWidth) boxX = hover.x - boxW - 8;
-            if (boxY < 0) boxY = hover.y + 18;
+            if (boxY < 0) boxY = 0;
+            if (boxY + boxH > renderHeight) boxY = renderHeight - boxH;
 
-            ctx.fillStyle = 'rgba(0,0,0,0.8)';
+            ctx.fillStyle = 'rgba(10, 10, 20, 0.9)';
             ctx.fillRect(boxX, boxY, boxW, boxH);
+            ctx.strokeStyle = '#a0a0c0';
+            ctx.strokeRect(boxX, boxY, boxW, boxH);
+            
             ctx.fillStyle = 'white';
             ctx.textAlign = 'left';
-            ctx.textBaseline = 'middle';
-            ctx.fillText(hover.text, boxX + 4, boxY + boxH / 2);
+            ctx.textBaseline = 'top';
+
+            let yOffset = boxY + 5;
+            for (const line of lines) {
+                ctx.fillText(line, boxX + 6, yOffset);
+                yOffset += 10;
+            }
         }
         
-        function renderRuneWithTint(sprite, x, y, size, color) {
-            // Draw a simple empty box if the sprite or color is missing
-            if (!sprite || !color) {
+        /**
+         * Renders a rune sprite with a colored background based on its chromatic school.
+         * @param {HTMLCanvasElement} sprite - The pre-loaded rune sprite.
+         * @param {number} x - The screen X coordinate.
+         * @param {number} y - The screen Y coordinate.
+         * @param {number} size - The width and height of the rune slot.
+         * @param {string} runeColorName - The name of the rune's color (e.g., 'ruby', 'colorless').
+         */
+        function renderRuneWithTint(sprite, x, y, size, runeColorName) {
+            const color = RUNE_COLORS[runeColorName] || RUNE_COLORS.colorless;
+
+            if (!sprite) {
                 ctx.strokeStyle = '#4a5568';
                 ctx.strokeRect(x, y, size, size);
                 return;
@@ -9881,13 +10135,13 @@
             ctx.fillRect(x, y, size, size);
 
             // 2. Draw the rune sprite directly on top.
-            // (The SpriteManager already made the black part transparent, so only the white part draws).
             ctx.drawImage(sprite, x, y, size, size);
 
             // 3. Draw the border on top of everything.
             ctx.strokeStyle = 'rgba(255,255,255,0.2)';
             ctx.strokeRect(x, y, size, size);
         }
+        // --- END OF REPLACEMENT ---
 
         function renderGrimoire() {
             if (!GrimoireManager.isVisible) return;
@@ -10088,63 +10342,131 @@
             ctx.restore(); // Restore state, automatically resetting alpha
         }
 
+        // --- START OF REPLACEMENT for renderGrimoireAndRunesTab ---
+        /**
+         * Renders the entire Grimoire & Runes tab, including recipes, stat totals, and the rune repertoire.
+         */
         function renderGrimoireAndRunesTab(x, y, w, h) {
             const RUNE_SLOT_SIZE = 16, RUNE_SLOT_SPACING = 4;
             const RECIPE_ROW_HEIGHT = RUNE_SLOT_SIZE + 6;
             const recipeAreaHeight = (player.grimoire.maxPages * RECIPE_ROW_HEIGHT) + 30;
+
+            // --- Render Grimoire (Top Section) ---
             ctx.fillStyle = '#a0a0c0'; ctx.font = 'bold 10px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
             ctx.fillText("GRIMOIRE", x + 10, y + 5);
+
             let recipeY = y + 15;
             for (let i = 0; i < player.grimoire.maxPages; i++) {
                 const isSelected = GrimoireManager.selectedRecipeIndex === i;
                 ctx.fillStyle = isSelected ? '#ffd966' : 'white';
                 ctx.font = 'bold 12px monospace'; ctx.fillText(`[${i + 1}]`, x + 15, recipeY + 8);
+                
                 const page = player.grimoire.pages[i];
                 let slotX = x + 40;
-                const maxSlots = page ? page.maxRunes : 5;
+                const maxSlots = page ? page.maxRunes : (i < 2 ? 5-i : 2); // Fallback for empty pages
+                
+                const totalStats = { instability: 0, potency: 0, duration: 0, hazard: 0 };
+
                 for (let j = 0; j < maxSlots; j++) {
                     const rune = page?.runes[j];
                     if (rune && RUNE_DEFINITIONS[rune.id]) {
                         const runeDef = RUNE_DEFINITIONS[rune.id];
                         const sprite = SpriteManager.sprites.get(runeDef.sprite);
-                        renderRuneWithTint(sprite, slotX, recipeY, RUNE_SLOT_SIZE, RUNE_CATEGORY_COLORS[runeDef.category]);
+                        renderRuneWithTint(sprite, slotX, recipeY, RUNE_SLOT_SIZE, rune.color);
+                        
+                        // Accumulate stats for the summary
+                        if(rune.stats) {
+                            for(const stat in totalStats) {
+                                totalStats[stat] += rune.stats[stat] || 0;
+                            }
+                        }
                     } else {
                         ctx.strokeStyle = '#4a5568'; ctx.strokeRect(slotX, recipeY, RUNE_SLOT_SIZE, RUNE_SLOT_SIZE);
                     }
                     slotX += RUNE_SLOT_SIZE + RUNE_SLOT_SPACING;
                 }
+
+                // --- NEW: Render Stat Totals ---
+                if (page) {
+                    ctx.font = '8px monospace';
+                    ctx.textAlign = 'left';
+                    let statX = slotX + 15;
+                    for (const [stat, value] of Object.entries(totalStats)) {
+                        if (value === 0) continue;
+                        const sign = value > 0 ? '+' : '';
+                        ctx.fillStyle = value > 0 ? '#ff6b6b' : '#81e6d9'; // Red for positive (bad), Teal for negative (good)
+                        if (stat === 'potency' || stat === 'duration') {
+                            ctx.fillStyle = value > 0 ? '#81e6d9' : '#ff6b6b'; // Good stats are inverted
+                        }
+                        ctx.fillText(`${stat.substring(0,3)}: ${sign}${value}`, statX, recipeY + 8);
+                        statX += 65;
+                    }
+                }
                 recipeY += RECIPE_ROW_HEIGHT;
             }
+
+            // --- Render Rune Repertoire (Bottom Section) ---
             ctx.strokeStyle = '#4a5568';
             ctx.beginPath(); ctx.moveTo(x + 5, y + recipeAreaHeight - 5); ctx.lineTo(x + w - 5, y + recipeAreaHeight - 5); ctx.stroke();
             const runesAreaY = y + recipeAreaHeight;
             ctx.fillStyle = '#a0a0c0'; ctx.font = 'bold 10px monospace';
             ctx.fillText("RUNE REPERTOIRE", x + 10, runesAreaY);
             renderRunesArea(x, runesAreaY, w, h - recipeAreaHeight);
-            renderFiltersArea(x, runesAreaY, w, h - recipeAreaHeight);
+            // Filters area is removed as it's now part of the main repertoire grid
         }
 
+        // --- START OF REPLACEMENT for renderRunesArea ---
+
+        /**
+         * Renders the player's collected runes in a sorted grid, drawing empty slots if the grid is not full.
+         */
         function renderRunesArea(x, y, w, h) {
             const RUNE_SLOT_SIZE = 16, RUNE_SLOT_SPACING = 4;
-            const categories = ['Source', 'Action', 'Control', 'Forma', 'Meta'];
-            let currentY = y + 20;
-            ctx.font = '10px monospace'; ctx.textAlign = 'left';
-            const undiscoveredSprite = SpriteManager.sprites.get('rune_undiscovered');
-            for (const category of categories) {
-                ctx.fillStyle = '#a0a0c0'; ctx.fillText(`${category}:`, x + 10, currentY + 8);
-                let currentX = x + 80;
-                for (const runeId in RUNE_DEFINITIONS) {
-                    const runeDef = RUNE_DEFINITIONS[runeId];
-                    if (runeDef.category === category) {
-                        const isKnown = player.runeInventory.knownRunes.has(runeId);
-                        const sprite = isKnown ? SpriteManager.sprites.get(runeDef.sprite) : undiscoveredSprite;
-                        renderRuneWithTint(sprite, currentX, currentY, RUNE_SLOT_SIZE, isKnown ? RUNE_CATEGORY_COLORS[category] : '#4a5568');
-                        currentX += RUNE_SLOT_SIZE + RUNE_SLOT_SPACING;
-                    }
+            const RUNES_PER_ROW = Math.floor((w - 20) / (RUNE_SLOT_SIZE + RUNE_SLOT_SPACING));
+            
+            // Calculate the total number of slots that can fit in the available height.
+            const availableHeight = h - 30; // Subtract padding for the header
+            const ROWS_TO_DRAW = Math.floor(availableHeight / (RUNE_SLOT_SIZE + RUNE_SLOT_SPACING));
+            const TOTAL_SLOTS_TO_DRAW = RUNES_PER_ROW * ROWS_TO_DRAW;
+
+            // --- Sorting logic remains the same ---
+            const categoryOrder = ['Source', 'Action', 'Control', 'Forma', 'Meta'];
+            const sortedRunes = [...player.runeInventory.collectedRunes].sort((a, b) => {
+                const defA = RUNE_DEFINITIONS[a.id];
+                const defB = RUNE_DEFINITIONS[b.id];
+                const categoryIndexA = categoryOrder.indexOf(defA.category);
+                const categoryIndexB = categoryOrder.indexOf(defB.category);
+                if (categoryIndexA !== categoryIndexB) {
+                    return categoryIndexA - categoryIndexB;
                 }
-                currentY += RUNE_SLOT_SIZE + RUNE_SLOT_SPACING;
+                return a.id.localeCompare(b.id);
+            });
+
+            // --- NEW: Loop through the total number of slots to draw ---
+            for (let i = 0; i < TOTAL_SLOTS_TO_DRAW; i++) {
+                const row = Math.floor(i / RUNES_PER_ROW);
+                const col = i % RUNES_PER_ROW;
+
+                const currentX = x + 10 + col * (RUNE_SLOT_SIZE + RUNE_SLOT_SPACING);
+                const currentY = y + 20 + row * (RUNE_SLOT_SIZE + RUNE_SLOT_SPACING);
+                
+                // Check if a rune exists for this slot index
+                if (i < sortedRunes.length) {
+                    // If yes, draw the rune as before
+                    const rune = sortedRunes[i];
+                    const runeDef = RUNE_DEFINITIONS[rune.id];
+                    if (runeDef) {
+                        const sprite = SpriteManager.sprites.get(runeDef.sprite);
+                        renderRuneWithTint(sprite, currentX, currentY, RUNE_SLOT_SIZE, rune.color);
+                    }
+                } else {
+                    // If no, draw an empty slot
+                    ctx.strokeStyle = '#4a5568'; // Use a darker gray for empty slots
+                    ctx.strokeRect(currentX, currentY, RUNE_SLOT_SIZE, RUNE_SLOT_SIZE);
+                }
             }
         }
+        // --- END OF REPLACEMENT ---
 
         // --- START OF REPLACEMENT ---
         function renderFiltersArea(x, y, w, h) {
