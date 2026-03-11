@@ -175,9 +175,11 @@
         const CATEGORY_SCALE = 0x0002;
         const CATEGORY_PLAYER = 0x0004;
         const CATEGORY_TEMP_SAND = 0x0008;
+        const CATEGORY_MATERIAL_CHUNK = 0x0010;
 
         const MASK_PLAYER = CATEGORY_DEFAULT | CATEGORY_SCALE | CATEGORY_TEMP_SAND;
         const MASK_SCALE = CATEGORY_DEFAULT | CATEGORY_PLAYER; // Notice: Does NOT include TEMP_SAND
+        const MASK_MATERIAL_CHUNK = CATEGORY_DEFAULT;
         const MASK_TEMP_SAND = CATEGORY_PLAYER;
 
         // --- Add this listener for SOLID splashes ---
@@ -1826,7 +1828,10 @@
 
             // Fill the body's pixels with its representative material
             body.pixels.fill(materialType);
-            body.rebuildFixtures();
+            body.rebuildFixtures({
+                filterCategoryBits: CATEGORY_MATERIAL_CHUNK,
+                filterMaskBits: MASK_MATERIAL_CHUNK
+            });
 
             // Add special properties to the user data for alchemy and interaction
             const userData = body.body.getUserData();
@@ -2901,7 +2906,7 @@
                 return false; // Could not find a spot
             }
 
-            rebuildFixtures() {
+            rebuildFixtures(filterData = {}) {
                 if (!this.body) {
                     this.needsShapeUpdate = false; // Also reset the flag to prevent repeated calls
                     return;
@@ -2922,7 +2927,7 @@
                     this.body.destroyFixture(f);
                     f = next;
                 }
-                this._createFixturesFromPixels();
+                this._createFixturesFromPixels(filterData);
                 this.needsShapeUpdate = false;
 
                 // 3. Restore the body to its original state.
@@ -2943,7 +2948,7 @@
                 return mask;
             }
 
-            _createFixturesFromPixels() {
+            _createFixturesFromPixels(filterData = {}) {
                 this.fixtureCount = 0;
                 const w = this.width;
                 const h = this.height;
@@ -2961,6 +2966,13 @@
 
                 const density = MATERIAL_DENSITY[this.materialType] || 1.0;
                 const islands = extractIslands(mask, w, h);
+
+                const fixtureDef = { 
+                    density: density, 
+                    friction: 0.6, 
+                    restitution: 0.1,
+                    ...filterData // This will add/overwrite with the new filter category and mask
+                };
 
                 for (const island of islands) {
                     const outline = marchingSquares(island, w, h);
@@ -2994,7 +3006,7 @@
                             : [pl.Vec2(ax,ay), pl.Vec2(bx,by), pl.Vec2(cx,cy)];
 
                         try {
-                            this.body.createFixture(pl.Polygon(verts), { density: density, friction: 0.6, restitution: 0.1 });
+                            this.body.createFixture(pl.Polygon(verts), fixtureDef);
                             this.fixtureCount++;
                         } catch (e) { continue; }
                     }
@@ -12640,10 +12652,10 @@
 
         function updateRigidBodies(now) {
             // THE FIX: Only run the expensive collider update logic periodically.
-            if (now - lastColliderUpdateTime > COLLIDER_UPDATE_INTERVAL) {
+            //if (now - lastColliderUpdateTime > COLLIDER_UPDATE_INTERVAL) {
                 updateWorldColliders(now);
-                lastColliderUpdateTime = now;
-            }
+            //    lastColliderUpdateTime = now;
+            //}
 
             SandForceManager.scanAndApplyForces();
 
