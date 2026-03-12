@@ -2299,6 +2299,10 @@
             LIQUIDS.add(ESSENCE_TO_MAT[key]);
         }
 
+        const GASES = new Set([MAT.STEAM, MAT.SMOKE, MAT.METHANE, MAT.METHANE_BURNING]);
+
+        const DISPLACEABLE_MATERIALS = new Set([...LIQUIDS, ...GASES]);
+
         const POWDER_SOLIDS = new Set([MAT.SAND, MAT.SOIL, MAT.GUNPOWDER, MAT.COAL, 
                                         MAT.GLASS, MAT.COPPER, MAT.SILVER, MAT.GOLD, 
                                         MAT.PLATINUM, MAT.RESIN, MAT.VOID_SALTS,
@@ -5139,32 +5143,95 @@
                 execute: (context, rune) => {
                     const vesselBody = getRigidBodyAt(context.stationGeometry.vessel.x + context.stationGeometry.vessel.width / 2, context.stationGeometry.vessel.y + context.stationGeometry.vessel.height / 2);
                     
-                    let potionId = null;
-                    if (context.batch.essences.has(ESSENCE_TO_MAT[ESSENCES.INTENSE_HEAT])) {
-                        potionId = 'ashen_skin';
+                    // 1. Get player's ingredients from the current batch
+                    const playerEssences = context.batch.essences; // This is a Map<matId, quantity>
+                    const playerEssenceIds = new Set(Array.from(playerEssences.keys()).map(matId => {
+                        for (const key in ESSENCE_TO_MAT) {
+                            if (ESSENCE_TO_MAT[key] === matId) return key;
+                        }
+                    }));
+
+                    // 2. Find a matching recipe from our definitions
+                    let matchedPotionId = null;
+                    let matchedRecipe = null;
+
+                    for (const potionId in POTION_DEFINITIONS) {
+                        const recipeIngredients = POTION_DEFINITIONS[potionId].recipe.ingredients;
+                        const requiredEssenceIds = new Set(Object.keys(recipeIngredients).filter(key => key !== 'base_liquid'));
+
+                        // Check if the set of essences used by the player exactly matches the recipe
+                        if (requiredEssenceIds.size === playerEssenceIds.size && [...requiredEssenceIds].every(id => playerEssenceIds.has(id))) {
+                            matchedPotionId = potionId;
+                            matchedRecipe = POTION_DEFINITIONS[potionId];
+                            break;
+                        }
                     }
-                    if (!potionId) return context.fail("Essences did not produce a known potion.");
 
-                    player.knownPotions.add(potionId);
+                    if (!matchedRecipe) {
+                        return context.fail("Essences did not produce a known potion.");
+                    }
+                    
+                    // 3. Calculate proportions and quality multiplier
+                    const recipeIngredients = matchedRecipe.recipe.ingredients;
+                    let totalRecipeParts = 0;
+                    for (const part in recipeIngredients) {
+                        totalRecipeParts += recipeIngredients[part];
+                    }
+                    
+                    let totalPlayerIngredients = context.batch.baseQuantity;
+                    playerEssences.forEach(quantity => totalPlayerIngredients += quantity);
+                    
+                    let totalDeviation = 0;
+
+                    for (const ingredientId in recipeIngredients) {
+                        const idealParts = recipeIngredients[ingredientId];
+                        const idealRatio = idealParts / totalRecipeParts;
+                        const idealQuantity = totalPlayerIngredients * idealRatio;
+                        
+                        let actualQuantity = 0;
+                        if (ingredientId === 'base_liquid') {
+                            actualQuantity = context.batch.baseQuantity;
+                        } else {
+                            actualQuantity = playerEssences.get(ESSENCE_TO_MAT[ingredientId]) || 0;
+                        }
+
+                        if (idealQuantity > 0) {
+                            // Calculate the percentage error for this ingredient and add it to the total
+                            totalDeviation += Math.abs(actualQuantity - idealQuantity) / idealQuantity;
+                        }
+                    }
+
+                    // Quality multiplier: 1.0 for a perfect mix, decreasing as deviation increases.
+                    // We cap the penalty at 0.2 so even a bad mix isn't completely useless.
+                    const qualityMultiplier = Math.max(0.2, 1 / (1 + totalDeviation));
+
+                    // 4. Calculate final stats based on base stats, rune stats, and quality
+                    player.knownPotions.add(matchedPotionId);
+                    
+                    const liquidMultiplier = BASE_LIQUID_MULTIPLIERS[context.batch.base] || 1.0;
+                    const potionDef = matchedRecipe;
+
+                    const finalPotency = (potionDef.baseStats.potency + (context.stats.potency / 100)) * qualityMultiplier * liquidMultiplier;
+                    const finalDuration = (potionDef.baseStats.duration + (context.stats.duration * 10)) * qualityMultiplier * liquidMultiplier;
+                    
+                    // Hazard and Instability are made worse by poor quality (higher deviation)
+                    const finalHazard = (context.stats.hazard) * (1 + totalDeviation); 
+                    const finalInstability = (context.stats.instability) * (1 + totalDeviation); 
+                    
+                    // 5. Create the final potion object in the world
                     vesselBody.isDestroyed = true; 
-                    
-                    let totalEssence = 0;
-                    for (const quantity of context.batch.essences.values()) { totalEssence += quantity; }
-                    const multiplier = BASE_LIQUID_MULTIPLIERS[context.batch.base] || 1.0;
-                    
-                    // NEW: Use accumulated stats. Let's say 1 duration point = 10 frames.
-                    const baseDuration = Math.round(totalEssence * multiplier * 60);
-                    const durationInFrames = Math.max(1, baseDuration + (context.stats.duration * 10)); // Ensure duration is at least 1.
-
-                    console.log("Final Potion Stats:", context.stats);
                     
                     const spawnX = context.stationGeometry.vessel.x + context.stationGeometry.vessel.width / 2;
                     const spawnY = context.stationGeometry.vessel.y + context.stationGeometry.vessel.height / 2;
-                    const potionDef = POTION_DEFINITIONS[potionId];
+                    
                     const finishedPotion = new RigidBody(spawnX, spawnY, 8, 12, MAT.GLASS, potionDef.name);
                     finishedPotion.pixels = new Uint8Array(OBJECT_DEFINITIONS.empty_potion.pixels);
+
+                    // Color the liquid inside the potion bottle based on its primary essence
+                    const firstEssenceId = Object.keys(recipeIngredients).find(key => key !== 'base_liquid');
+                    const liquidColorMat = ESSENCE_TO_MAT[firstEssenceId];
                     for(let y = 5; y < 10; y++) for(let x = 2; x < 6; x++) {
-                        finishedPotion.pixels[y * 8 + x] = ESSENCE_TO_MAT[ESSENCES.INTENSE_HEAT];
+                        finishedPotion.pixels[y * 8 + x] = liquidColorMat;
                     }
                     finishedPotion.rebuildFixtures();
                     
@@ -5172,16 +5239,20 @@
                     userData.isPickup = true;
                     userData.isPotion = true;
                     userData.potionData = {
-                        definitionId: potionId,
+                        definitionId: matchedPotionId,
                         charges: 1,
-                        duration: durationInFrames,
+                        potency: finalPotency,
+                        duration: Math.max(1, Math.round(finalDuration)),
+                        hazard: finalHazard,
+                        instability: finalInstability
                     };
                     rigidBodies.push(finishedPotion);
 
                     const vesselCenter = { x: spawnX, y: spawnY };
-                    createShapeDissolveEffect({ x: vesselCenter.x, y: vesselCenter.y, shapeImage: SpriteManager.sprites.get('pickup_shape'), color: [220, 180, 255], shapeSize: 48, particleCount: 1500 });
-                    context.end(`You brewed a "${potionDef.name}".`);
+                    //createShapeDissolveEffect({ x: vesselCenter.x, y: vesselCenter.y, shapeImage: SpriteManager.sprites.get('pickup_shape'), color: [220, 180, 255], shapeSize: 48, particleCount: 1500 });
+                    context.end(`You brewed a "${potionDef.name}" (Quality: ${(qualityMultiplier * 100).toFixed(0)}%).`);
                 }
+                // --- END OF REPLACEMENT: forma_potion.execute ---
             },
             // 'separate' and other runes can be added here following the same pattern
         };
@@ -6040,18 +6111,41 @@
             [MAT.OIL]: 1.1, // Example of a better base liquid
         };
 
+        // --- START OF REPLACEMENT: POTION_DEFINITIONS ---
         const POTION_DEFINITIONS = {
             'ashen_skin': {
                 name: 'Potion of Ashen Skin',
                 buffId: 'ashen_skin',
-                description: 'Grants immunity to fire and lava damage.',
+                description: 'Grants immunity to fire and lava damage for a duration.',
+                baseStats: {
+                    potency: 1, // Base potency is 1 (e.g., full immunity)
+                    duration: 600 // Base duration of 10 seconds (600 frames)
+                },
                 recipe: {
-                    base: MAT.WATER,
-                    essences: [ESSENCES.INTENSE_HEAT] // Example recipe
+                    // Defines ingredients and their ideal "parts" in the mixture
+                    ingredients: {
+                        [ESSENCES.INTENSE_HEAT]: 1, // 1 part Intense Heat
+                        'base_liquid': 1            // 1 part any base liquid
+                    }
                 }
             },
-            // Add other potions here later
+            'liquid_form': {
+                name: 'Potion of Liquid Form',
+                buffId: 'liquid_form',
+                description: 'Temporarily dissolve into a flowing liquid form. You cannot control your movement.',
+                baseStats: { potency: 80, duration: 600 }, // Potency = # of pixels, Duration = 10s
+                recipe: { ingredients: { [ESSENCES.FLUIDITY]: 1, 'base_liquid': 1 } }
+            },
+            'gaseous_form': {
+                name: 'Potion of Gaseous Form',
+                buffId: 'gaseous_form',
+                description: 'Temporarily sublimate into a rising gaseous form. You cannot control your movement.',
+                baseStats: { potency: 80, duration: 600 }, // Potency = # of pixels, Duration = 10s
+                recipe: { ingredients: { [ESSENCES.VAPOR]: 1, 'base_liquid': 1 } }
+            }
+            // Add your new potions here following the same structure!
         };
+        // --- END OF REPLACEMENT: POTION_DEFINITIONS ---
 
         let playerSpawnLocation = null;
         // --- PLAYER AND CAMERA ---
@@ -6167,6 +6261,13 @@
 
             aether: 100,
             maxAether: 100,
+            transformState: {
+                active: false,
+                material: null,
+                pixels: [], // Array of {x, y} coordinates for each player pixel
+                duration: 0,
+                maxDuration: 0,
+            },
         };
         const camera = { x: player.x - viewWidth / 2, y: player.y - viewHeight / 2 };
         const floatingArrow = {
@@ -6424,50 +6525,285 @@
             return false;
         }
 
-        function consumePotion() {
-            // Find the index of the first item in the general inventory that is a potion.
-            // We now check the properties directly on the 'item' object itself.
-            const potionIndex = player.structurePocket.findIndex(item => item.isPotion === true);
+        // in index.html
 
-            if (potionIndex === -1) {
-                // No potions found in the inventory.
-                return;
+        // --- START OF REPLACEMENT ---
+        function startPlayerTransform(buff) { // Accepts the buff object as an argument
+            if (player.transformState.active) return;
+
+            let material;
+            if (buff.id === 'liquid_form') material = MAT.WATER;
+            else if (buff.id === 'gaseous_form') material = MAT.STEAM;
+            else return;
+
+            if (player.body) {
+                world.destroyBody(player.body);
+                player.body = null;
+            }
+            player.transformState.active = true;
+            player.transformState.material = material;
+            // Duration is now managed by the buff object itself, but we can store it here for reference if needed.
+            player.transformState.pixels = [];
+
+            const numPixels = Math.floor(buff.potency); // Use potency from the buff
+            let spawnedCount = 0;
+            const startX = Math.floor(player.x);
+            const startY = Math.floor(player.y);
+
+            for (let y = 0; y < player.height && spawnedCount < numPixels; y++) {
+                for (let x = 0; x < player.width && spawnedCount < numPixels; x++) {
+                    const worldX = startX + x;
+                    const worldY = startY + y;
+                    const cellType = getGrid(worldX, worldY);
+                    
+                    if (cellType === MAT.EMPTY || DISPLACEABLE_MATERIALS.has(cellType)) {
+                        if (cellType !== MAT.EMPTY) {
+                            createSplashEffect(worldX, worldY, cellType, 2.0); 
+                        }
+                        setGrid(worldX, worldY, material, true);
+                        setAuxData(etcChunkMap, worldX, worldY, 2); 
+                        player.transformState.pixels.push({ x: worldX, y: worldY });
+                        spawnedCount++;
+                    }
+                }
             }
 
-            // Get the potion's data directly from the RigidBody object.
+            if (spawnedCount === 0) {
+                handlePlayerDeath(MAT.ROCK_WALL);
+                causeOfDeath = "being crushed during transformation";
+                player.transformState.active = false;
+            }
+        }
+        // --- END OF REPLACEMENT ---
+
+        function updateTransformedPlayer() {
+            // Find all pixels marked as belonging to the player
+            const newPixelList = [];
+            const cloudBounds = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
+
+            if (player.transformState.pixels.length > 0) {
+                // First, get the bounds of the current pixel cloud to optimize the scan
+                for (const p of player.transformState.pixels) {
+                    cloudBounds.minX = Math.min(cloudBounds.minX, p.x);
+                    cloudBounds.minY = Math.min(cloudBounds.minY, p.y);
+                    cloudBounds.maxX = Math.max(cloudBounds.maxX, p.x);
+                    cloudBounds.maxY = Math.max(cloudBounds.maxY, p.y);
+                }
+                const scanPadding = 5; // Scan a bit wider to catch fast-moving pixels
+                for (let y = cloudBounds.minY - scanPadding; y <= cloudBounds.maxY + scanPadding; y++) {
+                    for (let x = cloudBounds.minX - scanPadding; x <= cloudBounds.maxX + scanPadding; x++) {
+                        if (getAuxData(etcChunkMap, x, y) === 2) {
+                            newPixelList.push({ x, y });
+                        }
+                    }
+                }
+            }
+            
+            player.transformState.pixels = newPixelList;
+
+            // Death condition: all pixels have been destroyed
+            if (player.transformState.pixels.length === 0) {
+                handlePlayerDeath(player.transformState.material);
+                player.transformState.active = false;
+            }
+        }
+
+        // in index.html
+
+        // --- START OF NEW HELPER FUNCTION ---
+        /**
+         * Finds contiguous islands from a list of pixel coordinates.
+         * @param {Array<{x, y}>} pixels - The array of player pixels.
+         * @returns {Array<Array<{x, y}>>} - An array of islands, where each island is an array of pixels.
+         */
+        function findPixelIslands(pixels) {
+            if (pixels.length === 0) return [];
+
+            const islands = [];
+            const visited = new Set();
+            const pixelSet = new Set(pixels.map(p => `${p.x},${p.y}`));
+
+            for (const startPixel of pixels) {
+                const startKey = `${startPixel.x},${startPixel.y}`;
+                if (visited.has(startKey)) continue;
+
+                const newIsland = [];
+                const queue = [startPixel];
+                visited.add(startKey);
+
+                while (queue.length > 0) {
+                    const current = queue.shift();
+                    newIsland.push(current);
+
+                    // Check 8 neighbors
+                    for (let dy = -1; dy <= 1; dy++) {
+                        for (let dx = -1; dx <= 1; dx++) {
+                            if (dx === 0 && dy === 0) continue;
+                            const neighbor = { x: current.x + dx, y: current.y + dy };
+                            const neighborKey = `${neighbor.x},${neighbor.y}`;
+                            if (pixelSet.has(neighborKey) && !visited.has(neighborKey)) {
+                                visited.add(neighborKey);
+                                queue.push(neighbor);
+                            }
+                        }
+                    }
+                }
+                islands.push(newIsland);
+            }
+            return islands;
+        }
+        // --- END OF NEW HELPER FUNCTION ---
+        
+        // --- START OF COMPLETE REPLACEMENT ---
+        function attemptRematerialization() {
+            let bestSpawnPoint = null;
+
+            // 1. Find the largest cluster of player pixels and a valid spot to stand.
+            // (This logic is correct and remains unchanged)
+            const islands = findPixelIslands(player.transformState.pixels);
+            if (islands.length > 0) {
+                islands.sort((a, b) => b.length - a.length);
+                const mainCluster = islands[0];
+                
+                const topPixels = new Map();
+                for (const p of mainCluster) {
+                    if (!topPixels.has(p.x) || p.y < topPixels.get(p.x)) {
+                        topPixels.set(p.x, p.y);
+                    }
+                }
+
+                for (const [x, topY] of topPixels.entries()) {
+                    let floorY = -1;
+                    for (let y = topY; y < topY + player.height * 2; y++) {
+                        if (isSolidForPlayer(getGrid(x, y))) {
+                            floorY = y;
+                            break;
+                        }
+                    }
+
+                    if (floorY !== -1) {
+                        const candidateCenterY = floorY - player.height / 2;
+                        const candidateCenterX = x;
+                        
+                        if (isAreaClearForPlayer(candidateCenterX, candidateCenterY)) {
+                            bestSpawnPoint = { x: candidateCenterX, y: candidateCenterY };
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // This cleanup happens for both success and failure, ensuring no player pixels are left behind.
+            for (const p of player.transformState.pixels) {
+                if (getAuxData(etcChunkMap, p.x, p.y) === 2) {
+                    setGrid(p.x, p.y, MAT.EMPTY, true);
+                    setAuxData(etcChunkMap, p.x, p.y, 0);
+                }
+            }
+            
+            if (bestSpawnPoint) {
+                // SUCCESS!
+                const reformStartX = Math.floor(bestSpawnPoint.x - player.width / 2);
+                const reformStartY = Math.floor(bestSpawnPoint.y - player.height / 2);
+                const reformEndX = reformStartX + player.width;
+                const reformEndY = reformStartY + player.height;
+
+                // --- THIS IS THE FIX ---
+                // Carve out the space, but ONLY affect displaceable materials.
+                for (let y = reformStartY; y < reformEndY; y++) {
+                    for (let x = reformStartX; x < reformEndX; x++) {
+                        const cellType = getGrid(x, y);
+                        
+                        // Check if the material in the cell is something we're allowed to destroy.
+                        if (DISPLACEABLE_MATERIALS.has(cellType)) {
+                            createSplashEffect(x, y, cellType, 2.0);
+                            setGrid(x, y, MAT.EMPTY, true);
+                        }
+                        // If cellType is a solid (like Adamantium), we do NOTHING, leaving it intact.
+                    }
+                }
+                
+                player.x = reformStartX;
+                player.y = reformStartY;
+                createPlayerBody();
+                createShapeDissolveEffect({ x: bestSpawnPoint.x, y: bestSpawnPoint.y, shapeImage: SpriteManager.sprites.get('pickup_shape'), color: [220, 220, 255], shapeSize: 48, particleCount: 1500 });
+
+            } else {
+                // FAILURE!
+                handlePlayerDeath(MAT.ROCK_WALL);
+                causeOfDeath = "being crushed during re-materialization";
+            }
+
+            // Reset state regardless of outcome.
+            player.transformState.active = false;
+            player.transformState.pixels = [];
+            player.transformState.material = null;
+        }
+        // --- END OF COMPLETE REPLACEMENT ---
+
+        // --- START OF REPLACEMENT ---
+        function isAreaClearForPlayer(centerX, centerY) {
+            const startX = Math.floor(centerX - player.width / 2);
+            const startY = Math.floor(centerY - player.height / 2);
+            const endX = startX + player.width;
+            const endY = startY + player.height;
+            let hardObstructionCount = 0;
+            const totalPixels = player.width * player.height;
+
+            for (let y = startY; y < endY; y++) {
+                for (let x = startX; x < endX; x++) {
+                    const type = getGrid(x, y);
+                    
+                    // A pixel is only a hard obstruction if it's NOT empty and NOT displaceable.
+                    // This correctly counts walls, sand, etc., but ignores water, oil, steam, etc.
+                    if (type !== MAT.EMPTY && !DISPLACEABLE_MATERIALS.has(type)) {
+                        hardObstructionCount++;
+                    }
+                }
+            }
+            // Allow reforming if the area is at least 80% free of HARD obstructions.
+            return (hardObstructionCount / totalPixels) < 0.2;
+        }
+        // --- END OF NEW CODE: TRANSFORM LOGIC ---
+
+        // --- START OF REPLACEMENT ---
+        function consumePotion() {
+            const potionIndex = player.structurePocket.findIndex(item => item.isPotion === true);
+            if (potionIndex === -1) return;
+
             const potionObject = player.structurePocket[potionIndex];
-            const potionData = potionObject.potionData; // <<<< THE FIX IS HERE
+            const potionData = potionObject.potionData;
             const potionDef = POTION_DEFINITIONS[potionData.definitionId];
 
-            // Add the buff to the player's active list
+            // Add the buff to the player's active list.
+            // This now handles ALL potion types, including transformations.
             player.activeBuffs.push({
                 id: potionDef.buffId,
                 duration: potionData.duration,
                 maxDuration: potionData.duration,
+                potency: potionData.potency,
+                hazard: potionData.hazard
             });
 
             displayMessage("Buff Active!", `You feel the effects of ${potionDef.name}.`, 240);
             
-            // Decrement charges (for future use) and remove the item from inventory
+            // Decrement charges and remove the item from inventory.
             potionData.charges--;
             if (potionData.charges <= 0) {
-                // Remove the consumed potion from the inventory
                 player.structurePocket.splice(potionIndex, 1);
-                
-                // After using the last potion, we might want to cycle the selected tool/structure index
-                // to prevent an out-of-bounds error if it was the last item.
                 if (player.structureIndex >= player.structurePocket.length) {
                     player.structureIndex = 0;
                 }
             }
         }
+        // --- END OF REPLACEMENT ---
 
+        // --- START OF COMPLETE REPLACEMENT ---
         function updateBuffs() {
-            // Light effect for Ashen Skin
+            // Light effect for Ashen Skin (can stay at the top)
             if (player.activeBuffs.some(b => b.id === 'ashen_skin')) {
                 const playerCX = Math.floor((player.x + player.width / 2) / CHUNK_SIZE);
                 const playerCY = Math.floor((player.y + player.height / 2) / CHUNK_SIZE);
-                // Force lighting updates in a 3x3 chunk area around the player
                 for (let cy = playerCY - 1; cy <= playerCY + 1; cy++) {
                     for (let cx = playerCX - 1; cx <= playerCX + 1; cx++) {
                         lightingDirtyChunks.add(coordToKey(cx, cy));
@@ -6475,15 +6811,44 @@
                 }
             }
             
-            // Tick down duration for all buffs
+            // Apply non-transform passive effects ONLY if not transformed.
+            // if (!player.transformState.active) {
+            //     applyBuffEffects();
+            // }
+            
+            // Tick down duration for all buffs and handle transform logic.
             for (let i = player.activeBuffs.length - 1; i >= 0; i--) {
                 const buff = player.activeBuffs[i];
+
+                // --- NEW: Central Transformation Logic ---
+                if (buff.id === 'liquid_form' || buff.id === 'gaseous_form') {
+                    // Check if this is the first frame the buff is active.
+                    if (!player.transformState.active) {
+                        startPlayerTransform(buff);
+                    }
+                    
+                    // The duration ticks down with all other buffs.
+                    buff.duration--;
+
+                    // When the buff expires, attempt to re-materialize.
+                    if (buff.duration <= 0) {
+                        attemptRematerialization();
+                        player.activeBuffs.splice(i, 1); // Remove the expired transform buff.
+                    }
+
+                    // CRITICAL: While transformed, no other buffs should tick down or apply effects.
+                    return; 
+                }
+                // --- END: Central Transformation Logic ---
+
+                // Standard buff duration countdown for non-transform buffs.
                 buff.duration--;
                 if (buff.duration <= 0) {
-                    player.activeBuffs.splice(i, 1); // Remove expired buff
+                    player.activeBuffs.splice(i, 1); // Remove expired buff.
                 }
             }
         }
+        // --- END OF COMPLETE REPLACEMENT ---
 
         // --- START OF NEW CODE: ARROW FUNCTIONS ---
         function spawnFloatingArrow(worldX, worldY) {
@@ -7100,9 +7465,6 @@
             return (type === MAT.WOOD || type === MAT.GUNPOWDER || type === MAT.OIL || type === MAT.COAL || type === MAT.METHANE);
         }
 
-        
-
-        const GASES = new Set([MAT.STEAM, MAT.SMOKE, MAT.METHANE, MAT.METHANE_BURNING]);
         const FIRE_PASSABLE = new Set([
             MAT.EMPTY, 
             MAT.STEAM, 
@@ -7731,6 +8093,11 @@
         // --- END OF NEW CODE ---
         
         function updatePlayer() {
+            if (player.transformState.active) {
+                updateTransformedPlayer();
+                return; // Skip all normal player logic
+            }
+
             if (player.isSpawning || !player.body) return;
 
             updatePlayerDamage();
@@ -8280,6 +8647,24 @@
         const movedFlask = new Uint8Array(flaskWidth*flaskHeight);
 
         function updateCamera() {
+            // --- START OF NEW CODE ---
+            if (player.transformState.active && player.transformState.pixels.length > 0) {
+                let sumX = 0, sumY = 0;
+                for (const p of player.transformState.pixels) {
+                    sumX += p.x;
+                    sumY += p.y;
+                }
+                const centerX = sumX / player.transformState.pixels.length;
+                const centerY = sumY / player.transformState.pixels.length;
+                
+                const targetCamX = centerX - viewWidth / 2;
+                camera.x += (targetCamX - camera.x) * 0.1;
+                const targetCamY = centerY - viewHeight / 2;
+                camera.y += (targetCamY - camera.y) * 0.1;
+                return; // Skip normal camera logic
+            }
+            // --- END OF NEW CODE ---
+
             const targetCamX = player.x - viewWidth/2;
             camera.x += (targetCamX - camera.x) * 0.1;
             const targetCamY = player.y - viewHeight/2;
@@ -8371,63 +8756,6 @@
             else if (POWDER_SOLIDS.has(type)) updateSolid(x, y, type, idx, moved, grid, w, h, getIdx, setter);
             else if (type === MAT.COAL_BURNING) updateBurningCoal(x, y, idx, moved, grid, w, h, getIdx, setter);
             else if (type === MAT.GUNPOWDER_IGNITED) updateIgnitedGunpowder(x, y, idx, moved, grid, w, h, getIdx, setter);
-        }
-
-        // --- START: REPLACEMENT for the old updateResin function in index.html ---
-        /**
-         * Generic update logic for "sticky" solids like Resin and Gold.
-         * Checks if it should "glue" to a neighbor or fall like sand.
-         */
-        function updateStickySolid(x, y, type, idx, moved, grid, w, h, getIdx, setter) {
-            const isWorldSim = !grid;
-            if (!isWorldSim) { // Sticky materials in containers just behave like sand
-                updateSolid(x, y, type, idx, moved, grid, w, h, getIdx, setter);
-                return;
-            }
-
-            const rules = STICKY_MATERIALS[type];
-            if (!rules) { // Failsafe
-                updateSolid(x, y, type, idx, moved, grid, w, h, getIdx, setter);
-                return;
-            }
-
-            // If this pixel is already glued, do nothing.
-            if (getAuxData(etcChunkMap, x, y) > 0) {
-                return;
-            }
-
-            const DIRS_8 = [[-1,0],[1,0],[0,-1],[0,1],[-1,-1],[-1,1],[1,-1],[1,1]];
-            let minNeighborAux = Infinity;
-
-            for (const dir of DIRS_8) {
-                const nx = x + dir.x;
-                const ny = y + dir.y;
-                const nType = getGrid(nx, ny);
-
-                // Condition 1: Is it next to a valid anchor surface for this material?
-                if (rules.stickTo.has(nType)) {
-                    setAuxData(etcChunkMap, x, y, 1); // Become an anchor.
-                    return; 
-                }
-
-                // Condition 2: Is it next to an already-glued pixel of the same type?
-                if (nType === type) {
-                    const nAux = getAuxData(etcChunkMap, nx, ny);
-                    if (nAux > 0) {
-                        minNeighborAux = Math.min(minNeighborAux, nAux);
-                    }
-                }
-            }
-            
-            // If we found a valid, glued neighbor and the new bridge length is within limits...
-            if (minNeighborAux < rules.maxLength) {
-                // ...glue this pixel to it, incrementing the bridge length.
-                setAuxData(etcChunkMap, x, y, minNeighborAux + 1);
-                return;
-            }
-
-            // If no glue conditions were met, behave like normal sand.
-            updateSolid(x, y, type, idx, moved, grid, w, h, getIdx, setter);
         }
 
         function stepLiquid(x, y, moved, grid, w, h, getIdx, setter) {
@@ -8685,70 +9013,60 @@
             if (isWorldSim && getGrid(x, y) === MAT.OIL_BURNING) activateChunkAt(x, y, getGrid(x, y));
         }
 
+        // --- START OF COMPLETE REPLACEMENT ---
         function updateBurningMethane(x, y, type, idx, moved, grid, w, h, getIdx, setter) {
             const isWorldSim = !grid;
-            const _get = (gx, gy) => isWorldSim ? getGrid(gx, gy) : (getIdx(gx, gy) !== -1 ? grid[getIdx(gx, gy)] : MAT.ROCK_WALL);
-            const _set = (gx, gy, gtype) => {
-                if (isWorldSim) {
-                    setGrid(gx, gy, gtype, true);
-                    movedInFrame.add(coordToKey(gx, gy));
-                } else {
-                    const gidx = getIdx(gx, gy);
-                    if (gidx !== -1) { setter(gidx, gtype); moved[gidx] = 1; }
+
+            if (isWorldSim) {
+                // --- World Simulation Path (Optimized) ---
+
+                // 1. Manage Lifespan Timer
+                let timer = getAuxData(etcChunkMap, x, y);
+                timer--;
+
+                if (timer <= 0) {
+                    const newType = Math.random() < 0.2 ? MAT.SMOKE : MAT.EMPTY;
+                    setGrid(x, y, newType, true);
+                    setAuxData(etcChunkMap, x, y, 0); // Clear the aux data for this pixel
+                    return;
                 }
-            };
 
-            // 1. Manage Lifespan Timer
-            let timer = isWorldSim ? getAuxData(etcChunkMap, x, y) : 1;
-            timer--;
+                // 2. Spread fire to adjacent flammable materials
+                const DIRS_8 = [[-1,0],[1,0],[0,-1],[0,1],[-1,-1],[-1,1],[1,-1],[1,1]];
+                for (const dir of DIRS_8) {
+                    const nx = x + dir.x;
+                    const ny = y + dir.y;
+                    const neighborType = getGrid(nx, ny); // Direct call to world function
 
-            if (timer <= 0) {
-                Math.random() < 0.2 ? _set(x, y, MAT.SMOKE) : _set(x, y, MAT.EMPTY);
-                if (isWorldSim) setAuxData(etcChunkMap, x, y, 0);
-                if(!isWorldSim && idx!==-1) moved[idx] = 1;
-                return;
-            }
-
-            // --- START OF REPLACEMENT LOGIC ---
-            // 2. Spread fire to ALL adjacent flammable materials
-            const DIRS_8 = [[-1,0],[1,0],[0,-1],[0,1],[-1,-1],[-1,1],[1,-1],[1,1]];
-            for (const dir of DIRS_8) {
-                const nx = x + dir[0], ny = y + dir[1];
-                const neighborType = _get(nx, ny);
-
-                // Use the generic isFlammable check to ignite any valid neighbor
-                if (isFlammable(neighborType) && Math.random() < 0.6) {
-                    if (isWorldSim) {
-                        tryIgniteAt(nx, ny);
-                    } else {
-                         _set(nx, ny, MAT.FIRE); // Simplified ignition for inventories
+                    if (isFlammable(neighborType) && Math.random() < 0.6) {
+                        tryIgniteAt(nx, ny); // Direct call to world function
                     }
                 }
-            }
-            // --- END OF REPLACEMENT LOGIC ---
 
-            // 3. Persist the new decremented timer value
-            if (isWorldSim) {
+                // 3. Persist the new decremented timer value
                 setAuxData(etcChunkMap, x, y, timer);
-            }
 
-            // 4. If not burned out, move like a normal gas
-            updateGas(x, y, type, idx, moved, grid, w, h, getIdx, setter);
-        }
+                // 4. If not burned out, move like a normal gas by calling the main updateGas function
+                updateGas(x, y, type, idx, moved, grid, w, h, getIdx, setter);
 
-        function updateSolid(x, y, type, idx, moved, grid, w, h, getIdx, setter) {
-            const isWorldSim = !grid;
-            const _get = (gx, gy) => isWorldSim ? getGrid(gx, gy) : (getIdx(gx, gy) !== -1 ? grid[getIdx(gx, gy)] : MAT.ROCK_WALL);
-            const _set = (gx, gy, gtype) => {
-                if (isWorldSim) {
-                    setGrid(gx, gy, gtype, true);
-                    movedInFrame.add(coordToKey(gx, gy));
-                } else {
-                    const gidx = getIdx(gx, gy);
-                    if (gidx !== -1) { setter(gidx, gtype); moved[gidx] = 1; }
+            } else {
+                // --- Inventory Simulation Path (Simple & Fast) ---
+
+                // Burning Methane in an inventory just has a chance to burn out quickly.
+                if (Math.random() < 0.1) {
+                    setter(idx, MAT.EMPTY);
+                    moved[idx] = 1;
+                    return;
                 }
-            };
-            const _getAux = (gx, gy) => isWorldSim ? getAuxData(etcChunkMap, gx, gy) : 0;
+
+                // Move like a normal gas within the inventory grid
+                updateGas(x, y, type, idx, moved, grid, w, h, getIdx, setter);
+            }
+        }
+        // --- END OF COMPLETE REPLACEMENT ---
+
+        function updateSolid(x, y, type, idx, moved, grid, w, h, getIdx, setter, _get, _set, _getAux) {
+            const isWorldSim = !grid;
 
             if (isWorldSim && SOLID_METALS.has(type)) {
                 const DIRS_4 = [{x:0,y:1},{x:0,y:-1},{x:1,y:0},{x:-1,y:0}];
@@ -8758,49 +9076,38 @@
                     if (neighborType === MAT.LAVA && Math.random() < 0.1) {
                         _set(x, y, MELT_MAP[type]);
                         if(!isWorldSim && idx!==-1) moved[idx] = 1;
-                        return; // Melted, so stop other solid logic
+                        return;
                     }
                     if (MOLTEN_METALS.has(neighborType)) {
                         activateChunkAt(x, y, type);
-
-                        if (Math.random() < 0.01)
-                        {
+                        if (Math.random() < 0.01) {
                             _set(x, y, MELT_MAP[type]);
                             if(!isWorldSim && idx!==-1) moved[idx] = 1;
-                            return; // Melted, so stop other solid logic
+                            return;
                         }
                     }
                 }
             }
-
+            
             if (isWorldSim) {
-                // Check if the pixel is trying to fall into a fillable rigid body.
                 const bodyBelow = getRigidBodyAt(x, y + 1);
                 if (bodyBelow && bodyBelow.isFillable) {
-                    // Try to transfer the pixel from the world grid to the body's grid.
                     if (bodyBelow.addPixelAtWorldCoord(x, y + 1, type)) {
-                        _set(x, y, MAT.EMPTY); // Remove pixel from the world.
+                        _set(x, y, MAT.EMPTY);
                         if(!isWorldSim && idx!==-1) moved[idx] = 1;
-                        return; // Stop simulation for this pixel this frame.
+                        return;
                     }
                 }
-            }
-
-            if (isWorldSim) { // This logic only applies to the main world simulation
                 const destY = y + 1;
-                // Quick check: is the destination pixel marked as being part of a rigid body?
                 if (getAuxData(etcChunkMap, x, destY) === 1) {
-                    // Slower check: find the specific body and its definition
                     const body = getRigidBodyAt(x, destY);
                     if (body) {
                         const def = OBJECT_DEFINITIONS[body.body.getUserData().definitionId];
-                        // Does this body's definition allow it to contain this material type?
                         if (def && def.canContain && def.canContain.has(type)) {
-                            // Attempt to add the pixel to the body's internal grid
                             if (body.addPixel(type)) {
-                                _set(x, y, MAT.EMPTY); // Remove the pixel from the world
+                                _set(x, y, MAT.EMPTY);
                                 if (idx !== -1 && !isWorldSim) moved[idx] = 1;
-                                return; // Stop further simulation for this pixel this frame
+                                return;
                             }
                         }
                     }
@@ -8808,11 +9115,15 @@
             }
 
             if (_get(x, y + 1) === MAT.FIRE && type === MAT.COAL) { _set(x, y, MAT.COAL_BURNING); if(!isWorldSim && idx!==-1) moved[idx] = 1; return; }
+            
+            const myAux = _getAux(x, y);
+
             if (_getAux(x, y + 1) !== 1) {
                 const belowType = _get(x, y + 1);
+                const belowAux = _getAux(x, y + 1);
                 if ([MAT.EMPTY, ...GASES].includes(belowType) || isLiquid(belowType)) {
-                    _set(x, y, belowType);
-                    _set(x, y + 1, type);
+                    _set(x, y, belowType, belowAux);
+                    _set(x, y + 1, type, myAux);
                     if(!isWorldSim && idx!==-1) moved[idx] = 1;
                     return;
                 }
@@ -8821,226 +9132,277 @@
             for (let dx of [dir, -dir]) {
                 if (_getAux(x + dx, y + 1) !== 1) {
                     const diagType = _get(x + dx, y + 1);
+                    const diagAux = _getAux(x + dx, y + 1);
                     if ([MAT.EMPTY, ...GASES].includes(diagType) || isLiquid(diagType)) {
-                        _set(x, y, diagType);
-                        _set(x + dx, y + 1, type);
+                        _set(x, y, diagType, diagAux);
+                        _set(x + dx, y + 1, type, myAux);
                         if(!isWorldSim && idx!==-1) moved[idx] = 1;
                         return;
                     }
                 }
             }
         }
-        
-        // --- START: REPLACEMENT for updateLiquid in index.html ---
-        function updateLiquid(x, y, type, idx, moved, grid, w, h, getIdx, setter) {
-            const isWorldSim = !grid;
-            const _get = (gx, gy) => isWorldSim ? getGrid(gx, gy) : (getIdx(gx, gy) !== -1 ? grid[getIdx(gx, gy)] : MAT.ROCK_WALL);
-            // --- FIX: Added 'true' to setGrid to ensure chunk activation on change ---
-            const _set = (gx, gy, gtype) => {
-                if (isWorldSim) {
-                    setGrid(gx, gy, gtype, false);
-                    movedInFrame.add(coordToKey(gx, gy));
-                } else {
-                    const gidx = getIdx(gx, gy);
-                    if (gidx !== -1) { setter(gidx, gtype); moved[gidx] = 1; }
-                }
-            };
-            const _getAux = (gx, gy) => isWorldSim ? getAuxData(etcChunkMap, gx, gy) : 0;
 
-            // --- Phase 1: Reactions ---
-            if (type === MAT.WATER && _get(x, y + 1) === MAT.OBSIDIAN) {
-                let isLavaBelow = false;
-                for (let i = 1; i <= LAVA_SOLIDIFICATION_DEPTH + 1; i++) {
-                    if (_get(x, y + 1 + i) === MAT.LAVA) {
-                        isLavaBelow = true;
-                        break;
+        function updateStickySolid(x, y, type, idx, moved, grid, w, h, getIdx, setter, _get, _set, _getAux) {
+            const isWorldSim = !grid;
+            if (!isWorldSim) {
+                updateSolid(x, y, type, idx, moved, grid, w, h, getIdx, setter, _get, _set, _getAux);
+                return;
+            }
+
+            const rules = STICKY_MATERIALS[type];
+            if (!rules) {
+                updateSolid(x, y, type, idx, moved, grid, w, h, getIdx, setter, _get, _set, _getAux);
+                return;
+            }
+
+            if (getAuxData(etcChunkMap, x, y) > 0) {
+                return;
+            }
+
+            const DIRS_8 = [[-1,0],[1,0],[0,-1],[0,1],[-1,-1],[-1,1],[1,-1],[1,1]];
+            let minNeighborAux = Infinity;
+
+            for (const dir of DIRS_8) {
+                const nx = x + dir.x;
+                const ny = y + dir.y;
+                const nType = _get(nx, ny);
+
+                if (rules.stickTo.has(nType)) {
+                    setAuxData(etcChunkMap, x, y, 1);
+                    return; 
+                }
+
+                if (nType === type) {
+                    const nAux = getAuxData(etcChunkMap, nx, ny);
+                    if (nAux > 0) {
+                        minNeighborAux = Math.min(minNeighborAux, nAux);
                     }
                 }
-                if (isLavaBelow) {
-                    _set(x, y, MAT.STEAM);
-                    const depthVariation = (PerlinNoise.noise(x * 0.1, 42) * 4);
-                    const dynamicDepth = Math.max(2, LAVA_SOLIDIFICATION_DEPTH + Math.floor(depthVariation));
-                    for (let i = 1; i <= dynamicDepth; i++) {
-                        const scanY = y + 1 + i;
-                        const scannedCell = _get(x, scanY);
-                        if (scannedCell === MAT.LAVA) {
-                            _set(x, scanY, MAT.OBSIDIAN);
-                        } else if (scannedCell !== MAT.OBSIDIAN) {
+            }
+            
+            if (minNeighborAux < rules.maxLength) {
+                setAuxData(etcChunkMap, x, y, minNeighborAux + 1);
+                return;
+            }
+
+            updateSolid(x, y, type, idx, moved, grid, w, h, getIdx, setter, _get, _set, _getAux);
+        }
+        
+        function updateLiquid(x, y, type, idx, moved, grid, w, h, getIdx, setter) {
+            const isWorldSim = !grid;
+            
+            // --- Phase 1 & 2: Reactions & Behaviors ---
+            if (isWorldSim) {
+                if (type === MAT.WATER && getGrid(x, y + 1) === MAT.OBSIDIAN) {
+                    let isLavaBelow = false;
+                    for (let i = 1; i <= LAVA_SOLIDIFICATION_DEPTH + 1; i++) {
+                        if (getGrid(x, y + 1 + i) === MAT.LAVA) {
+                            isLavaBelow = true;
                             break;
                         }
                     }
-                    if(!isWorldSim && idx!==-1) moved[idx] = 1; return;
-                }
-            }
-
-            const DIRS_4 = [{x:0,y:1},{x:0,y:-1},{x:1,y:0},{x:-1,y:0}];
-            for (const dir of DIRS_4) {
-                const nx = x + dir.x, ny = y + dir.y;
-                const nType = _get(nx, ny);
-
-                // Lava <> Water Reaction
-                if (type === MAT.LAVA && nType === MAT.WATER) {
-                    _set(nx, ny, MAT.STEAM);
-                    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if (_get(nx + dx, ny + dy) === MAT.LAVA) _set(nx + dx, ny + dy, MAT.OBSIDIAN);
-                    if(!isWorldSim && idx!==-1) moved[idx] = 1; return;
-                }
-                if (type === MAT.WATER && nType === MAT.LAVA) {
-                    _set(x, y, MAT.STEAM);
-                    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if (_get(x + dx, y + dy) === MAT.LAVA) _set(x + dx, y + dy, MAT.OBSIDIAN);
-                    if(!isWorldSim && idx!==-1) moved[idx] = 1; return;
+                    if (isLavaBelow) {
+                        setGrid(x, y, MAT.STEAM);
+                        const depthVariation = (PerlinNoise.noise(x * 0.1, 42) * 4);
+                        const dynamicDepth = Math.max(2, LAVA_SOLIDIFICATION_DEPTH + Math.floor(depthVariation));
+                        for (let i = 1; i <= dynamicDepth; i++) {
+                            const scanY = y + 1 + i;
+                            const scannedCell = getGrid(x, scanY);
+                            if (scannedCell === MAT.LAVA) {
+                                setGrid(x, scanY, MAT.OBSIDIAN);
+                            } else if (scannedCell !== MAT.OBSIDIAN) {
+                                break;
+                            }
+                        }
+                        return;
+                    }
                 }
 
-                // --- FIX: Molten Metal <> Water Reaction ---
-                if (MOLTEN_METALS.has(type) && nType === MAT.WATER) {
-                    _set(x, y, SOLIDIFY_MAP[type]); // Solidify self
-                    _set(nx, ny, MAT.STEAM);       // Turn neighbor to steam
-                    if(!isWorldSim && idx!==-1) moved[idx] = 1; return;
-                }
-                if (type === MAT.WATER && MOLTEN_METALS.has(nType)) {
-                    _set(x, y, MAT.STEAM);             // Turn self to steam
-                    _set(nx, ny, SOLIDIFY_MAP[nType]); // Solidify neighbor
-                    if(!isWorldSim && idx!==-1) moved[idx] = 1; return;
-                }
-            }
-
-            // --- Phase 2: Behaviors (if no reaction occurred) ---
-            if (type === MAT.LAVA || MOLTEN_METALS.has(type)) {
+                const DIRS_4 = [{x:0,y:1},{x:0,y:-1},{x:1,y:0},{x:-1,y:0}];
                 for (const dir of DIRS_4) {
                     const nx = x + dir.x, ny = y + dir.y;
-                    const nType = _get(nx, ny);
-                    
-                    if (isWorldSim && type === MAT.LAVA && nType === MAT.OBSIDIAN) {
-                        // Ensure the chunk containing the obsidian is active for future simulation ticks.
-                        activateChunkAt(x, y, type);
-                        
-                        // Only lava can melt obsidian, and only has a small chance to do so.
-                        if (type === MAT.LAVA && Math.random() < 0.005) {
-                            _set(nx, ny, MAT.LAVA);
+                    const nType = getGrid(nx, ny);
+
+                    if (type === MAT.LAVA && nType === MAT.WATER) {
+                        setGrid(nx, ny, MAT.STEAM);
+                        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if (getGrid(nx + dx, ny + dy) === MAT.LAVA) setGrid(nx + dx, ny + dy, MAT.OBSIDIAN);
+                        return;
+                    }
+                    if (type === MAT.WATER && nType === MAT.LAVA) {
+                        setGrid(x, y, MAT.STEAM);
+                        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if (getGrid(x + dx, y + dy) === MAT.LAVA) setGrid(x + dx, y + dy, MAT.OBSIDIAN);
+                        return;
+                    }
+
+                    if (MOLTEN_METALS.has(type) && nType === MAT.WATER) {
+                        setGrid(x, y, SOLIDIFY_MAP[type]);
+                        setGrid(nx, ny, MAT.STEAM);
+                        return;
+                    }
+                    if (type === MAT.WATER && MOLTEN_METALS.has(nType)) {
+                        setGrid(x, y, MAT.STEAM);
+                        setGrid(nx, ny, SOLIDIFY_MAP[nType]);
+                        return;
+                    }
+                }
+                
+                if (type === MAT.LAVA || MOLTEN_METALS.has(type)) {
+                    for (const dir of DIRS_4) {
+                        const nx = x + dir.x, ny = y + dir.y;
+                        const nType = getGrid(nx, ny);
+                        if (type === MAT.LAVA && nType === MAT.OBSIDIAN && Math.random() < 0.005) {
+                            setGrid(nx, ny, MAT.LAVA);
+                        }
+                        tryIgniteAt(nx, ny, 0.4);
+                    }
+                }
+
+                if (type === MAT.ACID) {
+                    let consumed = false;
+                    for (const dir of DIRS_4) {
+                        const nx = x + dir.x, ny = y + dir.y;
+                        const nType = getGrid(nx, ny);
+                        const isImmune = [MAT.EMPTY,MAT.GLASS,MAT.GLASS_WALL,MAT.ADAMANTIUM,MAT.RUNE_WALL, MAT.OBSIDIAN, ...GASES].includes(nType);
+                        if (!isImmune && !isLiquid(nType) && Math.random() < 0.25) {
+                            setGrid(nx, ny, MAT.EMPTY);
+                            if (Math.random() < 0.2) { setGrid(x, y, MAT.EMPTY); consumed = true; break; }
                         }
                     }
-
-                    // All hot liquids can ignite things
-                    if (isWorldSim) tryIgniteAt(nx, ny, 0.4);
+                    if (consumed) return;
                 }
+                 if (type === MAT.OIL_BURNING) {
+                    updateBurningOil(x, y, idx, moved, grid, w, h, getIdx, setter);
+                 }
             }
+            
+            // --- Phase 3: Movement ---
+            if (isWorldSim) {
+                if (getAuxData(etcChunkMap, x, y + 1) === 1) { 
+                    tryMoveLiquidSide(x, y, type, Math.random() < 0.5 ? -1 : 1, 10, 1, idx, moved, grid, w, h, getIdx, setter);
+                    return;
+                }
+                const belowType = getGrid(x, y + 1);
+                if (belowType === MAT.FIRE) {
+                    if (type === MAT.OIL) { setGrid(x, y, MAT.OIL_BURNING, true); }
+                    else { setGrid(x, y, MAT.STEAM, true); setGrid(x, y + 1, MAT.STEAM, true); }
+                    return;
+                }
+                
+                const myAux = getAuxData(etcChunkMap, x, y);
+                const belowAux = getAuxData(etcChunkMap, x, y + 1);
 
-            if (type === MAT.ACID) {
-                let consumed = false;
-                for (const dir of DIRS_4) {
-                    const nx = x + dir.x, ny = y + dir.y;
-                    const nType = _get(nx, ny);
-                    const isImmune = [MAT.EMPTY,MAT.GLASS,MAT.GLASS_WALL,MAT.ADAMANTIUM,MAT.RUNE_WALL, MAT.OBSIDIAN, ...GASES].includes(nType);
-                    if (!isImmune && !isLiquid(nType) && Math.random() < 0.25) {
-                        _set(nx, ny, MAT.EMPTY);
-                        if (Math.random() < 0.2) { _set(x, y, MAT.EMPTY); consumed = true; break; }
+                if ([MAT.EMPTY, ...GASES].includes(belowType)) {
+                    setGrid(x, y, belowType, false); setAuxData(etcChunkMap, x, y, belowAux);
+                    setGrid(x, y + 1, type, false); setAuxData(etcChunkMap, x, y + 1, myAux);
+                    return;
+                }
+                if (LIQUID_DENSITY[type] > LIQUID_DENSITY[belowType]) {
+                    setGrid(x, y, belowType, false); setAuxData(etcChunkMap, x, y, belowAux);
+                    setGrid(x, y + 1, type, false); setAuxData(etcChunkMap, x, y + 1, myAux);
+                    return;
+                }
+            } else { // Inventory simulation
+                const belowIdx = getIdx(x, y + 1);
+                if (belowIdx !== -1) {
+                    const belowType = grid[belowIdx];
+                    if ([MAT.EMPTY, ...GASES].includes(belowType) || LIQUID_DENSITY[type] > LIQUID_DENSITY[belowType]) {
+                        setter(idx, belowType);
+                        setter(belowIdx, type);
+                        moved[idx] = 1; moved[belowIdx] = 1;
+                        return;
                     }
                 }
-                if (consumed) { if(!isWorldSim && idx!==-1) moved[idx] = 1; return; }
             }
-             if (type === MAT.OIL_BURNING) {
-                updateBurningOil(x, y, idx, moved, grid, w, h, getIdx, setter);
-             }
-
-
-            // --- Phase 3: Movement (if no reaction occurred) ---
-            if (_getAux(x, y + 1) === 1) { 
-                tryMoveLiquidSide(x, y, type, Math.random() < 0.5 ? -1 : 1, 10, 1, idx, moved, grid, w, h, getIdx, setter);
-                return;
-            }
-            const belowType = _get(x, y + 1);
-            if (belowType === MAT.FIRE) {
-                if (type === MAT.OIL) _set(x, y, MAT.OIL_BURNING);
-                else { _set(x, y, MAT.STEAM); _set(x, y + 1, MAT.STEAM); } 
-                if(!isWorldSim && idx!==-1) moved[idx] = 1;
-                return;
-            }
-            if ([MAT.EMPTY, ...GASES].includes(belowType)) { 
-                _set(x, y, belowType); _set(x, y + 1, type); if(!isWorldSim && idx!==-1) moved[idx] = 1; return;
-            }
-            if (LIQUID_DENSITY[type] > LIQUID_DENSITY[belowType]) { 
-                _set(x, y, belowType); _set(x, y + 1, type); if(!isWorldSim && idx!==-1) moved[idx] = 1; return;
-            }
+            
             tryMoveLiquidSide(x, y, type, Math.random() < 0.5 ? -1 : 1, 10, 1, idx, moved, grid, w, h, getIdx, setter);
         }
 
         function updateGas(x, y, type, idx, moved, grid, w, h, getIdx, setter) {
              const isWorldSim = !grid;
-             const _get = (gx, gy) => isWorldSim ? getGrid(gx, gy) : (getIdx(gx, gy) !== -1 ? grid[getIdx(gx, gy)] : MAT.ROCK_WALL);
-             const _set = (gx, gy, gtype) => {
-                if (isWorldSim) {
-                    setGrid(gx, gy, gtype, false);
-                    movedInFrame.add(coordToKey(gx, gy));
-                } else {
-                    const gidx = getIdx(gx, gy);
-                    if (gidx !== -1) { setter(gidx, gtype); moved[gidx] = 1; }
-                }
-            };
             
-            const aboveType = _get(x, y - 1);
+            if (isWorldSim) {
+                const aboveType = getGrid(x, y - 1);
+                const myAux = getAuxData(etcChunkMap, x, y);
+                const aboveAux = getAuxData(etcChunkMap, x, y - 1);
 
-            // --- START OF MODIFICATION: DENSITY CHECK ---
-            // If the space above is another gas, check densities
-            if (GASES.has(aboveType)) {
-                if (GAS_DENSITY[type] < GAS_DENSITY[aboveType]) {
-                    // This gas is lighter, so it should rise. Swap with the gas above.
-                    _set(x, y, aboveType);
-                    _set(x, y - 1, type);
-                    if(!isWorldSim && idx!==-1) moved[idx] = 1;
+                if (GASES.has(aboveType)) {
+                    if (GAS_DENSITY[type] < GAS_DENSITY[aboveType]) {
+                        setGrid(x, y, aboveType, false); setAuxData(etcChunkMap, x, y, aboveAux);
+                        setGrid(x, y - 1, type, false); setAuxData(etcChunkMap, x, y - 1, myAux);
+                        return;
+                    }
+                }
+                else if ([MAT.EMPTY, MAT.WATER, MAT.OIL, MAT.ACID, MAT.SAND, MAT.SOIL, MAT.GUNPOWDER].includes(aboveType)) {
+                    setGrid(x, y, aboveType, false); setAuxData(etcChunkMap, x, y, aboveAux);
+                    setGrid(x, y - 1, type, false); setAuxData(etcChunkMap, x, y - 1, myAux);
                     return;
                 }
+            } else { // Inventory simulation
+                const aboveIdx = getIdx(x, y - 1);
+                if (aboveIdx !== -1) {
+                    const aboveType = grid[aboveIdx];
+                    if (GASES.has(aboveType)) {
+                        if (GAS_DENSITY[type] < GAS_DENSITY[aboveType]) {
+                            setter(idx, aboveType);
+                            setter(aboveIdx, type);
+                            moved[idx] = 1; moved[aboveIdx] = 1;
+                            return;
+                        }
+                    } else if ([MAT.EMPTY, MAT.WATER, MAT.OIL, MAT.ACID, MAT.SAND, MAT.SOIL, MAT.GUNPOWDER].includes(aboveType)) {
+                        setter(idx, aboveType);
+                        setter(aboveIdx, type);
+                        moved[idx] = 1; moved[aboveIdx] = 1;
+                        return;
+                    }
+                }
             }
-            // Otherwise, check if it can rise into non-gas materials
-            else if ([MAT.EMPTY, MAT.WATER, MAT.OIL, MAT.ACID, MAT.SAND, MAT.SOIL, MAT.GUNPOWDER].includes(aboveType)) {
-                _set(x, y, aboveType);
-                _set(x, y - 1, type);
-                 if(!isWorldSim && idx!==-1) moved[idx] = 1;
-                return;
-            }
-            // --- END OF MODIFICATION ---
 
-            // If it can't move up, try to move sideways
             tryMoveLiquidSide(x, y, type, Math.random() < 0.5 ? -1 : 1, 4, -1, idx, moved, grid, w, h, getIdx, setter);
         }
 
         function tryMoveLiquidSide(x, y, type, dir, limit, vDir, idx, moved, grid, w, h, getIdx, setter) {
             const isWorldSim = !grid;
-            const _get = (gx, gy) => isWorldSim ? getGrid(gx, gy) : (getIdx(gx, gy) !== -1 ? grid[getIdx(gx, gy)] : MAT.ROCK_WALL);
-            const _set = (gx, gy, gtype) => {
-                if (isWorldSim) {
-                    setGrid(gx, gy, gtype);
-                    movedInFrame.add(coordToKey(gx, gy));
-                } else {
-                    const gidx = getIdx(gx, gy);
-                    if (gidx !== -1) { setter(gidx, gtype); moved[gidx] = 1; }
-                }
-            };
-            const _getAux = (gx, gy) => isWorldSim ? getAuxData(etcChunkMap, gx, gy) : 0;
             
             let targetX = x;
-            const movable = [MAT.EMPTY];
-            const allMovable = [...LIQUIDS, ...GASES, ...movable];
             for (let i = 1; i <= limit; i++) {
                 const nextX = x + (dir * i);
-                if (_getAux(nextX, y) === 1) break;
-                const content = _get(nextX, y);
-
-                if (GASES.has(type) && GASES.has(content)) {
-                    // A gas can only push a gas of equal or greater density sideways.
-                    if (GAS_DENSITY[type] < GAS_DENSITY[content]) break;
+                let content;
+                if (isWorldSim) {
+                    if (getAuxData(etcChunkMap, nextX, y) === 1) break;
+                    content = getGrid(nextX, y);
+                } else {
+                    const nextIdx = getIdx(nextX, y);
+                    if (nextIdx === -1) break;
+                    content = grid[nextIdx];
                 }
 
-                if (allMovable.includes(content) && type != content) {
+                if (GASES.has(type) && GASES.has(content)) {
+                    if (GAS_DENSITY[type] < GAS_DENSITY[content]) break;
+                }
+                
+                let canMove = LIQUIDS.has(content) || GASES.has(content) || content === MAT.EMPTY;
+                if (canMove && type !== content) {
                     targetX = nextX;
-                    const vType = _get(nextX, y + vDir);
-                    if (movable.includes(vType)) break;
+                    const vContent = isWorldSim ? getGrid(nextX, y + vDir) : grid[getIdx(nextX, y + vDir)];
+                    if (vContent === MAT.EMPTY) break;
                 } else break;
             }
 
             if (targetX !== x) {
-                const tType = _get(targetX, y);
-                _set(x, y, tType);
-                _set(targetX, y, type);
-                if(!isWorldSim && idx!==-1) moved[idx] = 1;
+                if (isWorldSim) {
+                    const myAux = getAuxData(etcChunkMap, x, y);
+                    const targetAux = getAuxData(etcChunkMap, targetX, y);
+                    const targetType = getGrid(targetX, y);
+                    setGrid(x, y, targetType, false); setAuxData(etcChunkMap, x, y, targetAux);
+                    setGrid(targetX, y, type, false); setAuxData(etcChunkMap, targetX, y, myAux);
+                } else {
+                    const targetIdx = getIdx(targetX, y);
+                    const targetType = grid[targetIdx];
+                    setter(idx, targetType);
+                    setter(targetIdx, type);
+                    moved[idx] = 1; moved[targetIdx] = 1;
+                }
                 return true;
             }
             return false;
@@ -9708,7 +10070,9 @@
                 ctx.font = 'bold 12px monospace'; ctx.fillStyle = 'white'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('E', hintX, animatedY);
             }
 
-            ctx.strokeStyle = 'rgba(255,255,255,0.2)'; ctx.lineWidth = 0.5; ctx.beginPath(); ctx.moveTo(wandScreenX, wandScreenY); ctx.lineTo(mouse.x / scale, mouse.y / scale); ctx.stroke();
+            if (!player.transformState.active) {
+                ctx.strokeStyle = 'rgba(255,255,255,0.2)'; ctx.lineWidth = 0.5; ctx.beginPath(); ctx.moveTo(wandScreenX, wandScreenY); ctx.lineTo(mouse.x / scale, mouse.y / scale); ctx.stroke();
+            }
 
             renderDamageFlash();
             renderToolbar();
@@ -9782,6 +10146,10 @@
          * @param {boolean} isDead - Flag to trigger the death fade-out effect.
          */
         function renderPlayerSprite(centerX, centerY, facingRight, frameIdx, isDead) {
+            if (player.transformState.active) {
+                return; // Do not render the player sprite while transformed
+            }
+
             const frameId = `player_frame_${(frameIdx % 2) + 1}`;
             const spriteImg = SpriteManager.sprites.get(frameId);
             if (!spriteImg) return;
@@ -9902,7 +10270,7 @@
 
             let itemRendered = false;
 
-            if (isPlayerDead) return { wandOriginX: handX, wandOriginY: handY };
+            if (isPlayerDead || player.transformState.active) return { wandOriginX: handX, wandOriginY: handY };
 
             // Try to render a tool if it's the active container
             if (activeContainer === 'tool' && player.toolPocket.length > 0) {
@@ -12652,10 +13020,10 @@
 
         function updateRigidBodies(now) {
             // THE FIX: Only run the expensive collider update logic periodically.
-            //if (now - lastColliderUpdateTime > COLLIDER_UPDATE_INTERVAL) {
+            if (now - lastColliderUpdateTime > COLLIDER_UPDATE_INTERVAL) {
                 updateWorldColliders(now);
-            //    lastColliderUpdateTime = now;
-            //}
+                lastColliderUpdateTime = now;
+            }
 
             SandForceManager.scanAndApplyForces();
 
