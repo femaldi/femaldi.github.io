@@ -9056,36 +9056,38 @@
         }
         // --- END OF COMPLETE REPLACEMENT ---
 
-        function updateSolid(x, y, type, idx, moved, grid, w, h, getIdx, setter, _get, _set, _getAux) {
+        // --- START OF COMPLETE REPLACEMENT ---
+        function updateSolid(x, y, type, idx, moved, grid, w, h, getIdx, setter) {
             const isWorldSim = !grid;
 
-            if (isWorldSim && SOLID_METALS.has(type)) {
-                const DIRS_4 = [{x:0,y:1},{x:0,y:-1},{x:1,y:0},{x:-1,y:0}];
-                for (const dir of DIRS_4) {
-                    const nx = x + dir.x, ny = y + dir.y;
-                    const neighborType = _get(nx, ny);
-                    if (neighborType === MAT.LAVA && Math.random() < 0.1) {
-                        _set(x, y, MELT_MAP[type]);
-                        if(!isWorldSim && idx!==-1) moved[idx] = 1;
-                        return;
-                    }
-                    if (MOLTEN_METALS.has(neighborType)) {
-                        activateChunkAt(x, y, type);
-                        if (Math.random() < 0.01) {
-                            _set(x, y, MELT_MAP[type]);
-                            if(!isWorldSim && idx!==-1) moved[idx] = 1;
-                            return;
+            if (isWorldSim) {
+                // --- World Simulation Path ---
+
+                // 1. Check for melting reactions.
+                if (SOLID_METALS.has(type)) {
+                    const DIRS_4 = [{x:0,y:1},{x:0,y:-1},{x:1,y:0},{x:-1,y:0}];
+                    for (const dir of DIRS_4) {
+                        const nx = x + dir.x, ny = y + dir.y;
+                        const neighborType = getGrid(nx, ny);
+                        if (neighborType === MAT.LAVA && Math.random() < 0.1) {
+                            setGrid(x, y, MELT_MAP[type], true);
+                            return; // Melted, so stop other solid logic
+                        }
+                        if (MOLTEN_METALS.has(neighborType)) {
+                            activateChunkAt(x, y, type);
+                            if (Math.random() < 0.01) {
+                                setGrid(x, y, MELT_MAP[type], true);
+                                return; // Melted, so stop other solid logic
+                            }
                         }
                     }
                 }
-            }
-            
-            if (isWorldSim) {
+
+                // 2. Check for interactions with Rigid Body containers below.
                 const bodyBelow = getRigidBodyAt(x, y + 1);
                 if (bodyBelow && bodyBelow.isFillable) {
                     if (bodyBelow.addPixelAtWorldCoord(x, y + 1, type)) {
-                        _set(x, y, MAT.EMPTY);
-                        if(!isWorldSim && idx!==-1) moved[idx] = 1;
+                        setGrid(x, y, MAT.EMPTY, true);
                         return;
                     }
                 }
@@ -9096,89 +9098,125 @@
                         const def = OBJECT_DEFINITIONS[body.body.getUserData().definitionId];
                         if (def && def.canContain && def.canContain.has(type)) {
                             if (body.addPixel(type)) {
-                                _set(x, y, MAT.EMPTY);
-                                if (idx !== -1 && !isWorldSim) moved[idx] = 1;
+                                setGrid(x, y, MAT.EMPTY, true);
                                 return;
                             }
                         }
                     }
                 }
-            }
 
-            if (_get(x, y + 1) === MAT.FIRE && type === MAT.COAL) { _set(x, y, MAT.COAL_BURNING); if(!isWorldSim && idx!==-1) moved[idx] = 1; return; }
-            
-            const myAux = _getAux(x, y);
-
-            if (_getAux(x, y + 1) !== 1) {
-                const belowType = _get(x, y + 1);
-                const belowAux = _getAux(x, y + 1);
-                if ([MAT.EMPTY, ...GASES].includes(belowType) || isLiquid(belowType)) {
-                    _set(x, y, belowType, belowAux);
-                    _set(x, y + 1, type, myAux);
-                    if(!isWorldSim && idx!==-1) moved[idx] = 1;
+                // 3. Check for ignition.
+                if (getGrid(x, y + 1) === MAT.FIRE && type === MAT.COAL) {
+                    setGrid(x, y, MAT.COAL_BURNING, true);
                     return;
                 }
-            }
-            const dir = Math.random() < 0.5 ? -1 : 1;
-            for (let dx of [dir, -dir]) {
-                if (_getAux(x + dx, y + 1) !== 1) {
-                    const diagType = _get(x + dx, y + 1);
-                    const diagAux = _getAux(x + dx, y + 1);
-                    if ([MAT.EMPTY, ...GASES].includes(diagType) || isLiquid(diagType)) {
-                        _set(x, y, diagType, diagAux);
-                        _set(x + dx, y + 1, type, myAux);
-                        if(!isWorldSim && idx!==-1) moved[idx] = 1;
+                
+                // 4. Movement Logic (Fall down or diagonally).
+                const myAux = getAuxData(etcChunkMap, x, y);
+
+                // Try to fall straight down
+                if (getAuxData(etcChunkMap, x, y + 1) !== 1) { // Check for rigid body stub
+                    const belowType = getGrid(x, y + 1);
+                    const belowAux = getAuxData(etcChunkMap, x, y + 1);
+                    if ([MAT.EMPTY, ...GASES].includes(belowType) || isLiquid(belowType)) {
+                        setGrid(x, y, belowType, true); setAuxData(etcChunkMap, x, y, belowAux);
+                        setGrid(x, y + 1, type, true); setAuxData(etcChunkMap, x, y + 1, myAux);
+                        return;
+                    }
+                }
+
+                // Try to fall diagonally
+                const dir = Math.random() < 0.5 ? -1 : 1;
+                for (let dx of [dir, -dir]) {
+                    if (getAuxData(etcChunkMap, x + dx, y + 1) !== 1) { // Check for rigid body stub
+                        const diagType = getGrid(x + dx, y + 1);
+                        const diagAux = getAuxData(etcChunkMap, x + dx, y + 1);
+                        if ([MAT.EMPTY, ...GASES].includes(diagType) || isLiquid(diagType)) {
+                            setGrid(x, y, diagType, true); setAuxData(etcChunkMap, x, y, diagAux);
+                            setGrid(x + dx, y + 1, type, true); setAuxData(etcChunkMap, x + dx, y + 1, myAux);
+                            return;
+                        }
+                    }
+                }
+            } else {
+                // --- Inventory Simulation Path (Simple & Fast) ---
+
+                // Try to fall straight down
+                const belowIdx = getIdx(x, y + 1);
+                if (belowIdx !== -1 && ([MAT.EMPTY, ...GASES].includes(grid[belowIdx]) || isLiquid(grid[belowIdx]))) {
+                    setter(idx, grid[belowIdx]);
+                    setter(belowIdx, type);
+                    moved[idx] = 1; moved[belowIdx] = 1;
+                    return;
+                }
+
+                // Try to fall diagonally
+                const dir = Math.random() < 0.5 ? -1 : 1;
+                for (let dx of [dir, -dir]) {
+                    const diagIdx = getIdx(x + dx, y + 1);
+                    if (diagIdx !== -1 && ([MAT.EMPTY, ...GASES].includes(grid[diagIdx]) || isLiquid(grid[diagIdx]))) {
+                        setter(idx, grid[diagIdx]);
+                        setter(diagIdx, type);
+                        moved[idx] = 1; moved[diagIdx] = 1;
                         return;
                     }
                 }
             }
         }
+        // --- END OF COMPLETE REPLACEMENT ---
 
-        function updateStickySolid(x, y, type, idx, moved, grid, w, h, getIdx, setter, _get, _set, _getAux) {
+        // --- START OF COMPLETE REPLACEMENT ---
+        function updateStickySolid(x, y, type, idx, moved, grid, w, h, getIdx, setter) {
             const isWorldSim = !grid;
-            if (!isWorldSim) {
-                updateSolid(x, y, type, idx, moved, grid, w, h, getIdx, setter, _get, _set, _getAux);
-                return;
-            }
 
-            const rules = STICKY_MATERIALS[type];
-            if (!rules) {
-                updateSolid(x, y, type, idx, moved, grid, w, h, getIdx, setter, _get, _set, _getAux);
-                return;
-            }
-
-            if (getAuxData(etcChunkMap, x, y) > 0) {
-                return;
-            }
-
-            const DIRS_8 = [[-1,0],[1,0],[0,-1],[0,1],[-1,-1],[-1,1],[1,-1],[1,1]];
-            let minNeighborAux = Infinity;
-
-            for (const dir of DIRS_8) {
-                const nx = x + dir.x;
-                const ny = y + dir.y;
-                const nType = _get(nx, ny);
-
-                if (rules.stickTo.has(nType)) {
-                    setAuxData(etcChunkMap, x, y, 1);
-                    return; 
+            if (isWorldSim) {
+                // Sticky logic only applies to the main world simulation.
+                const rules = STICKY_MATERIALS[type];
+                if (!rules) { // Failsafe if called on a non-sticky material
+                    updateSolid(x, y, type, idx, moved, grid, w, h, getIdx, setter);
+                    return;
                 }
 
-                if (nType === type) {
-                    const nAux = getAuxData(etcChunkMap, nx, ny);
-                    if (nAux > 0) {
-                        minNeighborAux = Math.min(minNeighborAux, nAux);
+                // If this pixel is already glued to something, it doesn't need to move.
+                if (getAuxData(etcChunkMap, x, y) > 0) {
+                    return;
+                }
+
+                const DIRS_8 = [[-1,0],[1,0],[0,-1],[0,1],[-1,-1],[-1,1],[1,-1],[1,1]];
+                let minNeighborAux = Infinity;
+
+                for (const dir of DIRS_8) {
+                    const nx = x + dir.x;
+                    const ny = y + dir.y;
+                    const nType = getGrid(nx, ny);
+
+                    // Condition 1: Is it next to a valid anchor surface?
+                    if (rules.stickTo.has(nType)) {
+                        setAuxData(etcChunkMap, x, y, 1); // Become an anchor itself.
+                        return; // Stop processing, it's now glued.
                     }
+
+                    // Condition 2: Is it next to an already-glued pixel of the same type?
+                    if (nType === type) {
+                        const nAux = getAuxData(etcChunkMap, nx, ny);
+                        if (nAux > 0) {
+                            minNeighborAux = Math.min(minNeighborAux, nAux);
+                        }
+                    }
+                }
+                
+                // If we found a valid, glued neighbor and the new bridge length is within limits...
+                if (minNeighborAux < rules.maxLength) {
+                    // ...glue this pixel to it, incrementing the bridge length.
+                    setAuxData(etcChunkMap, x, y, minNeighborAux + 1);
+                    return; // Stop processing, it's now glued.
                 }
             }
             
-            if (minNeighborAux < rules.maxLength) {
-                setAuxData(etcChunkMap, x, y, minNeighborAux + 1);
-                return;
-            }
-
-            updateSolid(x, y, type, idx, moved, grid, w, h, getIdx, setter, _get, _set, _getAux);
+            // If in inventory, or if no glue conditions were met in the world sim, behave like normal sand.
+            updateSolid(x, y, type, idx, moved, grid, w, h, getIdx, setter);
         }
+        // --- END OF COMPLETE REPLACEMENT ---
         
         function updateLiquid(x, y, type, idx, moved, grid, w, h, getIdx, setter) {
             const isWorldSim = !grid;
