@@ -6576,6 +6576,7 @@
         }
         // --- END OF REPLACEMENT ---
 
+        // --- START OF COMPLETE REPLACEMENT ---
         function updateTransformedPlayer() {
             // Find all pixels marked as belonging to the player
             const newPixelList = [];
@@ -6589,7 +6590,7 @@
                     cloudBounds.maxX = Math.max(cloudBounds.maxX, p.x);
                     cloudBounds.maxY = Math.max(cloudBounds.maxY, p.y);
                 }
-                const scanPadding = 5; // Scan a bit wider to catch fast-moving pixels
+                const scanPadding = 5;
                 for (let y = cloudBounds.minY - scanPadding; y <= cloudBounds.maxY + scanPadding; y++) {
                     for (let x = cloudBounds.minX - scanPadding; x <= cloudBounds.maxX + scanPadding; x++) {
                         if (getAuxData(etcChunkMap, x, y) === 2) {
@@ -6601,12 +6602,31 @@
             
             player.transformState.pixels = newPixelList;
 
+            // --- THIS IS THE NEW LOGIC ---
+            // If we have any pixels, update the player's logical position to their center.
+            if (player.transformState.pixels.length > 0) {
+                let sumX = 0, sumY = 0;
+                for (const p of player.transformState.pixels) {
+                    sumX += p.x;
+                    sumY += p.y;
+                }
+                const centerX = sumX / player.transformState.pixels.length;
+                const centerY = sumY / player.transformState.pixels.length;
+
+                // Update the player's main x/y coordinates.
+                // This allows systems like Fog of War to track the transformed player.
+                player.x = centerX - player.width / 2;
+                player.y = centerY - player.height / 2;
+            }
+            // --- END OF NEW LOGIC ---
+
             // Death condition: all pixels have been destroyed
-            if (player.transformState.pixels.length === 0) {
+            if (player.transformState.pixels.length === 0 && player.transformState.active) {
                 handlePlayerDeath(player.transformState.material);
-                player.transformState.active = false;
+                player.transformState.active = false; // Ensure state is reset
             }
         }
+        // --- END OF COMPLETE REPLACEMENT ---
 
         // in index.html
 
@@ -7250,7 +7270,7 @@
          * Gradually reveals the area around the player with a smooth falloff, storing the revealed state permanently.
          */
         function updateFogOfWar() {
-            if (!player.body) return;
+            //if (!player.body) return;
 
             const centerX = player.x + player.width / 2;
             const centerY = player.y + player.height / 2;
@@ -8646,31 +8666,16 @@
         const movedPouch = new Uint8Array(pouchWidth*pouchHeight);
         const movedFlask = new Uint8Array(flaskWidth*flaskHeight);
 
+        // --- START OF COMPLETE REPLACEMENT ---
         function updateCamera() {
-            // --- START OF NEW CODE ---
-            if (player.transformState.active && player.transformState.pixels.length > 0) {
-                let sumX = 0, sumY = 0;
-                for (const p of player.transformState.pixels) {
-                    sumX += p.x;
-                    sumY += p.y;
-                }
-                const centerX = sumX / player.transformState.pixels.length;
-                const centerY = sumY / player.transformState.pixels.length;
-                
-                const targetCamX = centerX - viewWidth / 2;
-                camera.x += (targetCamX - camera.x) * 0.1;
-                const targetCamY = centerY - viewHeight / 2;
-                camera.y += (targetCamY - camera.y) * 0.1;
-                return; // Skip normal camera logic
-            }
-            // --- END OF NEW CODE ---
-
-            const targetCamX = player.x - viewWidth/2;
+            // This function is now simple. It ALWAYS follows player.x and player.y,
+            // because updateTransformedPlayer now ensures those values are correct.
+            const targetCamX = player.x - viewWidth / 2;
             camera.x += (targetCamX - camera.x) * 0.1;
-            const targetCamY = player.y - viewHeight/2;
+            const targetCamY = player.y - viewHeight / 2;
             camera.y += (targetCamY - camera.y) * 0.1;
-            // No more clamping
         }
+        // --- END OF COMPLETE REPLACEMENT ---
         
         function isLiquid (type) {
             return LIQUIDS.has(type);
@@ -8788,6 +8793,7 @@
             }
         }
 
+        // --- START OF COMPLETE REPLACEMENT ---
         function updateIgnitedGunpowder(x, y, idx, moved, grid, w, h, getIdx, setter) {
             const isWorldSim = !grid;
             if (isWorldSim) {
@@ -8797,22 +8803,23 @@
                 for (let n of [{x:0,y:1},{x:0,y:-1},{x:1,y:0},{x:-1,y:0}]) {
                     const nx = x + n.x, ny = y + n.y;
                     if (Math.random() < 0.35 && getGrid(nx, ny) === MAT.GUNPOWDER) {
-                        setGrid(nx, ny, MAT.GUNPOWDER_IGNITED);
+                        setGrid(nx, ny, MAT.GUNPOWDER_IGNITED, true);
                         setAuxData(etcChunkMap, nx, ny, 8 + Math.floor(Math.random() * 6));
                     }
                 }
                 if (timer <= 0) {
-                    setGrid(x, y, MAT.EMPTY);
+                    setGrid(x, y, MAT.EMPTY, true);
                     triggerExplosion(x, y, 6);
                 }
-            } else {
-                // No timer or explosion in small grids, just burns out
+            } else { // Inventory simulation
+                // No timer or explosion in small grids, just burns out into fire
                 if (Math.random() < 0.2) {
                     setter(idx, MAT.FIRE);
                     moved[idx] = 1;
                 }
             }
         }
+        // --- END OF COMPLETE REPLACEMENT ---
 
         /**
          * Creates an explosion that affects both the static grid and dynamic rigid bodies.
@@ -8903,90 +8910,74 @@
             }
         }
         
+        // --- START OF COMPLETE REPLACEMENT ---
         function updateFire(x, y, idx, moved, grid, w, h, getIdx, setter) {
             const isWorldSim = !grid;
-            const _get = (gx, gy) => isWorldSim ? getGrid(gx, gy) : (getIdx(gx, gy) !== -1 ? grid[getIdx(gx, gy)] : MAT.ROCK_WALL);
-            const _set = (gx, gy, gtype) => {
-                if (isWorldSim) {
-                    setGrid(gx, gy, gtype);
-                    movedInFrame.add(coordToKey(gx, gy));
-                } else {
-                    const gidx = getIdx(gx, gy);
-                    if (gidx !== -1) { setter(gidx, gtype); moved[gidx] = 1; }
-                }
-            };
-
             let nearbyFuel = false;
-            for (let n of [{x:0,y:1},{x:0,y:-1},{x:1,y:0},{x:-1,y:0},{x:-1,y:-1},{x:1,y:-1},{x:-1,y:1},{x:1,y:1}]) {
-                const nx = x + n.x, ny = y + n.y;
-                const nType = _get(nx, ny);
-                if (nType === MAT.SAND && Math.random() < 0.05) _set(nx, ny, MAT.GLASS);
-                if (nType === MAT.GUNPOWDER && Math.random() < 0.5) {
-                    if (isWorldSim) { setGrid(nx, ny, MAT.GUNPOWDER_IGNITED); setAuxData(etcChunkMap, nx, ny, 8 + Math.floor(Math.random() * 6)); } 
-                    else { _set(nx, ny, MAT.FIRE); }
-                    return;
-                }
-                if (nType === MAT.OIL) { _set(nx, ny, MAT.OIL_BURNING); return; }
-                if (nType === MAT.COAL) { _set(nx, ny, MAT.COAL_BURNING); return; }
-
-                // --- START OF FIX ---
-                // Add the missing check to see if fire is next to methane.
-                if (nType === MAT.METHANE && Math.random() < 0.9) {
-                    if (isWorldSim) {
-                        tryIgniteAt(nx, ny); // This correctly sets the METHANE_BURNING state and timer
-                    } else {
-                        // Simplified ignition for non-world grids (e.g., inventory)
-                       _set(nx, ny, MAT.FIRE);
-                    }
-                    _set(x, y, MAT.SMOKE); // The fire is consumed igniting the gas
-                    return; // Stop processing this fire pixel for this frame
-                }
-                // --- END OF FIX ---
-
-                if (nType === MAT.WOOD) { nearbyFuel = true; if (Math.random() < 0.02) _set(nx, ny, MAT.FIRE); }
-                if (nType === MAT.WATER) { _set(nx, ny, MAT.STEAM); _set(x, y, MAT.STEAM); return; }
-            }
             let targetX = x, targetY = y;
-            if (!nearbyFuel && y > 0) {
-                let nextX = x, nextY = y - 1;
-                if (Math.random() < 0.5) nextX += Math.random() < 0.5 ? -1 : 1;
-                const nextType = _get(nextX, nextY);
-                if (FIRE_PASSABLE.has(nextType)) {
-                    _set(x, y, nextType);
-                    _set(nextX, nextY, MAT.FIRE);
-                    targetX = nextX; targetY = nextY;
+
+            if (isWorldSim) {
+                for (let n of [{x:0,y:1},{x:0,y:-1},{x:1,y:0},{x:-1,y:0},{x:-1,y:-1},{x:1,y:-1},{x:-1,y:1},{x:1,y:1}]) {
+                    const nx = x + n.x, ny = y + n.y;
+                    const nType = getGrid(nx, ny);
+                    if (nType === MAT.SAND && Math.random() < 0.05) setGrid(nx, ny, MAT.GLASS, true);
+                    if (nType === MAT.GUNPOWDER && Math.random() < 0.5) { setGrid(nx, ny, MAT.GUNPOWDER_IGNITED, true); setAuxData(etcChunkMap, nx, ny, 8 + Math.floor(Math.random() * 6)); return; }
+                    if (nType === MAT.OIL) { setGrid(nx, ny, MAT.OIL_BURNING, true); return; }
+                    if (nType === MAT.COAL) { setGrid(nx, ny, MAT.COAL_BURNING, true); return; }
+                    if (nType === MAT.METHANE && Math.random() < 0.9) { tryIgniteAt(nx, ny); setGrid(x, y, MAT.SMOKE, true); return; }
+                    if (nType === MAT.WOOD) { nearbyFuel = true; if (Math.random() < 0.02) setGrid(nx, ny, MAT.FIRE, true); }
+                    if (nType === MAT.WATER) { setGrid(nx, ny, MAT.STEAM, true); setGrid(x, y, MAT.STEAM, true); return; }
                 }
-            }
-            if (Math.random() < (nearbyFuel ? 0.01 : 0.15)) {
-                _set(targetX, targetY, Math.random() < 0.15 ? MAT.SMOKE : MAT.EMPTY);
+
+                if (!nearbyFuel && y > 0) {
+                    let nextX = x, nextY = y - 1;
+                    if (Math.random() < 0.5) nextX += Math.random() < 0.5 ? -1 : 1;
+                    const nextType = getGrid(nextX, nextY);
+                    if (FIRE_PASSABLE.has(nextType)) {
+                        setGrid(x, y, nextType, true);
+                        setGrid(nextX, nextY, MAT.FIRE, true);
+                        targetX = nextX; targetY = nextY;
+                    }
+                }
+                if (Math.random() < (nearbyFuel ? 0.01 : 0.15)) {
+                    setGrid(targetX, targetY, Math.random() < 0.15 ? MAT.SMOKE : MAT.EMPTY, true);
+                }
+            } else { // Inventory simulation
+                for (let n of [{x:0,y:1},{x:0,y:-1},{x:1,y:0},{x:-1,y:0}]) {
+                    const nIdx = getIdx(x + n.x, y + n.y);
+                    if (nIdx !== -1 && isFlammable(grid[nIdx])) {
+                        nearbyFuel = true;
+                        if(Math.random() < 0.05) { setter(nIdx, MAT.FIRE); moved[nIdx] = 1; }
+                    }
+                }
+                if (Math.random() < (nearbyFuel ? 0.01 : 0.25)) {
+                    setter(idx, MAT.EMPTY);
+                    moved[idx] = 1;
+                }
             }
         }
+        // --- END OF COMPLETE REPLACEMENT ---
 
+        // --- START OF COMPLETE REPLACEMENT ---
         function updateBurningCoal(x, y, idx, moved, grid, w, h, getIdx, setter) {
             const isWorldSim = !grid;
-            const _get = (gx, gy) => isWorldSim ? getGrid(gx, gy) : (getIdx(gx, gy) !== -1 ? grid[getIdx(gx, gy)] : MAT.ROCK_WALL);
-            const _set = (gx, gy, gtype) => {
-                if (isWorldSim) {
-                    setGrid(gx, gy, gtype);
-                } else {
-                    const gidx = getIdx(gx, gy);
-                    if (gidx !== -1) { setter(gidx, gtype); moved[gidx] = 1; }
+            if (isWorldSim) {
+                for (const n of [{x:0,y:1},{x:0,y:-1},{x:1,y:0},{x:-1,y:0}]) {
+                    const nx = x + n.x, ny = y + n.y;
+                    if (getGrid(nx, ny) === MAT.SAND && Math.random() < 0.08) setGrid(nx, ny, MAT.GLASS, true);
+                    tryIgniteAt(nx, ny, 0.02);
                 }
-            };
-             const _tryIgniteAt = (gx, gy, prob) => {
-                if (isWorldSim) tryIgniteAt(gx, gy, prob);
-                // No complex ignition in small grids for now
-            };
-
-            for (const n of [{x:0,y:1},{x:0,y:-1},{x:1,y:0},{x:-1,y:0}]) {
-                const nx = x + n.x, ny = y + n.y;
-                if (_get(nx, ny) === MAT.SAND && Math.random() < 0.08) _set(nx, ny, MAT.GLASS);
-                _tryIgniteAt(nx, ny, 0.02);
+                if (Math.random() < 0.02 && getGrid(x, y - 1) === MAT.EMPTY) setGrid(x, y - 1, MAT.FIRE, true);
+                if (Math.random() < 0.003) setGrid(x, y, Math.random() < 0.15 ? MAT.SMOKE : MAT.EMPTY, true);
+                activateChunkAt(x, y, getGrid(x, y)); // Keep chunk active while burning
+            } else { // Inventory simulation
+                if (Math.random() < 0.01) {
+                    setter(idx, MAT.EMPTY);
+                    moved[idx] = 1;
+                }
             }
-            if (Math.random() < 0.02 && _get(x, y - 1) === MAT.EMPTY) _set(x, y - 1, MAT.FIRE);
-            if (Math.random() < 0.003) _set(x, y, Math.random() < 0.15 ? MAT.SMOKE : MAT.EMPTY);
-            if (isWorldSim && getGrid(x, y) === MAT.COAL_BURNING) activateChunkAt(x, y, getGrid(x, y));
         }
+        // --- END OF COMPLETE REPLACEMENT ---
 
         function updateBurningOil(x, y, idx, moved, grid, w, h, getIdx, setter) {
             const isWorldSim = !grid;
