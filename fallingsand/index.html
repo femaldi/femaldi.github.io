@@ -3598,7 +3598,7 @@
             const beamHeight = 6;
             const panWidth = 6;
             const panHeight = 60;
-            const pivotOffsetY = -103;
+            const pivotOffsetY = -177;
             const bucketWidth = 40;
             const bucketHeight = 20;
             const wallThickness = 4;
@@ -5613,7 +5613,7 @@
                     name: "ForgottenShrine",
                     imagePath: 'assets/wood_puzzle.png',
                     tileType: 'horizontal',
-                    bounds: { minSectorX: -2, maxSectorX: 2, minSectorY: 1, maxSectorY: 4 },
+                    bounds: { minSectorX: -2, maxSectorX: -2, minSectorY: 4, maxSectorY: 4 },
                     parsedData: null,
                     postGenerationHook: function(piece) {
                         if (!piece.parsedData || !piece.parsedData.functionalAreas || !piece.parsedData.functionalAreas.treasureMarker) return;
@@ -5625,7 +5625,7 @@
                     name: "FloodedTunnel",
                     imagePath: 'assets/water_puzzle.png',
                     tileType: 'horizontal',
-                    bounds: { minSectorX: -2, maxSectorX: 2, minSectorY: 1, maxSectorY: 4 },
+                    bounds: { minSectorX: 2, maxSectorX: 2, minSectorY: 4, maxSectorY: 4 },
                     parsedData: null,
                     postGenerationHook: function(piece) {
                          if (!piece.parsedData || !piece.parsedData.functionalAreas || !piece.parsedData.functionalAreas.treasureMarker) return;
@@ -5637,7 +5637,7 @@
                     name: "PhysicsScale",
                     imagePath: 'assets/scale_base.png',
                     tileType: 'horizontal',
-                    bounds: { minSectorX: -2, maxSectorX: 2, minSectorY: 1, maxSectorY: 4 },
+                    bounds: { minSectorX: 0, maxSectorX: 0, minSectorY: 2, maxSectorY: 2 },
                     parsedData: null,
                     postGenerationHook: function(piece) {
                         if (!piece.parsedData) return;
@@ -5654,7 +5654,7 @@
                     name: "WaterTrap",
                     imagePath: 'assets/water_trap.png',
                     tileType: 'vertical',
-                    bounds: { minSectorX: -2, maxSectorX: 2, minSectorY: 1, maxSectorY: 4 },
+                    bounds: { minSectorX: 4, maxSectorX: 4, minSectorY: 1, maxSectorY: 1 },
                     parsedData: null,
                     postGenerationHook: function(piece) {
                         if (!piece.parsedData) return;
@@ -5736,7 +5736,7 @@
                     name: "HollowMountain",
                     imagePath: 'assets/levitation_challenge.png',
                     tileType: 'vertical',
-                    bounds: { minSectorX: -2, maxSectorX: 2, minSectorY: 1, maxSectorY: 4 },
+                    bounds: { minSectorX: -3, maxSectorX: -3, minSectorY: 1, maxSectorY: 1 },
                     parsedData: null,
                     postGenerationHook: function(piece) {
                         if (!piece.parsedData) return;
@@ -7173,10 +7173,10 @@
             player.body = world.createBody({type:'dynamic', position:pl.Vec2(player.x/B2_SCALE,player.y/B2_SCALE), fixedRotation:true, linearDamping:PLAYER_DEFAULT_DAMPING});
             player.body.setUserData(player);
             const halfWidth=(player.width/2-1)/B2_SCALE, halfHeight=(player.height/2-2)/B2_SCALE;
-            player.body.createFixture(pl.Box(halfWidth,halfHeight,pl.Vec2(0,-2/B2_SCALE),0),{density:0.05,friction:0.05, filterCategoryBits: CATEGORY_PLAYER,
+            player.body.createFixture(pl.Box(halfWidth,halfHeight,pl.Vec2(0,-2/B2_SCALE),0),{density:0.05,friction:0.5, filterCategoryBits: CATEGORY_PLAYER,
                 filterMaskBits: MASK_PLAYER});
             const footRadius=(player.width/2-1)/B2_SCALE;
-            player.body.createFixture(pl.Circle(pl.Vec2(0,(player.height/2-2)/B2_SCALE),footRadius),{friction:0.05, filterCategoryBits: CATEGORY_PLAYER,
+            player.body.createFixture(pl.Circle(pl.Vec2(0,(player.height/2-2)/B2_SCALE),footRadius),{friction:0.5, filterCategoryBits: CATEGORY_PLAYER,
                 filterMaskBits: MASK_PLAYER});
         }
 
@@ -12167,13 +12167,15 @@
             }
             Profiler.stop('UpdatePlayer');
 
-            Profiler.start('UpdateRigidBodies');
+            Profiler.start('updateRigidBodyInteractions');
             updateRigidBodyInteractions();
+            Profiler.stop('updateRigidBodyInteractions');
             // --- THIS IS THE FIX ---
             // This call advances the PlanckJS physics simulation, applying gravity and forces.
             tOtherMs2 = performance.now() - t0;
+            Profiler.start('updateRigidBodies');
             updateRigidBodies(now);
-            Profiler.stop('UpdateRigidBodies');
+            Profiler.stop('updateRigidBodies');
 
             Profiler.start('UpdateFog');
             updateFogOfWar();
@@ -13036,6 +13038,7 @@
                     if (chunk && chunk.staticBody) chunk.staticBody.setActive(false);
                 }
             }
+            Profiler.start('StaticBodiesForChunks');
             for (const key of neededChunks) {
                 const chunk = getChunk(chunkMap, key);
                 if (chunk.dirty && chunk.staticBody) {
@@ -13044,6 +13047,7 @@
                 if (!chunk.staticBody) { chunk.staticBody = generateStaticBodyForChunk(chunk); chunk.dirty = false; chunk.lastRegenTime = now; }
                 chunk.staticBody.setActive(true);
             }
+            Profiler.stop('StaticBodiesForChunks');
             activeStaticChunks = neededChunks;
         }
 
@@ -13057,7 +13061,9 @@
             SandForceManager.scanAndApplyForces();
 
             // The core physics step still runs every frame.
+            Profiler.start('WorldStep');
             world.step(1 / 60, 10, 5);
+            Profiler.stop('WorldStep');
         }
 
         // --- START OF REPLACEMENT ---
