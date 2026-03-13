@@ -3734,7 +3734,7 @@
                 rightBucket.body
             ];
 
-            SandForceManager.init(worldX, worldY, beamWidth, panHeight * 2);
+            SandForceManager.init(worldX, worldY + pivotOffsetY / 2, beamWidth, panHeight * 2);
 
             // Register the entire composite structure. The beam is the main body that gets the force.
             SandForceManager.registerTarget(beamBody, allScaleBodies);
