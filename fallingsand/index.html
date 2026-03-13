@@ -553,7 +553,7 @@
             const name = `Rune of ${runeData.id.replace(/_/g, ' ')}`;
 
             // 1. Create the base RigidBody
-            const body = new RigidBody(x, y, width, height, MAT.RUNE_WALL, name);
+            const body = new RigidBody(x, y, width, height, MAT.RUNE_WALL, name, true);
 
             // 2. Find the correct sprite and rune color
             const runeDef = RUNE_DEFINITIONS[runeData.id];
@@ -1824,7 +1824,7 @@
             const config = MINABLE_MATERIALS[materialType];
             if (!config) return;
 
-            const body = new RigidBody(x, y, config.size, config.size, materialType, config.name);
+            const body = new RigidBody(x, y, config.size, config.size, materialType, config.name, true);
 
             // Fill the body's pixels with its representative material
             body.pixels.fill(materialType);
@@ -2763,7 +2763,7 @@
         }
 
         class RigidBody {
-            constructor(x, y, width, height, material, name = 'Object') {
+            constructor(x, y, width, height, material, name = 'Object', fixedRotation = false) {
                 this.name = name;
                 this.width = width;
                 this.height = height;
@@ -2780,12 +2780,14 @@
                 this.needsShapeUpdate = false;
                 this.lastRebuildTime = 0;
                 this.isSplit = false;
+                this.fixedRotation = fixedRotation;
 
                 this.pixels.fill(this.materialType);
 
                 this.body = world.createBody({
                     type: 'dynamic',
-                    position: pl.Vec2(x / B2_SCALE, y / B2_SCALE)
+                    position: pl.Vec2(x / B2_SCALE, y / B2_SCALE),
+                    fixedRotation: fixedRotation
                 });
                 this.body.setUserData(this);
                 
@@ -2886,7 +2888,8 @@
                 this.isDestroyed = false;
                 this.body = world.createBody({
                     type: 'dynamic',
-                    position: pl.Vec2(x / B2_SCALE, y / B2_SCALE)
+                    position: pl.Vec2(x / B2_SCALE, y / B2_SCALE),
+                    fixedRotation: this.fixedRotation
                 });
                 this.body.setUserData(this);
                 
@@ -8453,7 +8456,7 @@
             } else {
                 // For structures, we already have the RigidBody object. Just re-introduce it to the world.
                 const bodyToThrow = itemRepresentation;
-                bodyToThrow.reintroduceToWorld(spawnX, spawnY);
+                bodyToThrow.reintroduceToWorld(spawnX, spawnY, bodyToThrow.fixedRotation);
                 rigidBodies.push(bodyToThrow);
                 thrownBody = bodyToThrow;
             }
