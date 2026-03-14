@@ -626,7 +626,7 @@
                         }
                     }
                 }
-                
+
                 // Assign the newly generated pixel data to the body.
                 body.spritePixels = newSpritePixels;
 
@@ -645,7 +645,10 @@
             }
 
             // 3. Finalize the body
-            body.rebuildFixtures();
+            body.rebuildFixtures({
+                filterCategoryBits: CATEGORY_MATERIAL_CHUNK,
+                filterMaskBits: MASK_MATERIAL_CHUNK
+            });
             const userData = body.body.getUserData();
             userData.isPickup = true;
             userData.isRune = true;
@@ -2892,9 +2895,23 @@
                     fixedRotation: this.fixedRotation
                 });
                 this.body.setUserData(this);
-                
-                // Use the existing method to build fixtures from its stored pixel data.
-                this.rebuildFixtures();
+
+                // let filterData = {};
+                // const userData = this.body.getUserData();
+                // if (userData.isMaterialChunk || userData.isPotion) {
+                //     // If it's a chunk or a rune, use the mask that ignores the player.
+                //     filterData = {
+                //         filterCategoryBits: CATEGORY_MATERIAL_CHUNK,
+                //         filterMaskBits: MASK_MATERIAL_CHUNK
+                //     };
+                // }
+                // (You can add more else-if blocks here for other special types in the future)
+
+                // Pass the determined filter data to the fixture builder.
+                this.rebuildFixtures({
+                    filterCategoryBits: CATEGORY_MATERIAL_CHUNK,
+                    filterMaskBits: MASK_MATERIAL_CHUNK
+                });
             }
 
             addPixel(type) {
@@ -3564,7 +3581,7 @@
                         x2: spawnSX + 9, y2: spawnSY + 19 
                     }),
                      getGenerationParams: function(sx, sy, bounds) {
-                        return { bounds: bounds }; // No layer param needed, name is enough
+                        return { layer:3, bounds: bounds };
                     }
                 },
                 {
@@ -3575,7 +3592,7 @@
                         x2: spawnSX + 9, y2: spawnSY + 24 
                     }),
                      getGenerationParams: function(sx, sy, bounds) {
-                        return { bounds: bounds }; // No layer param needed, name is enough
+                        return { layer:4, bounds: bounds };
                     }
                 }
             ],
@@ -5236,7 +5253,10 @@
                     for(let y = 5; y < 10; y++) for(let x = 2; x < 6; x++) {
                         finishedPotion.pixels[y * 8 + x] = liquidColorMat;
                     }
-                    finishedPotion.rebuildFixtures();
+                    finishedPotion.rebuildFixtures({
+                        filterCategoryBits: CATEGORY_MATERIAL_CHUNK,
+                        filterMaskBits: MASK_MATERIAL_CHUNK
+                    });
                     
                     const userData = finishedPotion.body.getUserData();
                     userData.isPickup = true;
@@ -8442,7 +8462,10 @@
                 if (toolDef) {
                     const newBody = new RigidBody(spawnX, spawnY, toolDef.width, toolDef.height, MAT.WOOD, toolDef.name);
                     newBody.pixels = new Uint8Array(toolDef.pixels);
-                    newBody.rebuildFixtures();
+                    newBody.rebuildFixtures({
+                        filterCategoryBits: CATEGORY_MATERIAL_CHUNK,
+                        filterMaskBits: MASK_MATERIAL_CHUNK
+                    });
                     const userData = newBody.body.getUserData();
                     userData.isPickup = true;
                     userData.definitionId = toolDefId;
