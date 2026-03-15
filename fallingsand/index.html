@@ -790,12 +790,16 @@
                 'task_analyze_water': {
                     text: "I have placed water in the left crucible. Your first task is to move it to the Athanor and analyze it to discover its Essence. The Alembic interface on your left will guide you. Return when you have succeeded.",
                     execute: (npc) => {
+                        console.log("task_analyze_water", npc.dialogueState);
                         // This setup runs only once when this node is first visited.
                         if (npc.dialogueState !== 'waiting_for_analysis') {
                             npc.dialogueState = 'waiting_for_analysis';
                             const stationGeo = npc.associatedData.stationGeometry;
                             if (stationGeo) {
-                                fillCauldronWithMixture(stationGeo.cauldrons.left, [MAT.WATER]);
+                                const mixtureToSpawn = new Map([
+                                    [MAT.WATER, 160]
+                                ]);
+                                spawnMaterialsInArea(stationGeo.inputCrucible.worldPoints, mixtureToSpawn);
                                 const athanor = stationGeo.athanor;
                                 spawnFloatingArrow(athanor.x + athanor.width / 2, athanor.y - 20);
                             }
@@ -1201,6 +1205,7 @@
         }
 
 
+        // --- START OF COMPLETE REPLACEMENT ---
         const DialogueManager = {
             isVisible: false,
             npcName: '',
@@ -1208,13 +1213,30 @@
             currentNode: null,
             dialogueTree: null,
 
+            // --- THIS IS THE FIX (Part 1): New internal helper function ---
+            /**
+             * Sets the current node and immediately runs its 'execute' block if it has one.
+             * This enables "node entry actions".
+             * @param {object} node The dialogue node to switch to.
+             */
+            _setCurrentNode: function(node) {
+                this.currentNode = node;
+                if (this.currentNode && this.currentNode.execute) {
+                    this.currentNode.execute(this.npc);
+                }
+            },
+
             startDialogue: function(npc, tree) {
                 if (!tree) return;
                 this.isVisible = true;
                 this.npcName = npc.name;
                 this.npc = npc;
                 this.dialogueTree = tree;
-                this.currentNode = tree[npc.dialogueState] || tree['start'];
+                
+                // --- THIS IS THE FIX (Part 2): Use the new helper function ---
+                // This ensures the very first node's execute block also runs.
+                const startNode = tree[npc.dialogueState] || tree['start'];
+                this._setCurrentNode(startNode);
             },
 
             selectOption: function(index) {
@@ -1222,10 +1244,14 @@
 
                 const option = this.currentNode.options[index];
 
+                // This part remains the same: it handles execute blocks on OPTIONS.
                 if (option.execute) {
                     option.execute(this.npc);
-                } else if (option.nextNode && this.dialogueTree[option.nextNode]) {
-                    this.currentNode = this.dialogueTree[option.nextNode];
+                } 
+                // --- THIS IS THE FIX (Part 3): Use the new helper for transitions ---
+                // This ensures the NEXT node's execute block will run upon arrival.
+                else if (option.nextNode && this.dialogueTree[option.nextNode]) {
+                    this._setCurrentNode(this.dialogueTree[option.nextNode]);
                 }
             },
 
@@ -1237,6 +1263,7 @@
                 this.dialogueTree = null;
             }
         };
+        // --- END OF COMPLETE REPLACEMENT ---
 
         // (Place this function near other world generation helpers)
         function fillCauldronWithMixture(cauldron, materials) {
@@ -1929,7 +1956,7 @@
             'empty_potion': {
                 name: 'Empty Potion',
                 type: 'structure', // It's a placeable object
-                spritePath: 'assets/magic_tablet.png', // Placeholder, you can create a real sprite later
+                //spritePath: 'assets/magic_tablet.png', // Placeholder, you can create a real sprite later
                 width: 8,
                 height: 12,
                 isVessel: true, // A new flag to identify it as a container for potions/oils etc.
