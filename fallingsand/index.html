@@ -797,18 +797,25 @@
                             const stationGeo = npc.associatedData.stationGeometry;
                             if (stationGeo) {
                                 const mixtureToSpawn = new Map([
-                                    [MAT.WATER, 160]
+                                    [MAT.WATER, 640]
                                 ]);
                                 spawnMaterialsInArea(stationGeo.inputCrucible.worldPoints, mixtureToSpawn);
                                 const athanor = stationGeo.athanor;
                                 spawnFloatingArrow(athanor.x + athanor.width / 2, athanor.y - 20);
                             }
-                            DialogueManager.closeDialogue();
+                            //DialogueManager.closeDialogue();
                         }
                     },
                     options: [
                         { text: "I will see it done.", execute: () => DialogueManager.closeDialogue() },
+                        { text: "How can I move the water from the Crucible to the Athanor?", nextNode: 'explain_gathering_and_pouring' },
                         { text: "[I have discovered Fluidity.]", condition: () => player.discoveredEssences.get(MAT.WATER)?.has(ESSENCES.FLUIDITY), nextNode: 'give_extract_rune' }
+                    ]
+                },
+                'explain_gathering_and_pouring': {
+                    text: "You have a Flask [1] and a Pouch [2]. The Flask allows you to gather liquids and gases from the world, the Pouch is for powders. You can gather materials into the corresponding container [RightClick]. You can also pour from your selected container back into the world [LeftClick]",
+                     options: [
+                        { text: "Understood.", nextNode: 'waiting_for_analysis' }
                     ]
                 },
                 'waiting_for_analysis': {
@@ -836,13 +843,13 @@
                     ]
                 },
                 'explain_extraction': {
-                    text: "Open your Grimoire. Place the water in the crucible, then create a recipe using the [Extract Essence] rune, targeting 'Fluidity'. Yield the result to the Right Crucible. You will have created Unstable Essence.",
+                    text: "Place the water in the crucible, then open your Grimoire [G] and add the [Extract Essence] rune into the existing recipe, targeting 'Fluidity'. The recipe will execute every rune in order: Grab materials from the Left Crucible, Extract Essence from the materials grabbed and Yield the resulting essence into the Right Crucible. You will have created Unstable Essence.",
                     execute: (npc) => {
                         const stationGeo = npc.associatedData.stationGeometry;
                         if(stationGeo) {
-                            spawnFloatingArrow(stationGeo.alembic_controls.x + stationGeo.alembic_controls.width / 2, stationGeo.alembic_controls.y - 20);
+                            spawnFloatingArrow(stationGeo.stationControls.x + stationGeo.stationControls.width / 2, stationGeo.stationControls.y - 20);
                         }
-                        DialogueManager.closeDialogue();
+                        //DialogueManager.closeDialogue();
                     },
                     options: [
                         { text: "I understand.", execute: () => DialogueManager.closeDialogue() },
@@ -870,6 +877,11 @@
                             if(stationGeo) {
                                 createObjectInWorld('empty_potion', stationGeo.vessel.x + stationGeo.vessel.width/2, stationGeo.vessel.y);
                                 spawnFloatingArrow(stationGeo.vessel.x + stationGeo.vessel.width/2, stationGeo.vessel.y - 20);
+
+                                const mixtureToSpawn = new Map([
+                                    [MAT.WATER, 640]
+                                ]);
+                                spawnMaterialsInArea(stationGeo.inputCrucible.worldPoints, mixtureToSpawn);
                             }
                             npc.dialogueState = 'waiting_for_potion';
                         }
@@ -879,9 +891,17 @@
                     ]
                 },
                 'explain_potion_crafting': {
-                    text: "That is a [Forma: Potion] rune. Place an empty potion on the Vessel Pedestal. Your recipe must infuse the Fluidity essence into a base liquid, then use the Forma rune. The result will be... transformative.",
+                    text: "Take this [Forma: Potion] rune, I've also placed an empty potion on the Vessel Pedestal. Your recipe must infuse the Fluidity essence into a base liquid (try water), then use the Forma rune. The result will be... transformative.",
                     options: [
                         { text: "I will attempt it.", execute: () => DialogueManager.closeDialogue() },
+                        { text: "Can you help me with the new recipe I need to use?", nextNode: 'potion_recipe_help' },
+                        { text: "[I have created the Potion of Liquid Form.]", nextNode: 'tutorial_complete' }
+                    ]
+                },
+                'potion_recipe_help': {
+                    text: "Absolutely! You must create a recipe using three runes: [From Left Crucible], [Infuse] and the newly acquired [Forma: Potion]. Remember to fill the Left Crucible with the Unstable Essence and Water (base liquid).",
+                    options: [
+                        { text: "Got it.", execute: () => DialogueManager.closeDialogue() },
                         { text: "[I have created the Potion of Liquid Form.]", nextNode: 'tutorial_complete' }
                     ]
                 },
@@ -926,7 +946,7 @@
                     options: [ { text: "I will.", nextNode: 'post_tutorial_hub' } ]
                 },
                 'explain_trade': {
-                    text: "Indeed. The deeper you delve, the rarer the metals you will find. Copper, Silver, and Gold are the currency of this mountain. Place what you would offer in the left crucible.",
+                    text: "Indeed. The deeper you delve, the rarer the metals you will find. Copper, Silver, and Gold are the currency of this mountain.",
                     options: [
                         { text: "Show me your wares.", execute: (npc) => {
                              player.activeStationGeometry = npc.associatedData.stationGeometry;
@@ -2028,60 +2048,79 @@
             { name: "10 Gold", type: 'material', cost: { [MAT.SILVER]: 100 }, data: { material: MAT.GOLD, amount: 10 } },
         ];
 
-        // --- START OF NEW CODE: TRADE LOGIC FUNCTIONS ---
-        function countMetalsInCauldron(cauldron) {
-            const counts = { [MAT.COPPER]: 0, [MAT.SILVER]: 0, [MAT.GOLD]: 0 };
-            forEachInDownwardSemicircle(cauldron, (x, y) => {
-                const type = getGrid(x, y);
-                if (counts[type] !== undefined) {
-                    counts[type]++;
+        // --- START OF NEW CODE: POUCH-BASED TRADE LOGIC ---
+        /**
+         * Counts the total number of each tradeable metal inside the player's pouch.
+         * @returns {object} An object with counts for each metal type (e.g., { [MAT.COPPER]: 120, ... }).
+         */
+        function countMetalsInPouch() {
+            const counts = { [MAT.COPPER]: 0, [MAT.SILVER]: 0, [MAT.GOLD]: 0, [MAT.PLATINUM]: 0 };
+            for (const mat of pouchGrid) {
+                if (counts[mat] !== undefined) {
+                    counts[mat]++;
                 }
-            });
+            }
             return counts;
         }
 
-        function subtractMetalsFromCauldron(cauldron, cost) {
+        /**
+         * Subtracts a specified cost of metals from the player's pouch.
+         * It removes pixels from the "top" of the pile (end of the array) first.
+         * @param {object} cost - An object defining the materials and amounts to subtract.
+         */
+        function subtractMetalsFromPouch(cost) {
             const costCopy = { ...cost };
-            // Iterate backwards to remove from the top of the pile first
-            const r = cauldron.r, cx = cauldron.cx, cy = cauldron.cy;
-            const minX = Math.floor(cx - r), maxX = Math.ceil(cx + r);
-            const minY = Math.floor(cy), maxY = Math.ceil(cy + r);
-
-            for (let y = maxY; y >= minY; y--) {
-                for (let x = minX; x <= maxX; x++) {
-                    const dx = x - cx, dy = y - cy;
-                    if (dx * dx + dy * dy > r * r) continue;
-                    
-                    const type = getGrid(x, y);
-                    if (costCopy[type] && costCopy[type] > 0) {
-                        setGrid(x, y, MAT.EMPTY);
-                        costCopy[type]--;
-                    }
+            // Iterate backwards through the pouch to remove from the "top" first.
+            for (let i = pouchGrid.length - 1; i >= 0; i--) {
+                const mat = pouchGrid[i];
+                if (costCopy[mat] && costCopy[mat] > 0) {
+                    pouchGrid[i] = MAT.EMPTY; // Remove the pixel
+                    costCopy[mat]--;          // Decrement the amount we still need to remove
                 }
             }
         }
+        // --- END OF NEW CODE ---
 
+        // --- START OF COMPLETE REPLACEMENT ---
         function purchaseItem(item) {
             const station = player.activeStationGeometry;
             if (!station) return;
 
-            const playerMetals = countMetalsInCauldron(station.cauldrons.left);
+            const playerMetals = countMetalsInPouch();
 
             // Check if player can afford it
             for (const mat in item.cost) {
                 if ((playerMetals[mat] || 0) < item.cost[mat]) {
-                    displayMessage("Transaction Failed", "You do not have enough metal in the left cauldron.", 240);
+                    displayMessage("Transaction Failed", "You do not have enough metal in your pouch.", 240);
                     return;
                 }
             }
 
-            // If affordable, subtract cost and spawn item
-            subtractMetalsFromCauldron(station.cauldrons.left, item.cost);
-            const target = station.cauldrons.right;
-            const spawnX = target.cx;
-            const spawnY = target.cy - 10; // Spawn slightly above the bottom
+            // If affordable, subtract cost from pouch
+            subtractMetalsFromPouch(item.cost);
+
+            // --- THIS IS THE NEW LOGIC ---
+            // Find the alchemist NPC to determine the spawn location for physical items.
+            const alchemist = npcs.find(npc => npc.name === 'Ylialkemisti');
+            let spawnX, spawnY;
+
+            if (alchemist) {
+                // Spawn items 32 pixels to the right of the alchemist's center.
+                spawnX = alchemist.x + 32;
+                // Spawn items vertically aligned with the alchemist's center.
+                spawnY = alchemist.y;
+            } else {
+                // Failsafe: If the NPC can't be found, spawn in the right crucible as before.
+                console.warn("Alchemist NPC not found, spawning item in crucible as fallback.");
+                const target = station.cauldrons.right;
+                spawnX = target.cx;
+                spawnY = target.cy - 10;
+            }
+            // --- END OF NEW LOGIC ---
+
 
             switch (item.type) {
+                // These item types are physical objects and will spawn next to the NPC.
                 case 'tablet':
                     createMagicTablet(spawnX, spawnY, item.data.upgradeType, item.data.reactionData);
                     break;
@@ -2091,13 +2130,17 @@
                 case 'tool':
                     createObjectInWorld(item.data.definitionId, spawnX, spawnY);
                     break;
+                
+                // This item type is loose material, which makes more sense to deliver into the crucible.
                 case 'material':
-                    fillCauldronWithMixture(target, Array(item.data.amount).fill(item.data.material));
+                    const target = station.outputCrucible;
+                    const materialsToSpawn = new Map([[item.data.material, item.data.amount]]);
+                    spawnMaterialsInArea(target.worldPoints, materialsToSpawn);
                     break;
             }
             displayMessage("Transaction Complete!", `You have purchased ${item.name}.`, 240);
         }
-        // --- END OF NEW CODE ---
+        // --- END OF COMPLETE REPLACEMENT ---
 
         // --- RUNE DEFINITIONS ---
         // A library of rune patterns. 1 represents the rune material, 0 is empty.
@@ -4967,9 +5010,6 @@
                 dryRun: (context, rune, runeIndex) => {
                     // This rune starts a new chain, so it resets the batch type.
                     context.isPotionBatch = false;
-                    if (runeIndex === 0) {
-                        return { success: false, message: "Recipe cannot start with [From Output Crucible]." };
-                    }
                     return { success: true };
                 },
                 execute: (context, rune) => {
@@ -5583,7 +5623,7 @@
 
         const GrimoireManager = {
             isVisible: false,
-            activeTab: 'compendium', // 'compendium' or 'grimoire_runes'
+            activeTab: 'grimoire_runes', // 'compendium' or 'grimoire_runes'
             
             compendiumActiveCategory: 'materials', // 'materials', 'potions', 'oils', etc.
             compendiumListScroll: 0,
@@ -6586,7 +6626,7 @@
                     } else {
                         GrimoireManager.isVisible = true;
                         // When opening, default to the most useful tab
-                        GrimoireManager.activeTab = 'compendium'; 
+                        GrimoireManager.activeTab = 'grimoire_runes'; 
                     }
                     break;
 
@@ -10268,6 +10308,8 @@
                 }
             }
 
+            renderFloatingArrow();
+
             if (player.canInteract && player.currentInteractable) {
                 const interactable = player.currentInteractable.target;
                 let hintX, hintY;
@@ -10289,13 +10331,12 @@
             if (!player.transformState.active) {
                 ctx.strokeStyle = 'rgba(255,255,255,0.2)'; ctx.lineWidth = 0.5; ctx.beginPath(); ctx.moveTo(wandScreenX, wandScreenY); ctx.lineTo(mouse.x / scale, mouse.y / scale); ctx.stroke();
             }
-
+            
             renderDamageFlash();
             renderToolbar();
             renderDialogueUI();
             renderPlayerStatsUI();
             renderTradeUI();
-            renderFloatingArrow();
             renderAlembicUI();
             renderGrimoire();
             renderBuffsUI();
@@ -12916,7 +12957,7 @@
             const station = player.activeStationGeometry;
             let availableMetals = { [MAT.COPPER]: 0, [MAT.SILVER]: 0, [MAT.GOLD]: 0 };
             if (station) {
-                availableMetals = countMetalsInCauldron(station.cauldrons.left);
+                availableMetals = countMetalsInPouch();
             }
             // --- END: NEW LOGIC TO COUNT METALS ---
 
@@ -13168,21 +13209,21 @@
             //createPlayerBody();
             //createWoodenBox(150, -150, 24, 64);
 
-            const startingPotion = new RigidBody(0, 0, 8, 12, MAT.GLASS, "Empty Potion");
-            startingPotion.pixels = new Uint8Array(OBJECT_DEFINITIONS.empty_potion.pixels);
-            startingPotion.rebuildFixtures();
-            const userData = startingPotion.body.getUserData();
-            userData.isPickup = true;
-            userData.definitionId = 'empty_potion';
-            world.destroyBody(startingPotion.body); // Remove from physics world until placed
-            startingPotion.body = null;
-            player.structurePocket.push(startingPotion);
+            // const startingPotion = new RigidBody(0, 0, 8, 12, MAT.GLASS, "Empty Potion");
+            // startingPotion.pixels = new Uint8Array(OBJECT_DEFINITIONS.empty_potion.pixels);
+            // startingPotion.rebuildFixtures();
+            // const userData = startingPotion.body.getUserData();
+            // userData.isPickup = true;
+            // userData.definitionId = 'empty_potion';
+            // world.destroyBody(startingPotion.body); // Remove from physics world until placed
+            // startingPotion.body = null;
+            // player.structurePocket.push(startingPotion);
 
-            createRuneInWorld(player.x + 50, player.y - 10, {
-                id: 'combine',
-                stats: { instability: 5, potency: 2, duration: -10, hazard: 3 },
-                color: 'colorless'
-            });
+            // createRuneInWorld(player.x + 50, player.y - 10, {
+            //     id: 'combine',
+            //     stats: { instability: 5, potency: 2, duration: -10, hazard: 3 },
+            //     color: 'colorless'
+            // });
 
             updateLoadingStatus('Done!');
             await new Promise(resolve => setTimeout(resolve, 100));
