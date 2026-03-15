@@ -747,72 +747,206 @@
             }
         }
         
+        // in index.html
+
+        // --- START OF COMPLETE REPLACEMENT: DIALOGUE_TREES ---
         const DIALOGUE_TREES = {
             'ylialkemisti_main': {
+                // ===================================================================
+                // STEP 1: Introduction & Lore
+                // ===================================================================
                 'start': {
-                    text: "Greetings, Apprentice. You have arrived at a pivotal time. This cave system holds wondrous treasures and profound secrets, culminating in the legendary Philosopher's Stone, deep within the final layer.",
+                    text: "Greetings, Apprentice. You have arrived. This mountain is a library of the earth's secrets, and we are its readers. Deeper, in the final layer, lies the ultimate text: the Philosopher's Stone.",
                     options: [
-                        { text: "What must I do?", nextNode: 'explain_quest' },
+                        { text: "How do I begin to read these secrets?", nextNode: 'explain_alembic_1' },
                     ]
                 },
-                'explain_quest': {
-                    text: "The path is fraught with challenges that only a keen mind and a mastery of alchemy can overcome. You must use your wits to transform the very elements around you.",
-                    options: [
-                        { text: "I am ready to learn.", execute: (npc) => {
-                            createMagicTablet(npc.x + 64, npc.y - 12, 'unlock_reaction', { reactionKey: 'filter_material' });
-                            
-                            npc.dialogueState = 'waiting_for_filter';
-                            const stationPieceDef = SetPieceManager.setPieces.find(p => p.name === 'AlchemistStation');
-                            if(stationPieceDef) {
-                                const pieceInfo = { name: "AlchemistStation", bounds: stationPieceDef.getBounds() };
-                                const stationGeo = stationPieceDef.postGenerationHook.call(stationPieceDef, pieceInfo).stationGeometry;
-                                
-                                fillCauldronWithMixture(stationGeo.cauldrons.left, [MAT.SAND, MAT.COPPER]);
 
-                                // --- MODIFICATION: Move the arrow to the slab ---
-                                const slabX = pieceInfo.bounds.x + 130;
-                                const slabY = pieceInfo.bounds.y + pieceInfo.bounds.height - 35; // Calculated Y of the slab's top surface
-                                const slabW = 70;
-                                spawnFloatingArrow(slabX + slabW / 2, slabY - 50); // Point it *above* the slab
+                // ===================================================================
+                // STEP 2: Explaining the Alembic
+                // ===================================================================
+                'explain_alembic_1': {
+                    text: "With this instrument: the Alembic. The Left Crucible is for your raw materials. The Right is for your refined products. The Retort in the center is for temporary storage during complex reactions.",
+                    options: [
+                        { text: "What about the other components?", nextNode: 'explain_alembic_2' },
+                    ]
+                },
+                'explain_alembic_2': {
+                    text: "The Athanor, the glowing furnace, is for analysis. It reveals the hidden nature of a material. The Vessel Pedestal is where you give final form to your creations, such as potions.",
+                    options: [
+                        { text: "The 'hidden nature' of a material?", nextNode: 'explain_essences' },
+                    ]
+                },
+                'explain_essences': {
+                    text: "Precisely. Every material possesses an Essence. Fire holds 'Intense Heat'. Solid rock holds 'Hardness'. Water, as you will see, holds the Essence of 'Fluidity'. This is the foundation of all alchemy.",
+                    options: [
+                        { text: "Then let's begin the first lesson.", nextNode: 'task_analyze_water' },
+                    ]
+                },
+
+                // ===================================================================
+                // STEP 3: First Task - Analyze Water
+                // ===================================================================
+                'task_analyze_water': {
+                    text: "I have placed water in the left crucible. Your first task is to move it to the Athanor and analyze it to discover its Essence. The Alembic interface on your left will guide you. Return when you have succeeded.",
+                    execute: (npc) => {
+                        // This setup runs only once when this node is first visited.
+                        if (npc.dialogueState !== 'waiting_for_analysis') {
+                            npc.dialogueState = 'waiting_for_analysis';
+                            const stationGeo = npc.associatedData.stationGeometry;
+                            if (stationGeo) {
+                                fillCauldronWithMixture(stationGeo.cauldrons.left, [MAT.WATER]);
+                                const athanor = stationGeo.athanor;
+                                spawnFloatingArrow(athanor.x + athanor.width / 2, athanor.y - 20);
                             }
                             DialogueManager.closeDialogue();
-                            DialogueManager.startDialogue(npc, DIALOGUE_TREES.ylialkemisti_main);
-                        }}
+                        }
+                    },
+                    options: [
+                        { text: "I will see it done.", execute: () => DialogueManager.closeDialogue() },
+                        { text: "[I have discovered Fluidity.]", condition: () => player.discoveredEssences.get(MAT.WATER)?.has(ESSENCES.FLUIDITY), nextNode: 'give_extract_rune' }
                     ]
                 },
-                'waiting_for_filter': {
-                    text: "I have dropped a tablet of knowledge for you. Pick it up to learn the 'Filter' reaction. Use it at the runic slab to separate the copper from the sand. Return to me once you have the purified copper.",
-                    options: [
-                        { text: "I will get to it.", execute: () => DialogueManager.closeDialogue() },
-                        { text: "I have the copper.", nextNode: 'quest_complete' }
+                'waiting_for_analysis': {
+                    text: "Move the water to the Athanor and analyze it. The path to knowledge requires action, not just words.",
+                     options: [
+                        { text: "I'm working on it.", execute: () => DialogueManager.closeDialogue() },
+                        { text: "[I have discovered Fluidity.]", condition: () => player.discoveredEssences.get(MAT.WATER)?.has(ESSENCES.FLUIDITY), nextNode: 'give_extract_rune' }
                     ]
                 },
-                'quest_complete': {
-                    text: "Excellent work, Apprentice. You show great promise. This is but the first step on a long journey. Continue your explorations, and may your transmutations be true. If you need any tools or materials, we can trade.",
-                    options: [
-                        { text: "Trade with me.", nextNode: 'trading_post'},
-                        { text: "Thank you, Master.", execute: (npc) => {
-                            npc.dialogueState = 'quest_complete'; 
+
+                // ===================================================================
+                // STEP 4: Second Task - Extract Fluidity
+                // ===================================================================
+                'give_extract_rune': {
+                    text: "Splendid! You have taken your first step. Now, you must learn to harness that Essence. Take this rune. It will allow you to pull the 'idea' of a thing from its physical shell.",
+                    execute: (npc) => {
+                        if (npc.dialogueState !== 'waiting_for_extraction') {
                             despawnFloatingArrow();
-                            DialogueManager.closeDialogue();
-                        }}
+                            createRuneInWorld(npc.x + 20, npc.y, { id: 'extract_essence', color: 'sapphire', stats: { instability: -1 } });
+                            npc.dialogueState = 'waiting_for_extraction';
+                        }
+                    },
+                    options: [
+                        { text: "What must I do with this?", nextNode: 'explain_extraction' }
                     ]
                 },
-                // --- START OF NEW CODE ---
-                'trading_post': {
-                    text: "Of course. Place your metals in the left cauldron as payment. What can I offer you?",
+                'explain_extraction': {
+                    text: "Open your Grimoire. Place the water in the crucible, then create a recipe using the [Extract Essence] rune, targeting 'Fluidity'. Yield the result to the Right Crucible. You will have created Unstable Essence.",
+                    execute: (npc) => {
+                        const stationGeo = npc.associatedData.stationGeometry;
+                        if(stationGeo) {
+                            spawnFloatingArrow(stationGeo.alembic_controls.x + stationGeo.alembic_controls.width / 2, stationGeo.alembic_controls.y - 20);
+                        }
+                        DialogueManager.closeDialogue();
+                    },
+                    options: [
+                        { text: "I understand.", execute: () => DialogueManager.closeDialogue() },
+                        { text: "[I have the Unstable Essence.]", nextNode: 'give_forma_rune' } // We'll just trust the player for now
+                    ]
+                },
+                'waiting_for_extraction': {
+                    text: "Use the Grimoire and your new rune to extract the Fluidity from water. The resulting Unstable Essence is the key.",
+                    options: [
+                        { text: "I'll get back to it.", execute: () => DialogueManager.closeDialogue() },
+                        { text: "[I have the Unstable Essence.]", nextNode: 'give_forma_rune' }
+                    ]
+                },
+
+                // ===================================================================
+                // STEP 5: Final Task - Create a Potion
+                // ===================================================================
+                 'give_forma_rune': {
+                    text: "Perfection. Raw essence is powerful, but chaotic. It must be given form. This final rune will serve that purpose.",
+                     execute: (npc) => {
+                        if (npc.dialogueState !== 'waiting_for_potion') {
+                            despawnFloatingArrow();
+                            createRuneInWorld(npc.x + 20, npc.y, { id: 'forma_potion', color: 'emerald', stats: { duration: 2 } });
+                            const stationGeo = npc.associatedData.stationGeometry;
+                            if(stationGeo) {
+                                createObjectInWorld('empty_potion', stationGeo.vessel.x + stationGeo.vessel.width/2, stationGeo.vessel.y);
+                                spawnFloatingArrow(stationGeo.vessel.x + stationGeo.vessel.width/2, stationGeo.vessel.y - 20);
+                            }
+                            npc.dialogueState = 'waiting_for_potion';
+                        }
+                    },
+                     options: [
+                        { text: "How does this one work?", nextNode: 'explain_potion_crafting' }
+                    ]
+                },
+                'explain_potion_crafting': {
+                    text: "That is a [Forma: Potion] rune. Place an empty potion on the Vessel Pedestal. Your recipe must infuse the Fluidity essence into a base liquid, then use the Forma rune. The result will be... transformative.",
+                    options: [
+                        { text: "I will attempt it.", execute: () => DialogueManager.closeDialogue() },
+                        { text: "[I have created the Potion of Liquid Form.]", nextNode: 'tutorial_complete' }
+                    ]
+                },
+                'waiting_for_potion': {
+                    text: "Combine your Unstable Essence, a base liquid, and the [Forma: Potion] rune to create your first great work.",
+                    options: [
+                        { text: "Working on it.", execute: () => DialogueManager.closeDialogue() },
+                        { text: "[I have created the Potion of Liquid Form.]", nextNode: 'tutorial_complete' }
+                    ]
+                },
+
+                // ===================================================================
+                // STEP 6: Tutorial Complete & Hub
+                // ===================================================================
+                'tutorial_complete': {
+                    text: "You have passed the first trial. The fundamentals are yours. The rest of the journey is your own to walk. The mountain holds many more materials, many more secrets. I am here if you require guidance.",
+                    execute: (npc) => {
+                        despawnFloatingArrow();
+                        npc.dialogueState = 'post_tutorial_hub';
+                    },
+                    options: [
+                        { text: "Thank you, Master.", nextNode: 'post_tutorial_hub' }
+                    ]
+                },
+                'post_tutorial_hub': {
+                    text: "Be welcome, Apprentice. How can I assist your work?",
+                    options: [
+                        { text: "Explain rune stats and colors.", nextNode: 'explain_stats_colors' },
+                        { text: "I wish to trade.", nextNode: 'explain_trade' },
+                        { text: "What are the other 'Forma' runes?", nextNode: 'explain_formas' },
+                        { text: "I am lost. What should I be doing?", nextNode: 'remind_quest' },
+                        { text: "Master, may I have a cape?", nextNode: 'no_capes_joke' },
+                        { text: "I have no questions right now.", execute: () => DialogueManager.closeDialogue() }
+                    ]
+                },
+
+                // ===================================================================
+                // STEP 7: Post-Tutorial Branches (Stubs)
+                // ===================================================================
+                'explain_stats_colors': {
+                    text: "Ah, the deeper art. Every rune has four stats: Potency, Duration, Instability, and Hazard. Furthermore, their color—Ruby, Sapphire, or Emerald—creates powerful synergies when used together. Experiment to learn their secrets.",
+                    options: [ { text: "I will.", nextNode: 'post_tutorial_hub' } ]
+                },
+                'explain_trade': {
+                    text: "Indeed. The deeper you delve, the rarer the metals you will find. Copper, Silver, and Gold are the currency of this mountain. Place what you would offer in the left crucible.",
                     options: [
                         { text: "Show me your wares.", execute: (npc) => {
-                             npc.dialogueState = 'quest_complete'; 
                              player.activeStationGeometry = npc.associatedData.stationGeometry;
                              TradeManager.isVisible = true;
                              DialogueManager.closeDialogue();
                         }},
-                        { text: "Nevermind.", nextNode: 'quest_complete' }
+                        { text: "I'm not ready yet.", nextNode: 'post_tutorial_hub' }
                     ]
+                },
+                'explain_formas': {
+                    text: "Potions affect your own body. Oils can be applied to the world itself. Alkahests are powerful reagents for volatile reactions. And Gems... gems can hold a reaction's power, to be unleashed later. You will need to find these other Forma runes.",
+                    options: [ { text: "I will search for them.", nextNode: 'post_tutorial_hub' } ]
+                },
+                'remind_quest': {
+                    text: "Your path is downward. Each layer of the mountain holds new materials, new Essences, and new dangers. Discover. Create. Survive. The Stone awaits at the bottom of all things.",
+                    options: [ { text: "The path is clear.", nextNode: 'post_tutorial_hub' } ]
+                },
+                'no_capes_joke': {
+                    text: "A cape? Hah! Absolutely not. They get soaked in acid, catch on fire from a stray spark, get snagged on cave walls... they are a liability! A true alchemist values practicality over pageantry. No capes!",
+                    options: [ { text: "A-all right then.", nextNode: 'post_tutorial_hub' } ]
                 }
             }
         };
+        // --- END OF COMPLETE REPLACEMENT: DIALOGUE_TREES ---
 
         const UIMessageManager = {
             isVisible: false,
@@ -9538,7 +9672,7 @@
             if (!DialogueManager.isVisible) return;
 
             const boxW = 440;
-            const boxH = 250;
+            const boxH = 125;
             const boxX = (renderWidth - boxW) / 2;
             const boxY = renderHeight - boxH - 20;
 
