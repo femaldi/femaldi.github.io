@@ -8995,6 +8995,23 @@
             Profiler.stop('Sim:Gas');
         }
 
+        // in index.html
+
+        // --- START OF NEW HELPER FUNCTION ---
+        /**
+         * Checks if the sector containing the given world coordinates is currently loaded and ready.
+         * @param {number} worldX - The world X coordinate.
+         * @param {number} worldY - The world Y coordinate.
+         * @returns {boolean} - True if the sector is in a 'ready' state, false otherwise.
+         */
+        function isSectorLoaded(worldX, worldY) {
+            const sx = Math.floor(worldX / SECTOR_SIZE);
+            const sy = Math.floor(worldY / SECTOR_SIZE);
+            const sector = sectorGrid.get(coordToKey(sx, sy));
+            return sector && sector.state === 'ready';
+        }
+        // --- END OF NEW HELPER FUNCTION ---
+
         // This function is now ONLY for small inventory grids
         function runSimulationOnSmallGrid(moved, currentGrid, gridWidth, gridHeight, setter) {
              moved.fill(0);
@@ -9373,25 +9390,32 @@
                 const myAux = getAuxData(etcChunkMap, x, y);
 
                 // Try to fall straight down
-                if (getAuxData(etcChunkMap, x, y + 1) !== 1) { // Check for rigid body stub
+                if (getAuxData(etcChunkMap, x, y + 1) !== 1) {
                     const belowType = getGrid(x, y + 1);
-                    const belowAux = getAuxData(etcChunkMap, x, y + 1);
                     if ([MAT.EMPTY, ...GASES].includes(belowType) || isLiquid(belowType)) {
-                        setGrid(x, y, belowType, true); setAuxData(etcChunkMap, x, y, belowAux);
-                        setGrid(x, y + 1, type, true); setAuxData(etcChunkMap, x, y + 1, myAux);
+                        // THIS IS THE FIX: Check if destination is loaded before moving.
+                        if (isSectorLoaded(x, y + 1)) {
+                            const belowAux = getAuxData(etcChunkMap, x, y + 1);
+                            setGrid(x, y, belowType, true); 
+                            setAuxData(etcChunkMap, x, y, belowAux);
+                            setGrid(x, y + 1, type, true); 
+                            setAuxData(etcChunkMap, x, y + 1, myAux);
+                        }
                         return;
                     }
                 }
 
-                // Try to fall diagonally
                 const dir = Math.random() < 0.5 ? -1 : 1;
                 for (let dx of [dir, -dir]) {
-                    if (getAuxData(etcChunkMap, x + dx, y + 1) !== 1) { // Check for rigid body stub
+                    if (getAuxData(etcChunkMap, x + dx, y + 1) !== 1) {
                         const diagType = getGrid(x + dx, y + 1);
-                        const diagAux = getAuxData(etcChunkMap, x + dx, y + 1);
                         if ([MAT.EMPTY, ...GASES].includes(diagType) || isLiquid(diagType)) {
-                            setGrid(x, y, diagType, true); setAuxData(etcChunkMap, x, y, diagAux);
-                            setGrid(x + dx, y + 1, type, true); setAuxData(etcChunkMap, x + dx, y + 1, myAux);
+                            // THIS IS THE FIX: Check if destination is loaded before moving.
+                            if (isSectorLoaded(x + dx, y + 1)) {
+                                const diagAux = getAuxData(etcChunkMap, x + dx, y + 1);
+                                setGrid(x, y, diagType, true); setAuxData(etcChunkMap, x, y, diagAux);
+                                setGrid(x + dx, y + 1, type, true); setAuxData(etcChunkMap, x + dx, y + 1, myAux);
+                            }
                             return;
                         }
                     }
@@ -9580,13 +9604,17 @@
                 const belowAux = getAuxData(etcChunkMap, x, y + 1);
 
                 if ([MAT.EMPTY, ...GASES].includes(belowType)) {
-                    setGrid(x, y, belowType, false); setAuxData(etcChunkMap, x, y, belowAux);
-                    setGrid(x, y + 1, type, false); setAuxData(etcChunkMap, x, y + 1, myAux);
+                    if (isSectorLoaded(x, y + 1)) {
+                        setGrid(x, y, belowType, false); setAuxData(etcChunkMap, x, y, belowAux);
+                        setGrid(x, y + 1, type, false); setAuxData(etcChunkMap, x, y + 1, myAux);
+                    }
                     return;
                 }
                 if (LIQUID_DENSITY[type] > LIQUID_DENSITY[belowType]) {
-                    setGrid(x, y, belowType, false); setAuxData(etcChunkMap, x, y, belowAux);
-                    setGrid(x, y + 1, type, false); setAuxData(etcChunkMap, x, y + 1, myAux);
+                    if (isSectorLoaded(x, y + 1)) {
+                        setGrid(x, y, belowType, false); setAuxData(etcChunkMap, x, y, belowAux);
+                        setGrid(x, y + 1, type, false); setAuxData(etcChunkMap, x, y + 1, myAux);
+                    }
                     return;
                 }
             } else { // Inventory simulation
@@ -9615,14 +9643,18 @@
 
                 if (GASES.has(aboveType)) {
                     if (GAS_DENSITY[type] < GAS_DENSITY[aboveType]) {
-                        setGrid(x, y, aboveType, false); setAuxData(etcChunkMap, x, y, aboveAux);
-                        setGrid(x, y - 1, type, false); setAuxData(etcChunkMap, x, y - 1, myAux);
+                        if (isSectorLoaded(x, y - 1)) {
+                            setGrid(x, y, aboveType, false); setAuxData(etcChunkMap, x, y, aboveAux);
+                            setGrid(x, y - 1, type, false); setAuxData(etcChunkMap, x, y - 1, myAux);
+                        }
                         return;
                     }
                 }
                 else if ([MAT.EMPTY, MAT.WATER, MAT.OIL, MAT.ACID, MAT.SAND, MAT.SOIL, MAT.GUNPOWDER].includes(aboveType)) {
-                    setGrid(x, y, aboveType, false); setAuxData(etcChunkMap, x, y, aboveAux);
-                    setGrid(x, y - 1, type, false); setAuxData(etcChunkMap, x, y - 1, myAux);
+                    if (isSectorLoaded(x, y - 1)) {
+                        setGrid(x, y, aboveType, false); setAuxData(etcChunkMap, x, y, aboveAux);
+                        setGrid(x, y - 1, type, false); setAuxData(etcChunkMap, x, y - 1, myAux);
+                    }
                     return;
                 }
             } else { // Inventory simulation
@@ -9678,11 +9710,13 @@
 
             if (targetX !== x) {
                 if (isWorldSim) {
-                    const myAux = getAuxData(etcChunkMap, x, y);
-                    const targetAux = getAuxData(etcChunkMap, targetX, y);
-                    const targetType = getGrid(targetX, y);
-                    setGrid(x, y, targetType, false); setAuxData(etcChunkMap, x, y, targetAux);
-                    setGrid(targetX, y, type, false); setAuxData(etcChunkMap, targetX, y, myAux);
+                    if (isSectorLoaded(targetX, y)) {
+                        const myAux = getAuxData(etcChunkMap, x, y);
+                        const targetAux = getAuxData(etcChunkMap, targetX, y);
+                        const targetType = getGrid(targetX, y);
+                        setGrid(x, y, targetType, false); setAuxData(etcChunkMap, x, y, targetAux);
+                        setGrid(targetX, y, type, false); setAuxData(etcChunkMap, targetX, y, myAux);
+                    }
                 } else {
                     const targetIdx = getIdx(targetX, y);
                     const targetType = grid[targetIdx];
