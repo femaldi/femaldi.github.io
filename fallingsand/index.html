@@ -1672,16 +1672,6 @@
         };
         // --- END OF NEW CODE ---
 
-        const RUNE_CATEGORY_COLORS = {
-            Source: '#80DEEA',   // Cyan
-            Action: '#FFAB91',   // Orange
-            Control: '#FFF59D',  // Yellow
-            Forma: '#B39DDB',    // Purple
-            Meta: '#A5D6A7'      // Green
-        };
-
-        // --- ADD THIS ENTIRE NEW CODE BLOCK ---
-
         // --- START OF REPLACEMENT (UPDATE RUNE_DEFINITIONS AND STATE MANAGERS) ---
         const RUNE_DEFINITIONS = {
             // --- Source ---
@@ -1693,8 +1683,7 @@
             'combine': { name: "Combine", category: 'Action', sprite: 'rune_combine' },
             'separate': { name: "Separate", category: 'Action', sprite: 'rune_separate' },
             'extract_essence': { name: "Extract Essence", category: 'Action', isVariable: true, type: 'essence', sprite: 'rune_extract' },
-            'infuse_from_retort': { name: "Infuse from Retort", category: 'Action', sprite: 'rune_infuse' },
-            'infuse_from_input': { name: "Infuse from Input", category: 'Action', sprite: 'rune_infuse' },
+            'infuse': { name: "Infuse", category: 'Action', sprite: 'rune_infuse' },
             
             // --- Control ---
             'filter_by': { name: "Filter By", category: 'Control', isVariable: true, type: 'material', sprite: 'rune_filter' },
@@ -5076,7 +5065,7 @@
                     }
                 }
             },
-            'infuse_from_input': {
+            'infuse': {
                 isTerminal: false,
                 animate: (context, rune) => {
                     const area = context.stationGeometry.inputCrucible;
@@ -5102,60 +5091,37 @@
                 },
                 dryRun: (context, rune, runeIndex) => { context.isPotionBatch = true; return { success: true }; },
                 execute: (context, rune) => {
-                    const sourceMaterials = getMaterialsInArea(context.stationGeometry.inputCrucible.worldPoints);
-                    const essences = new Map();
-                    let baseLiquid = null, baseLiquidQuantity = 0;
-                    for (const [matId, quantity] of sourceMaterials.entries()) {
-                        if (matId >= 200) essences.set(matId, quantity);
-                        else if (isLiquid(matId) && matId !== MAT.LAVA) { baseLiquid = matId; baseLiquidQuantity = quantity; }
+                    // Can't infuse a batch that has already been infused.
+                    if (context.isPotionBatch) {
+                        return context.fail("Cannot infuse a batch that is already infused.");
                     }
-                    if (essences.size === 0) return context.fail("No unstable essences found in Input Crucible.");
-                    if (baseLiquid === null) return context.fail("No base liquid found in Input Crucible.");
+
+                    const sourceMaterials = context.batch; // The batch is a Map of materials.
+                    const essences = new Map();
+                    let baseLiquid = null;
+                    let baseLiquidQuantity = 0;
+                    let liquidCount = 0;
+
+                    // Iterate through the current batch and separate essences from the base liquid.
+                    for (const [matId, quantity] of sourceMaterials.entries()) {
+                        if (matId >= 200) { // It's an Unstable Essence
+                            essences.set(matId, quantity);
+                        } else if (isLiquid(matId) && matId !== MAT.LAVA) {
+                            baseLiquid = matId;
+                            baseLiquidQuantity = quantity;
+                            liquidCount++;
+                        }
+                        // Any solids in the batch are simply ignored by the infusion process.
+                    }
+
+                    // Error handling for invalid infusion attempts.
+                    if (essences.size === 0) return context.fail("No unstable essences found in the batch to infuse.");
+                    if (liquidCount === 0) return context.fail("No base liquid found in the batch to infuse.");
+                    if (liquidCount > 1) return context.fail("Infusion requires exactly one type of base liquid in the batch.");
                     
-                    removeMaterialsFromArea(context.stationGeometry.inputCrucible.worldPoints, sourceMaterials, { animateRemoval: true });
+                    // Success! Overwrite the batch with the new "potion batch" object structure.
                     context.batch = { essences, base: baseLiquid, baseQuantity: baseLiquidQuantity };
-                    context.isPotionBatch = true;
-                }
-            },
-            'infuse_from_retort': {
-                isTerminal: false,
-                animate: (context, rune) => {
-                    const area = context.stationGeometry.retort;
-                    const centerX = area.x + area.width / 2;
-                    const centerY = area.y + area.height / 2;
-
-                    // 1. General particle burst
-                    //spawnMagicParticles(15, centerX, centerY, [255, 220, 220], 0.8);
-
-                    // 2. Render the rune sprite using particles
-                    const runeSprite = SpriteManager.sprites.get('rune_infuse');
-                    createShapeDissolveEffect({
-                        x: centerX, y: centerY,
-                        shapeImage: runeSprite,
-                        color: [220, 255, 220],
-                        particleCount: 100,
-                        shapeSize: 16,
-                        appearDuration: 30,
-                        holdDuration: 180,
-                        wispDuration: 30,
-                        useWhiteForShape: true
-                    });
-                },
-                dryRun: (context, rune, runeIndex) => { context.isPotionBatch = true; return { success: true }; },
-                execute: (context, rune) => {
-                    const sourceMaterials = getMaterialsInArea(context.stationGeometry.retort.worldPoints);
-                    const essences = new Map();
-                    let baseLiquid = null, baseLiquidQuantity = 0;
-                    for (const [matId, quantity] of sourceMaterials.entries()) {
-                        if (matId >= 200) essences.set(matId, quantity);
-                        else if (isLiquid(matId) && matId !== MAT.LAVA) { baseLiquid = matId; baseLiquidQuantity = quantity; }
-                    }
-                    if (essences.size === 0) return context.fail("No unstable essences found in Retort.");
-                    if (baseLiquid === null) return context.fail("No base liquid found in Retort.");
-
-                    removeMaterialsFromArea(context.stationGeometry.retort.worldPoints, sourceMaterials, { animateRemoval: true });
-                    context.batch = { essences, base: baseLiquid, baseQuantity: baseLiquidQuantity };
-                    context.isPotionBatch = true;
+                    context.isPotionBatch = true; // Set the flag for subsequent runes like 'forma_potion'.
                 }
             },
             'combine': {
@@ -6424,8 +6390,7 @@
                     'combine',
                     'forma_potion',
                     'extract_essence',
-                    'infuse_from_retort',
-                    'infuse_from_input',
+                    'infuse',
                     'separate',
                     // etc. for all non-variable runes
                 ]),
@@ -6448,8 +6413,7 @@
                     { id: 'transform', from: MAT.SAND, to: MAT.GLASS, stats: { instability: 1, potency: 0, duration: 0, hazard: 0 }, color: 'colorless' },
                     { id: 'extract_essence', stats: { instability: 0, potency: 0, duration: 0, hazard: 0 }, color: 'colorless' },
                     { id: 'combine', stats: { instability: 0, potency: 0, duration: 0, hazard: 0 }, color: 'colorless' },
-                    { id: 'infuse_from_input', stats: { instability: 0, potency: 0, duration: 0, hazard: 0 }, color: 'colorless' },
-                    { id: 'infuse_from_retort', stats: { instability: 0, potency: 0, duration: 0, hazard: 0 }, color: 'colorless' },
+                    { id: 'infuse', stats: { instability: 0, potency: 0, duration: 0, hazard: 0 }, color: 'colorless' },
                     { id: 'yield_to_retort', stats: { instability: 0, potency: 0, duration: 0, hazard: 0 }, color: 'colorless' },
                     { id: 'yield_to_right_crucible', stats: { instability: 0, potency: 0, duration: 0, hazard: 0 }, color: 'colorless' },
                     { id: 'yield_to_left_crucible', stats: { instability: 0, potency: 0, duration: 0, hazard: 0 }, color: 'colorless' },
@@ -6461,23 +6425,27 @@
                 maxPages: 4,
                 pages: [
                     { 
-                        name: "1",
-                        maxRunes: 10,
-                        runes: []
+                        name: "Alpha",
+                        maxRunes: 4,
+                        runes: [
+                            { id: 'from_left_crucible', stats: { instability: 0, potency: 0, duration: 0, hazard: 0 }, color: 'colorless' },
+                            null,
+                            { id: 'yield_to_right_crucible', stats: { instability: 0, potency: 0, duration: 0, hazard: 0 }, color: 'colorless' }
+                        ]
                     },
                     { 
-                        name: "2",
+                        name: "Beta",
                         maxRunes: 4,
                         runes: []
                     },
                     { 
-                        name: "3",
-                        maxRunes: 3,
+                        name: "Gamma",
+                        maxRunes: 4,
                         runes: []
                     },
                     { 
-                        name: "4",
-                        maxRunes: 2,
+                        name: "Delta",
+                        maxRunes: 4,
                         runes: []
                     },
                 ]
@@ -7029,7 +6997,7 @@
                 hazard: potionData.hazard
             });
 
-            displayMessage("Buff Active!", `You feel the effects of ${potionDef.name}.`, 240);
+            //displayMessage("Buff Active!", `You feel the effects of ${potionDef.name}.`, 240);
             
             // Decrement charges and remove the item from inventory.
             potionData.charges--;
@@ -8020,8 +7988,14 @@
                 const sortedEssences = Array.from(allDiscovered).sort();
                 for (const essenceId of sortedEssences) {
                     if (mouseY >= yOff && mouseY < yOff + 15) {
-                        const { purpose, pageIndex, slotIndex } = GrimoireManager.essenceSelectionContext;
-                        const newRune = { id: 'extract_essence', target: essenceId };
+                        const { purpose, pageIndex, slotIndex, runeToAttune  } = GrimoireManager.essenceSelectionContext;
+                        const newRune = { 
+                            id: 'extract_essence', 
+                            target: essenceId,
+                            // Copy the stats and color from the original rune!
+                            stats: runeToAttune ? { ...runeToAttune.stats } : { instability:0, potency:0, duration:0, hazard:0 },
+                            color: runeToAttune ? runeToAttune.color : 'colorless'
+                        };
                         if (purpose === 'pick_up') {
                             GrimoireManager.heldRune = newRune;
                         } else if (purpose === 'set_rune') {
@@ -8185,7 +8159,10 @@
                             // Check for special runes that require a pop-up
                             if (clickedRune.id === 'extract_essence') {
                                 GrimoireManager.isSelectingEssence = true;
-                                GrimoireManager.essenceSelectionContext = { purpose: 'pick_up' };
+                                GrimoireManager.essenceSelectionContext = { 
+                                    purpose: 'pick_up', 
+                                    runeToAttune: clickedRune // Pass the clicked rune data
+                                };
                             } else if (clickedRune.id === 'filter_by') {
                                 GrimoireManager.isAwaitingAttunement = true;
                                 GrimoireManager.attunementContext = { purpose: 'new_filter_pickup' }; // New context
@@ -11318,25 +11295,33 @@
             }
         }
 
+        // --- START OF COMPLETE REPLACEMENT ---
         function renderHeldRune() {
-            const runeDef = RUNE_DEFINITIONS[GrimoireManager.heldRune.id];
+            const heldRune = GrimoireManager.heldRune;
+            if (!heldRune) return; // Failsafe
+
+            const runeDef = RUNE_DEFINITIONS[heldRune.id];
             if (!runeDef) return;
             const sprite = SpriteManager.sprites.get(runeDef.sprite);
             if (!sprite) return;
         
             const RUNE_SLOT_SIZE = 16;
             
-            ctx.save(); // Save state before changing alpha
+            ctx.save();
             ctx.globalAlpha = 0.8;
             
             const screenX = (mouse.x / scale) - RUNE_SLOT_SIZE / 2;
             const screenY = (mouse.y / scale) - RUNE_SLOT_SIZE / 2;
-            const color = RUNE_CATEGORY_COLORS[runeDef.category];
+
+            // --- THIS IS THE FIX ---
+            // Instead of using the category color, we now use the rune's actual stored color name.
+            // The `renderRuneWithTint` function will then look up the correct hex code from this name.
+            renderRuneWithTint(sprite, screenX, screenY, RUNE_SLOT_SIZE, heldRune.color);
+            // --- END OF FIX ---
             
-            renderRuneWithTint(sprite, screenX, screenY, RUNE_SLOT_SIZE, color);
-            
-            ctx.restore(); // Restore state, automatically resetting alpha
+            ctx.restore();
         }
+        // --- END OF COMPLETE REPLACEMENT ---
 
         // --- START OF REPLACEMENT for renderGrimoireAndRunesTab ---
         /**
@@ -11463,37 +11448,6 @@
             }
         }
         // --- END OF REPLACEMENT ---
-
-        // --- START OF REPLACEMENT ---
-        function renderFiltersArea(x, y, w, h) {
-            const RUNE_SLOT_SIZE = 16, RUNE_SLOT_SPACING = 4;
-            const FILTERS_PER_ROW = 4;
-            const startX = x + w - 100;
-
-            ctx.fillStyle = '#a0a0c0'; ctx.font = '10px monospace'; ctx.textAlign = 'left';
-            ctx.fillText("FILTERS:", startX, y + 20);
-
-            const filterSprite = SpriteManager.sprites.get(RUNE_DEFINITIONS.filter_by.sprite);
-            const knownFilters = Array.from(player.runeInventory.known_filters);
-
-            // Render known filters in a grid
-            for (let i = 0; i < knownFilters.length; i++) {
-                const col = i % FILTERS_PER_ROW;
-                const row = Math.floor(i / FILTERS_PER_ROW);
-                const currentX = startX + col * (RUNE_SLOT_SIZE + RUNE_SLOT_SPACING);
-                const currentY = y + 40 + row * (RUNE_SLOT_SIZE + RUNE_SLOT_SPACING);
-                renderRuneWithTint(filterSprite, currentX, currentY, RUNE_SLOT_SIZE, RUNE_CATEGORY_COLORS['Control']);
-            }
-            
-            // Render the '+' button at the next available grid spot
-            const plusCol = knownFilters.length % FILTERS_PER_ROW;
-            const plusRow = Math.floor(knownFilters.length / FILTERS_PER_ROW);
-            const plusX = startX + plusCol * (RUNE_SLOT_SIZE + RUNE_SLOT_SPACING);
-            const plusY = y + 40 + plusRow * (RUNE_SLOT_SIZE + RUNE_SLOT_SPACING);
-            
-            const plusSprite = SpriteManager.sprites.get('rune_plus');
-            renderRuneWithTint(plusSprite, plusX, plusY, RUNE_SLOT_SIZE, '#666');
-        }
 
         /**
          * Renders the pop-up menu for selecting a known rune to place in a recipe.
