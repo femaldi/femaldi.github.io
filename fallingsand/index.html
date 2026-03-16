@@ -6386,6 +6386,13 @@
                 description: 'Temporarily sublimate into a rising gaseous form. You cannot control your movement.',
                 baseStats: { potency: 80, duration: 600 }, // Potency = # of pixels, Duration = 10s
                 recipe: { ingredients: { [ESSENCES.VAPOR]: 1, 'base_liquid': 1 } }
+            },
+            'uplift': {
+                name: 'Potion of Uplift',
+                buffId: 'uplift',
+                description: 'Greatly enhances the power of your levitation ability.',
+                baseStats: { potency: 1.5, duration: 900 }, // Potency is the base multiplier for the force. Duration is 15s.
+                recipe: { ingredients: { [ESSENCES.BUOYANCY]: 1, 'base_liquid': 1 } }
             }
             // Add your new potions here following the same structure!
         };
@@ -8383,6 +8390,7 @@
                 return;
             }
 
+            const upliftBuff = player.activeBuffs.find(b => b.id === 'uplift');
             const submersionRatio = getPlayerSubmersionRatio();
             const isInLiquid = submersionRatio > 0;
             player.onGround = isPlayerOnGround();
@@ -8400,7 +8408,10 @@
             }
 
             if (keys['KeyW'] && player.hoverEnergy > 0) {
-                const jumpForce = isInLiquid ? MAX_HOVER_SPEED * 1.5 : MAX_HOVER_SPEED;
+                let jumpForce = isInLiquid ? MAX_HOVER_SPEED * 1.5 : MAX_HOVER_SPEED;
+                if (upliftBuff) {
+                    jumpForce *= upliftBuff.potency;
+                }
                 newVelY = -jumpForce;
                 player.hoverEnergy = Math.max(0, player.hoverEnergy - player.hoverDrainRate);
                 if (!isInLiquid) spawnLevitationParticles(2);
