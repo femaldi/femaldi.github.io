@@ -604,7 +604,7 @@ const SOLID_THRESHOLD = 0.5;
 function applySmoothingPass(sx, sy, terrainMap, wallMaterial, stampedPieces) {
     const DEFAULT_BLUR_RADIUS = 24;
     const MATERIAL_BLUR_RADII = {
-        [MAT.WOOD]: 4,
+        [MAT.WOOD]: 4
     };
 
     const startX = sx * SECTOR_SIZE;
@@ -663,7 +663,7 @@ function applySmoothingPass(sx, sy, terrainMap, wallMaterial, stampedPieces) {
     }
 
     // --- STAGE 1: DECOMPOSITION (Modified) ---
-    const SMOOTHABLE_MATERIALS = new Set([wallMaterial, MAT.SAND, MAT.GROUND, MAT.WOOD]);
+    const SMOOTHABLE_MATERIALS = new Set([wallMaterial, MAT.SAND, MAT.GROUND, MAT.WOOD, MAT.WATER, MAT.COPPER]);
     const materialBuffers = new Map();
     for (const matId of SMOOTHABLE_MATERIALS) {
         materialBuffers.set(matId, new Float32Array(SECTOR_SIZE * SECTOR_SIZE));
