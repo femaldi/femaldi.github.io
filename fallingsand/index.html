@@ -6393,8 +6393,14 @@
                 description: 'Greatly enhances the power of your levitation ability.',
                 baseStats: { potency: 1.5, duration: 900 }, // Potency is the base multiplier for the force. Duration is 15s.
                 recipe: { ingredients: { [ESSENCES.BUOYANCY]: 1, 'base_liquid': 1 } }
+            },
+            'corrosive_contact': {
+                name: 'Potion of Corrosive Contact',
+                buffId: 'corrosive_contact',
+                description: 'Projects an aura that grinds away soft materials on contact.',
+                baseStats: { potency: 1, duration: 1800 }, // Base Potency is Tier 1, for 30 seconds.
+                recipe: { ingredients: { [ESSENCES.ABRASION]: 1, 'base_liquid': 1 } }
             }
-            // Add your new potions here following the same structure!
         };
         // --- END OF REPLACEMENT: POTION_DEFINITIONS ---
 
@@ -7071,6 +7077,163 @@
         }
         // --- END OF REPLACEMENT ---
 
+        // --- START OF NEW HELPER FUNCTION ---
+        /**
+         * Creates a dynamic rigid body for a specific potion and spawns it in the world.
+         * @param {string} potionId - The key of the potion from POTION_DEFINITIONS (e.g., 'uplift', 'ashen_skin').
+         * @param {number} x - The world X coordinate for the potion's center.
+         * @param {number} y - The world Y coordinate for the potion's center.
+         * @param {object} [overrides={}] - An optional object to override the potion's default stats.
+         * @param {number} [overrides.potency] - A custom potency value.
+         * @param {number} [overrides.duration] - A custom duration in frames.
+         * @param {number} [overrides.hazard] - A custom hazard value.
+         * @returns {RigidBody|null} The created RigidBody instance, or null if the potionId is invalid.
+         */
+        function createPotionInWorld(potionId, x, y, overrides = {}) {
+            // 1. Validate the potion ID.
+            const potionDef = POTION_DEFINITIONS[potionId];
+            if (!potionDef) {
+                console.error(`[createPotionInWorld] Error: Unknown potion ID "${potionId}"`);
+                return null;
+            }
+
+            // 2. Create the base RigidBody using the 'empty_potion' object as a visual template.
+            const body = new RigidBody(x, y, 8, 12, MAT.GLASS, potionDef.name);
+            body.pixels = new Uint8Array(OBJECT_DEFINITIONS.empty_potion.pixels);
+
+            // 3. Color the liquid inside the potion based on its primary essence.
+            const firstEssenceId = Object.keys(potionDef.recipe.ingredients).find(key => key !== 'base_liquid');
+            if (firstEssenceId) {
+                const liquidColorMat = ESSENCE_TO_MAT[firstEssenceId] || MAT.WATER; // Default to water color if not found
+                for(let py = 5; py < 10; py++) {
+                    for(let px = 2; px < 6; px++) {
+                        body.pixels[py * 8 + px] = liquidColorMat;
+                    }
+                }
+            }
+
+            // 4. Rebuild the physics shape after modifying the pixels.
+            body.rebuildFixtures();
+            
+            // 5. Set up the crucial UserData to define what the potion is and does.
+            const userData = body.body.getUserData();
+            userData.isPickup = true;
+            userData.isPotion = true;
+            userData.potionData = {
+                definitionId: potionId,
+                charges: 1,
+                // Use the spread syntax to apply base stats and then apply any custom overrides.
+                potency: potionDef.baseStats.potency || 1,
+                duration: potionDef.baseStats.duration || 60,
+                hazard: 0,
+                instability: 0,
+                ...overrides 
+            };
+
+            // 6. Add the completed potion to the main simulation array and return it.
+            rigidBodies.push(body);
+            return body;
+        }
+        // --- END OF NEW HELPER FUNCTION ---
+
+        // --- START OF COMPLETE REPLACEMENT ---
+        /**
+         * Applies the passive effects of active player buffs.
+         */
+        function applyBuffEffects() {
+            if (player.hp <= 0 || !player.body) return; // Add a safety check for player.body
+
+            // --- Define Material Tiers for Corrosive Contact ---
+            const CORROSIVE_CONTACT_TIERS = [
+                // Tier 1 (Potency >= 1)
+                new Set([MAT.SAND, MAT.SOIL, MAT.COAL]),
+                // Tier 2 (Potency >= 2)
+                new Set([MAT.SANDSTONE_WALL, MAT.GROUND, MAT.WOOD, MAT.GLASS]),
+                // Tier 3 (Potency >= 3)
+                new Set([MAT.ROCK_WALL]),
+            ];
+
+            for (const buff of player.activeBuffs) {
+                switch (buff.id) {
+                    case 'barkskin':
+                        if (player.hp < player.maxHp) {
+                            player.hp = Math.min(player.maxHp, player.hp + buff.potency);
+                        }
+                        break;
+                    
+                    case 'permeable_aura':
+                        // ... (this logic remains unchanged) ...
+                        break;
+
+                    case 'corrosive_contact':
+                        // Run this check periodically for performance.
+                        if (frameCount % 5 === 0) {
+                            const potency = buff.potency;
+                            const auraRadius = 4 + Math.floor(4*potency);
+                            const maxDestroyPerTick = 4 + Math.floor(4*potency);
+                            let destroyedThisFrame = 0;
+
+                            const playerBody = player.body;
+                            if (!playerBody) break; // Safety check
+
+                            // 1. Get the player's bounding box in world coordinates.
+                            const playerPos = playerBody.getPosition();
+                            const playerMinX = Math.floor(playerPos.x * B2_SCALE - player.width / 2);
+                            const playerMinY = Math.floor(playerPos.y * B2_SCALE - player.height / 2);
+                            const playerMaxX = playerMinX + player.width;
+                            const playerMaxY = playerMinY + player.height;
+
+                            // 2. Define a larger scan area around the player's box.
+                            const scanStartX = playerMinX - auraRadius;
+                            const scanStartY = playerMinY - auraRadius;
+                            const scanEndX = playerMaxX + auraRadius;
+                            const scanEndY = playerMaxY + auraRadius;
+
+                            // 3. Create a list of all potential pixels to destroy in the scan area.
+                            const candidates = [];
+
+                            for (let y = scanStartY; y < scanEndY; y++) {
+                                for (let x = scanStartX; x < scanEndX; x++) {
+                                    // Calculate the squared distance from this pixel to the *closest edge* of the player's bounding box.
+                                    const dx = Math.max(playerMinX - x, 0, x - playerMaxX);
+                                    const dy = Math.max(playerMinY - y, 0, y - playerMaxY);
+                                    const distSq = dx * dx + dy * dy;
+
+                                    // If it's within the aura radius, add it to our list of candidates.
+                                    if (distSq <= auraRadius * auraRadius) {
+                                        candidates.push({ x, y, distSq });
+                                    }
+                                }
+                            }
+                            
+                            // 4. Sort the candidates by distance, so we process the closest ones first.
+                            candidates.sort((a, b) => a.distSq - b.distSq);
+
+                            // 5. Iterate through the sorted candidates and destroy them.
+                            for (const pixel of candidates) {
+                                if (destroyedThisFrame >= maxDestroyPerTick) break;
+
+                                const type = getGrid(pixel.x, pixel.y);
+                                if (type === MAT.EMPTY) continue;
+
+                                let canDestroy = false;
+                                if (potency >= 3 && CORROSIVE_CONTACT_TIERS[2].has(type)) canDestroy = true;
+                                else if (potency >= 2 && CORROSIVE_CONTACT_TIERS[1].has(type)) canDestroy = true;
+                                else if (potency >= 0.5 && CORROSIVE_CONTACT_TIERS[0].has(type)) canDestroy = true;
+                                
+                                if (canDestroy) {
+                                    setGrid(pixel.x, pixel.y, MAT.EMPTY, true);
+                                    createFadingPixelParticle(pixel.x, pixel.y, COLORS[type], 15 + Math.random() * 10);
+                                    destroyedThisFrame++;
+                                }
+                            }
+                        }
+                        break;
+                }
+            }
+        }
+        // --- END OF COMPLETE REPLACEMENT ---
+
         // --- START OF COMPLETE REPLACEMENT ---
         function updateBuffs() {
             // Light effect for Ashen Skin (can stay at the top)
@@ -7085,9 +7248,9 @@
             }
             
             // Apply non-transform passive effects ONLY if not transformed.
-            // if (!player.transformState.active) {
-            //     applyBuffEffects();
-            // }
+            if (!player.transformState.active) {
+                applyBuffEffects();
+            }
             
             // Tick down duration for all buffs and handle transform logic.
             for (let i = player.activeBuffs.length - 1; i >= 0; i--) {
@@ -13110,12 +13273,6 @@
                 b: new Float32Array(bloomCanvas.width * bloomCanvas.height)
             };
 
-            // updateLoadingStatus('Carving Background Strata...');
-            // await yieldToBrowser();
-            // const bgTileCanvas = generateCaveBackgroundTile(BACKGROUND_TILE_SIZE, BACKGROUND_TILE_SIZE * 5);
-            // const bgTileCtx = bgTileCanvas.getContext('2d');
-            // backgroundTileData = bgTileCtx.getImageData(0, 0, bgTileCanvas.width, bgTileCanvas.height);
-
             // Store the player's spawn sector coordinates for biome and set piece calculations
             playerSpawnSX = Math.floor(player.x / SECTOR_SIZE);
             playerSpawnSY = Math.floor(player.y / SECTOR_SIZE);
@@ -13271,6 +13428,8 @@
             // world.destroyBody(startingPotion.body); // Remove from physics world until placed
             // startingPotion.body = null;
             // player.structurePocket.push(startingPotion);
+
+            createPotionInWorld('corrosive_contact', player.x + 150, player.y - 10, {potency:10});
 
             // createRuneInWorld(player.x + 50, player.y - 10, {
             //     id: 'combine',
