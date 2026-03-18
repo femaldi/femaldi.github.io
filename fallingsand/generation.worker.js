@@ -738,6 +738,67 @@ function applySmoothingPass(sx, sy, terrainMap, wallMaterial, stampedPieces) {
     }
 }
 
+// in generation.worker.js
+
+// ... (after applySmoothingPass function)
+
+// --- START OF NEW FUNCTION ---
+/**
+ * Stamps solid boundaries at the horizontal and vertical edges of biomes and layers.
+ * This runs after smoothing to create hard, impenetrable walls.
+ * @param {number} sx - The X coordinate of the sector being generated.
+ * @param {number} sy - The Y coordinate of the sector being generated.
+ * @param {object} biomeInfo - The biome information for this sector.
+ * @param {Map} terrainMap - The map of terrain chunks to be modified.
+ */
+function stampBiomeBoundaries(sx, sy, biomeInfo, terrainMap) {
+    if (!biomeInfo || !biomeInfo.params || !biomeInfo.params.bounds) {
+        // This sector is not part of a defined biome, so no boundaries are needed.
+        return;
+    }
+
+    const BORDER_THICKNESS = 100;
+    const { x1, x2, y1, y2 } = biomeInfo.params.bounds;
+
+    // Determine the correct material for this layer's boundary.
+    const layerIndex = biomeInfo.params.layer;
+    const wallMaterial = LAYER_WALL_MATERIALS[layerIndex] || MAT.ROCK_WALL; // Fallback to rock wall
+
+    // Check for Vertical Boundaries (Left and Right Biome Walls)
+    if (sx === x1) {
+        // This is the leftmost sector of the biome. Stamp a wall on its left edge.
+        console.log(`[WORKER] Stamping LEFT boundary for sector [${sx}, ${sy}]`);
+        for (let ly = 0; ly < SECTOR_SIZE; ly++) {
+            for (let lx = 0; lx < BORDER_THICKNESS; lx++) {
+                setGrid(sx * SECTOR_SIZE + lx, sy * SECTOR_SIZE + ly, wallMaterial, terrainMap);
+            }
+        }
+    }
+    if (sx === x2) {
+        // This is the rightmost sector of the biome. Stamp a wall on its right edge.
+        console.log(`[WORKER] Stamping RIGHT boundary for sector [${sx}, ${sy}]`);
+        for (let ly = 0; ly < SECTOR_SIZE; ly++) {
+            for (let lx = SECTOR_SIZE - BORDER_THICKNESS; lx < SECTOR_SIZE; lx++) {
+                setGrid(sx * SECTOR_SIZE + lx, sy * SECTOR_SIZE + ly, wallMaterial, terrainMap);
+            }
+        }
+    }
+
+    // Check for Horizontal Boundaries (Layer "Ceilings")
+    // The condition checks if a sector is the start of a new layer (every 5 sectors),
+    // but not the very first layer of the entire biome.
+    if ((sy - y1) > 0 && (sy - y1) % 5 === 0) {
+        // This sector is at the top of a new layer. Stamp a ceiling.
+        console.log(`[WORKER] Stamping CEILING boundary for sector [${sx}, ${sy}]`);
+        for (let ly = 0; ly < BORDER_THICKNESS; ly++) {
+            for (let lx = 0; lx < SECTOR_SIZE; lx++) {
+                setGrid(sx * SECTOR_SIZE + lx, sy * SECTOR_SIZE + ly, wallMaterial, terrainMap);
+            }
+        }
+    }
+}
+// --- END OF NEW FUNCTION ---
+
 const hash = (x, y, s = 0) => {
     let h = x * 374761393 + y * 668265263 + s * 1442695041;
     h = (h ^ (h >> 13)) * 1274126177;
@@ -962,6 +1023,12 @@ self.onmessage = async (event) => {
 
         // Step 2: Apply the smoothing algorithm to the generated base.
         applySmoothingPass(sx, sy, terrainMap, wallMaterial, stampedPieces);
+
+        stampBiomeBoundaries(sx, sy, biomeInfo, terrainMap);
+
+        for (const piece of stampedPieces) {
+            stampSetPiece(piece, terrainMap);
+        }
 
         const sectorBackground = generateSectorBackground(sx, sy, biomeInfo);
         const lightMap = bakeLightingForSector(sx, sy, terrainMap, borderContext);

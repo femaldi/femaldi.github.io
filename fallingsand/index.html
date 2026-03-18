@@ -1678,6 +1678,7 @@
             // --- Source ---
             'from_left_crucible': { name: "From Left Crucible", category: 'Source', sprite: 'rune_from_input' },
             'from_right_crucible': { name: "From Right Crucible", category: 'Source', sprite: 'rune_from_input' },
+            'from_retort': { name: "From Retort", category: 'Source', sprite: 'rune_from_input' },
 
             // --- Action ---
             'transform': { name: "Transform X to Y", category: 'Action', type: 'transform', sprite: 'rune_transform' },
@@ -4136,6 +4137,8 @@
 
             // Step 6: Add the completed body to the simulation.
             rigidBodies.push(body);
+
+            return body;
         }
         // --- END OF REPLACEMENT ---
 
@@ -4166,7 +4169,6 @@
                 coolerSlot:       { r: 254, g: 200, b: 200 },
                 // General Markers
                 treasureMarker:   { r: 1, g: 1, b: 1 },
-                rigidBodyMarker:  { r: 100, g: 100, b: 0 },
                 // New Markers
                 genericBody:      { r: 166, g: 166, b: 166 },
                 revoluteJoint:    { r: 2,   g: 2,   b: 2 },
@@ -4243,35 +4245,10 @@
                         continue;
                     }
 
-                    // Legacy Rigid Body Marker Logic
-                    const rbMarker = MARKER_COLORS.rigidBodyMarker;
-                    if (r === rbMarker.r && g === rbMarker.g && b === rbMarker.b) {
-                        visited[pixelArrayIndex] = 1;
-                        pixels[pixelArrayIndex] = MAT.EMPTY;
-                        if (x + 1 < width) {
-                            const bodyPixelIndex = (y * width + (x + 1)) * 4;
-                            const bodyR = data[bodyPixelIndex], bodyG = data[bodyPixelIndex + 1], bodyB = data[bodyPixelIndex + 2];
-                            const bodyColorKey = `${bodyR},${bodyG},${bodyB}`;
-                            if (colorToMaterialMap.has(bodyColorKey)) {
-                                const bodyMaterial = colorToMaterialMap.get(bodyColorKey);
-                                let endX = x + 1;
-                                while (endX < width && data[(y * width + endX) * 4] === bodyR && data[(y * width + endX) * 4 + 1] === bodyG && data[(y * width + endX) * 4 + 2] === bodyB) { endX++; }
-                                let endY = y;
-                                while (endY < height && data[(endY * width + x + 1) * 4] === bodyR && data[(endY * width + x + 1) * 4 + 1] === bodyG && data[(endY * width + x + 1) * 4 + 2] === bodyB) { endY++; }
-                                const rbWidth = endX - (x + 1), rbHeight = endY - y;
-                                if (rbWidth > 0 && rbHeight > 0) {
-                                    rigidBodies.push({ x: x + 1, y: y, width: rbWidth, height: rbHeight, material: bodyMaterial });
-                                    for (let ry = y; ry < endY; ry++) for (let rx = x; rx < endX; rx++) { visited[ry * width + rx] = 1; pixels[ry * width + rx] = MAT.EMPTY; }
-                                }
-                            }
-                        }
-                        continue;
-                    }
-
                     // Other Functional Markers
                     let isMarker = false;
                     for (const key in MARKER_COLORS) {
-                        if (['rigidBodyMarker', 'genericBody', 'revoluteJoint'].includes(key)) continue; 
+                        if (['genericBody', 'revoluteJoint'].includes(key)) continue; 
                         const marker = MARKER_COLORS[key];
                         if (r === marker.r && g === marker.g && b === marker.b) {
                             areaPoints[key].push({ x, y });
@@ -5122,7 +5099,7 @@
                 execute: (context, rune) => {
                     context.batch = getMaterialsInArea(context.stationGeometry.inputCrucible.worldPoints);
                     if (context.batch.size === 0) {
-                        context.fail("Input Crucible is empty.");
+                        context.fail("Left Crucible is empty.");
                     }
                     removeMaterialsFromArea(context.stationGeometry.inputCrucible.worldPoints, context.batch, { animateRemoval: true });
                 }
@@ -5167,10 +5144,56 @@
                     // It replaces the current processing batch with the contents of the output crucible.
                     context.batch = getMaterialsInArea(context.stationGeometry.outputCrucible.worldPoints);
                     if (context.batch.size === 0) {
-                        context.fail("Output Crucible is empty.");
+                        context.fail("Right Crucible is empty.");
                     }
                     // Also clear the output crucible after taking its contents.
                     removeMaterialsFromArea(context.stationGeometry.outputCrucible.worldPoints, context.batch, { animateRemoval: true });
+                }
+            },
+            'from_retort': {
+                isTerminal: false,
+                // --- START: ADD ANIMATION ---
+                animate: (context, rune) => {
+                    AudioManager.playSound('base_tone', { pitch: 0, volume: 0.7 });
+                    const area = context.stationGeometry.retort;
+                    const centerX = area.x + area.width / 2;
+                    const centerY = area.y + area.height / 2;
+
+                    // 1. General particle burst
+                    //spawnMagicParticles(15, centerX, centerY, [220, 220, 255], 0.8);
+
+                    // 2. Render the rune sprite using particles
+                    const runeSprite = SpriteManager.sprites.get('rune_from_input');
+                    const runeColorHex = RUNE_COLORS[rune.color];
+                    const tintRGB = [
+                        parseInt(runeColorHex.slice(1, 3), 16),
+                        parseInt(runeColorHex.slice(3, 5), 16),
+                        parseInt(runeColorHex.slice(5, 7), 16)
+                    ];
+                    createShapeDissolveEffect({
+                        x: centerX, y: centerY - 32,
+                        shapeImage: runeSprite,
+                        color: tintRGB,
+                        particleCount: 100,
+                        shapeSize: 16,
+                        appearDuration: 30,
+                        holdDuration: 180,
+                        wispDuration: 30,
+                        useWhiteForShape: true
+                    });
+                },
+                dryRun: (context, rune, runeIndex) => {
+                    // if (runeIndex !== 0) {
+                    //     return { success: false, message: "Recipe must start with [From Input Crucible]." };
+                    // }
+                    return { success: true };
+                },
+                execute: (context, rune) => {
+                    context.batch = getMaterialsInArea(context.stationGeometry.retort.worldPoints);
+                    if (context.batch.size === 0) {
+                        context.fail("Retort is empty.");
+                    }
+                    removeMaterialsFromArea(context.stationGeometry.retort.worldPoints, context.batch, { animateRemoval: true });
                 }
             },
             'yield_to_left_crucible': {
@@ -6039,13 +6062,6 @@
                                 const centerY = piece.bounds.y + minY;
 
                                 const newBody = createRigidBodyRectangle(centerX, centerY, width, height, rbDef.material, null, 'Iron Slab');
-                                // const newBody = createRigidBodyFromCells({
-                                //     cells: rbDef.cells,
-                                //     material: rbDef.material,
-                                //     worldOffsetX: piece.bounds.x,
-                                //     worldOffsetY: piece.bounds.y,
-                                //     name: 'Iron Slab'
-                                // });
                                 if (!newBody) continue;
                             }
                         }
@@ -6184,6 +6200,118 @@
                         }
                     }
                 },
+                {
+                    name: "IronGate",
+                    imagePath: 'assets/iron_gate.png',
+                    isFixedLocation: true,
+                    fixedSX: 0,
+                    fixedSY: 5,
+                    postGenerationHook: function(pieceInfo) {
+                        console.log("[HOOK] Executing for IronGate from parsed data.");
+                        
+                        // Failsafe: Ensure the image was parsed correctly and contains our bodies.
+                        if (!pieceInfo.parsedData || !pieceInfo.parsedData.genericRigidBodies || pieceInfo.parsedData.genericRigidBodies.length < 2) {
+                            console.error("IronGate postGenerationHook failed: Did not find at least two generic bodies in the parsed data.");
+                            return;
+                        }
+
+                        const allBodies = pieceInfo.parsedData.genericRigidBodies;
+                        // Sort bodies by their X coordinate to reliably identify left and right doors.
+                        allBodies.sort((a, b) => {
+                            const centerA = a.cells.reduce((sum, p) => sum + p.x, 0) / a.cells.length;
+                            const centerB = b.cells.reduce((sum, p) => sum + p.x, 0) / b.cells.length;
+                            return centerA - centerB;
+                        });
+
+                        const leftDoorDef = allBodies[0];
+                        const rightDoorDef = allBodies[1];
+
+                        // --- Helper function to get bounding box from cells ---
+                        const getBoundsFromCells = (cells) => {
+                            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+                            for (const cell of cells) {
+                                minX = Math.min(minX, cell.x);
+                                minY = Math.min(minY, cell.y);
+                                maxX = Math.max(maxX, cell.x);
+                                maxY = Math.max(maxY, cell.y);
+                            }
+                            return { x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1 };
+                        };
+
+                        const leftBounds = getBoundsFromCells(leftDoorDef.cells);
+                        const rightBounds = getBoundsFromCells(rightDoorDef.cells);
+
+                        // 1. Create the two doors using createRigidBodyRectangle and the calculated bounds.
+                        const leftDoor = createRigidBodyRectangle(
+                            pieceInfo.bounds.x + leftBounds.x, pieceInfo.bounds.y + leftBounds.y,
+                            leftBounds.width, leftBounds.height,
+                            MAT.IRON, null, 'Iron Door (Left)'
+                        );
+                        const rightDoor = createRigidBodyRectangle(
+                            pieceInfo.bounds.x + rightBounds.x, pieceInfo.bounds.y + rightBounds.y,
+                            rightBounds.width, rightBounds.height,
+                            MAT.IRON, null, 'Iron Door (Right)'
+                        );
+
+                        leftDoor.body.setAwake(true);
+                        rightDoor.body.setAwake(true);
+                        
+                        // 2. Create the Prismatic Joints based on the joint markers from the parsed data.
+                        const leftJointMarker = leftDoorDef.joints[0]; // Assuming one joint per door
+                        const rightJointMarker = rightDoorDef.joints[0];
+
+                        const leftJointWorldPos = { x: pieceInfo.bounds.x + leftJointMarker.x, y: pieceInfo.bounds.y + leftJointMarker.y };
+                        const rightJointWorldPos = { x: pieceInfo.bounds.x + rightJointMarker.x, y: pieceInfo.bounds.y + rightJointMarker.y };
+
+                        const anchorLeft = world.createBody({ type: 'static', position: pl.Vec2(leftJointWorldPos.x / B2_SCALE, leftJointWorldPos.y / B2_SCALE) });
+                        const anchorRight = world.createBody({ type: 'static', position: pl.Vec2(rightJointWorldPos.x / B2_SCALE, rightJointWorldPos.y / B2_SCALE) });
+                        
+                        const leftJoint = world.createJoint(pl.PrismaticJoint({
+                            bodyA: anchorLeft,
+                            bodyB: leftDoor.body,
+                            localAxisA: pl.Vec2(1.0, 0.0),
+                            localAnchorA: pl.Vec2(0,0),
+                            localAnchorB: leftDoor.body.getLocalPoint(anchorLeft.getPosition()),
+                            enableLimit: true,
+                            lowerTranslation: -leftBounds.width / B2_SCALE,
+                            upperTranslation: 0,
+                            enableMotor: false,
+                            maxMotorForce: 5000.0,
+                            motorSpeed: -2.0
+                        }));
+                        
+                        const rightJoint = world.createJoint(pl.PrismaticJoint({
+                            bodyA: anchorRight,
+                            bodyB: rightDoor.body,
+                            localAxisA: pl.Vec2(1.0, 0.0),
+                            localAnchorA: pl.Vec2(0,0),
+                            localAnchorB: rightDoor.body.getLocalPoint(anchorRight.getPosition()),
+                            enableLimit: true,
+                            lowerTranslation: 0,
+                            upperTranslation: rightBounds.width / B2_SCALE,
+                            enableMotor: false,
+                            maxMotorForce: 5000.0,
+                            motorSpeed: 2.0
+                        }));
+
+                        // 3. Create the trigger to open the gate.
+                        const gateCenterX = pieceInfo.bounds.x + pieceInfo.parsedData.width / 2;
+                        const gateBottomY = pieceInfo.bounds.y + pieceInfo.parsedData.height;
+                        createTrigger({
+                            name: 'gate_opener',
+                            x: gateCenterX - 50,
+                            y: gateBottomY + 5,
+                            width: 100,
+                            height: 30,
+                            onInteract: (trigger) => {
+                                console.log("Gate trigger activated!");
+                                leftJoint.enableMotor(true);
+                                rightJoint.enableMotor(true);
+                                trigger.isDestroyed = true;
+                            },
+                        });
+                    }
+                },
             ],
 
             _getSeededRandom: function() {
@@ -6209,6 +6337,17 @@
                 const gridUnit = 22 * WANG_TILE_SCALE; // 330 pixels
                 // --- END OF FIX ---
 
+                const fixedPieces = this.setPieces.filter(p => p.isFixedLocation);
+                for (const piece of fixedPieces) {
+                    // For fixed pieces, we calculate their tile coordinates from their sector coordinates.
+                    // We'll place its top-left corner at the top-left of its target sector for simplicity.
+                    const worldX = piece.fixedSX * SECTOR_SIZE;
+                    const worldY = piece.fixedSY * SECTOR_SIZE;
+                    const tileX = Math.floor(worldX / gridUnit);
+                    const tileY = Math.floor(worldY / gridUnit);
+                    this.placedPieces.push({ ...piece, tx: tileX, ty: tileY });
+                }
+
                 // 1. Place the mandatory spawn point piece
                 const spawnPiece = this.setPieces.find(p => p.isSpawnPoint);
                 if (spawnPiece) {
@@ -6218,7 +6357,7 @@
                 }
 
                 // 2. Place the rest of the pieces
-                const otherPieces = this.setPieces.filter(p => !p.isSpawnPoint);
+                const otherPieces = this.setPieces.filter(p => !p.isSpawnPoint && !p.isFixedLocation);
                 for (const piece of otherPieces) {
                     const { minSectorX, maxSectorX, minSectorY, maxSectorY } = piece.bounds;
                     const minTileX = Math.floor(minSectorX * SECTOR_SIZE / gridUnit);
@@ -6271,12 +6410,8 @@
 
             getSetPiecesForSector: function(sx, sy) {
                 const piecesForSector = [];
-                // --- THIS IS THE FIX ---
-                // Define the correct world dimensions based on the tileset's content size (22px) and the scale factor.
-                const TILE_UNIT_WIDTH = 22;
-                const TILE_UNIT_HEIGHT = 22;
-                const singleTileDimX = TILE_UNIT_WIDTH * WANG_TILE_SCALE;   // 22 * 15 = 330
-                const singleTileDimY = TILE_UNIT_HEIGHT * WANG_TILE_SCALE; // 22 * 15 = 330
+                const singleTileDimX = 22 * WANG_TILE_SCALE;
+                const singleTileDimY = 22 * WANG_TILE_SCALE;
 
                 const sectorBounds = {
                     x1: sx * SECTOR_SIZE, y1: sy * SECTOR_SIZE,
@@ -6285,36 +6420,56 @@
 
                 for (const piece of this.placedPieces) {
                     if (!piece.parsedData) continue;
-                    
-                    // The tile grid itself is based on the 330x330 unit size.
-                    const pieceTopLeftX = piece.tx * singleTileDimX;
-                    const pieceTopLeftY = piece.ty * singleTileDimY;
 
-                    // The final dimensions depend on whether it's horizontal (2x1 units) or vertical (1x2 units).
-                    const pieceWorldWidth = piece.tileType === 'horizontal' ? singleTileDimX * 2 : singleTileDimX;
-                    const pieceWorldHeight = piece.tileType === 'horizontal' ? singleTileDimY : singleTileDimY * 2;
-                    // --- END OF FIX ---
+                    // --- THIS IS THE NEW LOGIC ---
+                    if (piece.isFixedLocation) {
+                        // For fixed pieces, we check if the current sector (sx, sy) IS the target sector.
+                        if (piece.fixedSX === sx && piece.fixedSY === sy) {
+                            // If it is, we calculate its bounds directly from the sector origin, ignoring tx/ty.
+                            // This guarantees perfect top-left alignment.
+                            const pieceTopLeftX = piece.fixedSX * SECTOR_SIZE;
+                            const pieceTopLeftY = piece.fixedSY * SECTOR_SIZE;
+                            const pieceWorldWidth = piece.parsedData.width;
+                            const pieceWorldHeight = piece.parsedData.height;
 
-                    const pieceBoundsRect = {
-                        x1: pieceTopLeftX,
-                        y1: pieceTopLeftY,
-                        x2: pieceTopLeftX + pieceWorldWidth,
-                        y2: pieceTopLeftY + pieceWorldHeight
-                    };
-
-                    if (sectorBounds.x1 < pieceBoundsRect.x2 && sectorBounds.x2 > pieceBoundsRect.x1 &&
-                        sectorBounds.y1 < pieceBoundsRect.y2 && sectorBounds.y2 > pieceBoundsRect.y1) {
+                            piecesForSector.push({
+                                ...piece,
+                                bounds: {
+                                    x: pieceTopLeftX,
+                                    y: pieceTopLeftY,
+                                    width: pieceWorldWidth,
+                                    height: pieceWorldHeight
+                                }
+                            });
+                        }
+                    } else {
+                        // For all other randomly placed pieces, use the original tile-based logic.
+                        const pieceTopLeftX = piece.tx * singleTileDimX;
+                        const pieceTopLeftY = piece.ty * singleTileDimY;
+                        const pieceWorldWidth = piece.tileType === 'horizontal' ? singleTileDimX * 2 : singleTileDimX;
+                        const pieceWorldHeight = piece.tileType === 'horizontal' ? singleTileDimY : singleTileDimY * 2;
                         
-                        piecesForSector.push({
-                            ...piece,
-                            bounds: {
-                                x: pieceTopLeftX,
-                                y: pieceTopLeftY,
-                                width: pieceWorldWidth,
-                                height: pieceWorldHeight
-                            }
-                        });
+                        const pieceBoundsRect = {
+                            x1: pieceTopLeftX, y1: pieceTopLeftY,
+                            x2: pieceTopLeftX + pieceWorldWidth, y2: pieceTopLeftY + pieceWorldHeight
+                        };
+
+                        // Check if this randomly placed piece overlaps the current sector.
+                        if (sectorBounds.x1 < pieceBoundsRect.x2 && sectorBounds.x2 > pieceBoundsRect.x1 &&
+                            sectorBounds.y1 < pieceBoundsRect.y2 && sectorBounds.y2 > pieceBoundsRect.y1) {
+                            
+                            piecesForSector.push({
+                                ...piece,
+                                bounds: {
+                                    x: pieceTopLeftX,
+                                    y: pieceTopLeftY,
+                                    width: pieceWorldWidth,
+                                    height: pieceWorldHeight
+                                }
+                            });
+                        }
                     }
+                    // --- END OF NEW LOGIC ---
                 }
                 return piecesForSector;
             }
@@ -8654,14 +8809,20 @@
         ].includes(type);
         
         function updateRigidBodyGrid() {
-            // 1. Clear all chunks that had stubs in the PREVIOUS frame.
             for (const key of activeStubChunks) {
                 const chunk = etcChunkMap.get(key);
                 if (chunk) {
-                    chunk.data.fill(0); // Clear the old stub data
+                    // INSTEAD OF chunk.data.fill(0), we now do a careful sweep.
+                    for (let i = 0; i < CHUNK_SIZE_SQ; i++) {
+                        // Only reset the pixel if it was a rigid body stub.
+                        // This preserves player pixels (aux: 2) and any future special aux data.
+                        if (chunk.data[i] === 1) {
+                            chunk.data[i] = 0;
+                        }
+                    }
                 }
             }
-            activeStubChunks.clear(); // Reset the set for the CURRENT frame.
+            activeStubChunks.clear();
 
             // 2. Populate the grid with new stub locations and track the chunks used.
             const buffer = 1;
@@ -8683,7 +8844,9 @@
                             for (let dx = -buffer; dx <= buffer; dx++) {
                                 const wx = worldX + dx;
                                 const wy = worldY + dy;
-                                setAuxData(etcChunkMap, wx, wy, 1); // Mark as a rigid body stub
+                                if (getAuxData(etcChunkMap, wx, wy) !== 2) {
+                                    setAuxData(etcChunkMap, wx, wy, 1); // Mark as a rigid body stub
+                                }
 
                                 // 3. Add the key of the affected chunk to our tracker for the NEXT frame's clear operation.
                                 const cx = Math.floor(wx / CHUNK_SIZE);
@@ -13637,7 +13800,7 @@
             await yieldToBrowser();
             activateInitialChunks();
             //createPlayerBody();
-            //createWoodenBox(150, -150, 24, 64);
+            
 
             // const startingPotion = new RigidBody(0, 0, 8, 12, MAT.GLASS, "Empty Potion");
             // startingPotion.pixels = new Uint8Array(OBJECT_DEFINITIONS.empty_potion.pixels);
@@ -13650,6 +13813,8 @@
             // player.structurePocket.push(startingPotion);
 
             createPotionInWorld('corrosive_contact', player.x + 150, player.y - 10, {potency:10});
+            createPotionInWorld('liquid_form', player.x + 170, player.y - 10);
+            createWoodenBox(player.x + 200, player.y);
 
             // createRuneInWorld(player.x + 50, player.y - 10, {
             //     id: 'combine',
