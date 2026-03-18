@@ -266,6 +266,7 @@
         const TOOLBAR_STACK_OFFSET = 3;
 
         const B2_SCALE = 30; // 30 pixels = 1 meter in the physics world
+        const STEP_INTERVAL_MS = 350;
         let rigidBodies = [];
         let staticWorldBodies = []; // To hold temporary terrain colliders
         let activeStaticChunks = new Set();
@@ -1841,6 +1842,9 @@
 
                     // 3. Process the Hit
                     if (hitPoint) {
+                        const randomPitch = (Math.random() - 0.5) * 600; // A slightly smaller range than walking
+                        AudioManager.playSound('mine', { pitch: randomPitch, volume: 0.7 });
+
                         // Check if the material we hit is something the pick can break.
                         if (softMaterials.has(hitType)) {
 
@@ -4359,6 +4363,148 @@
             }
         };
 
+        // in index.html, near other manager objects
+
+        // --- START OF NEW CODE: AudioManager ---
+        const AudioManager = {
+            audioContext: null,
+            buffers: new Map(),
+            loopingSources: new Map(),
+
+            /**
+             * Initializes the Web Audio API AudioContext. Must be called after a user interaction.
+             */
+            init() {
+                if (this.audioContext) return; // Already initialized
+                try {
+                    this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                    console.log("AudioContext initialized successfully.");
+                } catch(e) {
+                    console.error("Web Audio API is not supported in this browser.");
+                }
+            },
+
+            /**
+             * Loads a sound file and decodes it into a reusable buffer.
+             * @param {string} id - A unique ID to store the sound (e.g., 'step').
+             * @param {string} path - The path to the sound file (e.g., 'assets/step.wav').
+             */
+            async loadSound(id, path) {
+                if (!this.audioContext) {
+                    console.error("Cannot load sound, AudioContext not initialized.");
+                    return;
+                }
+                try {
+                    const response = await fetch(path);
+                    const arrayBuffer = await response.arrayBuffer();
+                    const audioBuffer = await this.audioContext.decodeAudioData(arrayBuffer);
+                    this.buffers.set(id, audioBuffer);
+                    console.log(`Sound loaded and decoded: ${id}`);
+                } catch(e) {
+                    console.error(`Failed to load or decode sound "${id}" at ${path}`, e);
+                }
+            },
+
+            /**
+             * A single function to load all necessary sounds for the game.
+             */
+            async loadAll() {
+                 if (!this.audioContext) this.init(); // Attempt to initialize if not already
+                 if (!this.audioContext) return; 
+                 await this.loadSound('step', 'assets/step.wav');
+                 await this.loadSound('levitation', 'assets/levitation.wav');
+                 await this.loadSound('mine', 'assets/mine.wav');
+                 await this.loadSound('base_tone', 'assets/base_tone.wav');
+            },
+
+            /**
+             * Plays a loaded sound with optional pitch and volume settings.
+             * @param {string} id - The ID of the sound to play.
+             * @param {object} [options={}] - Playback options.
+             * @param {number} [options.pitch=0] - Pitch variation in cents. 100 cents = 1 semitone.
+             * @param {number} [options.volume=1.0] - Volume from 0.0 to 1.0.
+             */
+            playSound(id, { pitch = 0, volume = 1.0 } = {}) {
+                if (!this.audioContext || !this.buffers.has(id)) return;
+                
+                // Resume context if it was suspended by browser autoplay policies.
+                if (this.audioContext.state === 'suspended') {
+                    this.audioContext.resume();
+                }
+
+                const source = this.audioContext.createBufferSource();
+                source.buffer = this.buffers.get(id);
+
+                // This is the magic for pitch control. 'detune' changes pitch without changing speed.
+                source.detune.value = pitch;
+
+                const gainNode = this.audioContext.createGain();
+                gainNode.gain.setValueAtTime(volume, this.audioContext.currentTime);
+
+                source.connect(gainNode);
+                gainNode.connect(this.audioContext.destination);
+                source.start(0);
+            },
+            isLooping(id) {
+                return this.loopingSources.has(id);
+            },
+
+            /**
+             * Starts playing a sound on a loop with a smooth fade-in.
+             * Does nothing if the sound is already playing.
+             * @param {string} id The ID of the sound to loop.
+             * @param {object} [options={}] Playback options.
+             * @param {number} [options.volume=1.0] The target volume.
+             * @param {number} [options.fadeTime=0.1] The fade-in duration in seconds.
+             */
+            startLoop(id, { volume = 1.0, fadeTime = 0.1 } = {}) {
+                if (this.isLooping(id) || !this.audioContext || !this.buffers.has(id)) return;
+
+                if (this.audioContext.state === 'suspended') this.audioContext.resume();
+
+                const source = this.audioContext.createBufferSource();
+                const gainNode = this.audioContext.createGain();
+
+                source.buffer = this.buffers.get(id);
+                source.loop = true; // This is the magic property for looping!
+                source.connect(gainNode);
+                gainNode.connect(this.audioContext.destination);
+                
+                // Start the sound immediately, but with the volume at 0.
+                gainNode.gain.setValueAtTime(0, this.audioContext.currentTime);
+                // Schedule a smooth ramp up to the target volume.
+                gainNode.gain.linearRampToValueAtTime(volume, this.audioContext.currentTime + fadeTime);
+                
+                source.start(0);
+
+                // Store the references so we can stop it later.
+                this.loopingSources.set(id, { source, gainNode });
+            },
+
+            /**
+             * Stops a looping sound with a smooth fade-out.
+             * Does nothing if the sound is not playing.
+             * @param {string} id The ID of the sound to stop.
+             * @param {object} [options={}] Playback options.
+             * @param {number} [options.fadeTime=0.2] The fade-out duration in seconds.
+             */
+            stopLoop(id, { fadeTime = 0.2 } = {}) {
+                if (!this.isLooping(id)) return;
+
+                const { source, gainNode } = this.loopingSources.get(id);
+                
+                // Schedule a smooth ramp down to 0 volume.
+                gainNode.gain.linearRampToValueAtTime(0, this.audioContext.currentTime + fadeTime);
+                
+                // Schedule the sound to actually stop after the fade is complete.
+                source.stop(this.audioContext.currentTime + fadeTime);
+
+                // Immediately remove it from the map so we know it's "stopping".
+                this.loopingSources.delete(id);
+            }
+        };
+        // --- END OF NEW CODE: AudioManager ---
+
         const SpriteManager = {
             sprites: new Map(),
 
@@ -4939,6 +5085,7 @@
                 isTerminal: false,
                 // --- START: ADD ANIMATION ---
                 animate: (context, rune) => {
+                    AudioManager.playSound('base_tone', { pitch: 0, volume: 0.7 });
                     const area = context.stationGeometry.inputCrucible;
                     const centerX = area.x + area.width / 2;
                     const centerY = area.y + area.height / 2;
@@ -4983,6 +5130,7 @@
             'from_right_crucible': {
                 isTerminal: false,
                 animate: (context, rune) => {
+                    AudioManager.playSound('base_tone', { pitch: 0, volume: 0.7 });
                     const area = context.stationGeometry.outputCrucible;
                     const centerX = area.x + area.width / 2;
                     const centerY = area.y + area.height / 2;
@@ -5028,6 +5176,7 @@
             'yield_to_left_crucible': {
                 isTerminal: true, // This is a form of output, so it's a terminal action for this sub-chain.
                 animate: (context, rune) => {
+                    AudioManager.playSound('base_tone', { pitch: 700, volume: 0.7 });
                     const area = context.stationGeometry.inputCrucible;
                     const centerX = area.x + area.width / 2;
                     const centerY = area.y + area.height / 2;
@@ -5088,6 +5237,7 @@
             'infuse': {
                 isTerminal: false,
                 animate: (context, rune) => {
+                    AudioManager.playSound('base_tone', { pitch: 400, volume: 0.7 });
                     const area = context.stationGeometry.inputCrucible;
                     const centerX = area.x + area.width / 2;
                     const centerY = area.y + area.height / 2;
@@ -5153,6 +5303,7 @@
             'combine': {
                 isTerminal: false,
                 animate: (context, rune) => {
+                    AudioManager.playSound('base_tone', { pitch: 400, volume: 0.7 });
                     const area = context.stationGeometry.inputCrucible;
                     const centerX = area.x + area.width / 2;
                     const centerY = area.y + area.height / 2;
@@ -5217,6 +5368,7 @@
             'extract_essence': {
                 isTerminal: false,
                 animate: (context, rune) => {
+                    AudioManager.playSound('base_tone', { pitch: 400, volume: 0.7 });
                     const area = context.stationGeometry.inputCrucible;
                     const centerX = area.x + area.width / 2;
                     const centerY = area.y + area.height / 2;
@@ -5265,6 +5417,7 @@
             'yield_to_retort': {
                 isTerminal: true, // Not terminal, as it sets up the next step
                 animate: (context, rune) => {
+                    AudioManager.playSound('base_tone', { pitch: 500, volume: 0.7 });
                     const area = context.stationGeometry.retort;
                     const centerX = area.x + area.width / 2;
                     const centerY = area.y + area.height / 2;
@@ -5307,6 +5460,7 @@
             'yield_to_right_crucible': {
                 isTerminal: true,
                 animate: (context, rune) => {
+                    AudioManager.playSound('base_tone', { pitch: 700, volume: 0.7 });
                     const area = context.stationGeometry.outputCrucible;
                     const centerX = area.x + area.width / 2;
                     const centerY = area.y + area.height / 2;
@@ -5351,6 +5505,7 @@
             'forma_potion': {
                 isTerminal: true,
                 animate: (context, rune) => {
+                    AudioManager.playSound('base_tone', { pitch: 900, volume: 0.7 });
                     const area = context.stationGeometry.vessel;
                     const centerX = area.x + area.width / 2;
                     const centerY = area.y + area.height / 2;
@@ -5505,7 +5660,7 @@
 
         const AlchemyJobManager = {
             activeJobs: [],
-            ALCHEMY_STEP_DELAY_FRAMES: 120, // ~0.75 seconds between steps
+            ALCHEMY_STEP_DELAY_FRAMES: 90,
 
             /**
              * Kicks off a new alchemy job after a successful dry run.
@@ -6456,6 +6611,7 @@
             canInteract: false,
             currentInteractable: null,
             activeStationGeometry: null,
+            lastStepTime: 0,
             maxHoverEnergy: 100,
             hoverEnergy: 100,
             hoverForce: 0.1,
@@ -8578,6 +8734,28 @@
             }
 
             if (player.isSpawning || !player.body) return;
+
+            // --- Levitation & Step Sound Logic ---
+            const isWalking = player.onGround && (keys['KeyA'] || keys['KeyD']);
+            const isLevitating = keys['KeyW'] && player.hoverEnergy > 0 && !player.onGround && !getPlayerSubmersionRatio() > 0;
+
+            // Handle step sounds
+            if (isWalking) {
+                const now = performance.now();
+                if (now - player.lastStepTime > STEP_INTERVAL_MS) {
+                    const randomPitch = (Math.random() - 0.5) * 800;
+                    AudioManager.playSound('step', { pitch: randomPitch, volume: 0.6 });
+                    player.lastStepTime = now;
+                }
+            }
+
+            // Handle levitation loop sound
+            if (isLevitating && !AudioManager.isLooping('levitation')) {
+                AudioManager.startLoop('levitation', { volume: 0.4, fadeTime: 0.2 });
+            } else if (!isLevitating && AudioManager.isLooping('levitation')) {
+                AudioManager.stopLoop('levitation', { fadeTime: 0.3 });
+            }
+            // --- End Sound Logic ---
 
             updatePlayerDamage();
             updatePlayerOxygen();
@@ -13264,6 +13442,9 @@
             localStorage.clear();
             const loadingOverlay = document.getElementById('loading-overlay');
             const yieldToBrowser = () => new Promise(resolve => setTimeout(resolve, 20));
+
+            window.addEventListener('mousedown', () => AudioManager.init(), { once: true });
+            window.addEventListener('keydown', () => AudioManager.init(), { once: true });
             
             WORLD_SEED = Math.floor(Math.random() * 1000000);
             // Initialize the main, persistent worker for in-game generation
@@ -13285,6 +13466,11 @@
             updateLoadingStatus('Loading Sprites...');
             await yieldToBrowser();
             await SpriteManager.loadAll();
+
+            updateLoadingStatus('Loading Sounds...');
+            await yieldToBrowser();
+            // This line calls the function that loads 'step.wav'
+            await AudioManager.loadAll();
 
             updateLoadingStatus('Parsing Set Piece Blueprints...');
             await yieldToBrowser();
