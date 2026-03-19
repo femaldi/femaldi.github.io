@@ -4342,6 +4342,156 @@
 
         // in index.html, near other manager objects
 
+        // in index.html, near other manager objects
+
+        // in index.html, near other manager objects
+
+        // --- START OF COMPLETE REPLACEMENT: PostProcessManager ---
+        const PostProcessManager = {
+            postCanvas: null,
+            postCtx: null,
+            enabled: true,
+
+            // --- NEW: Configuration for Pixel Bleed ---
+            BLEED_ENABLED: false,
+            // How much brighter a neighbor needs to be to start bleeding.
+            // A higher value means only very bright objects will bleed.
+            BLEED_BRIGHTNESS_THRESHOLD: 0.2, // (0.0 to 1.0)
+            // How much color is transferred from the bright pixel to the dark one.
+            // A higher value creates a stronger, more noticeable glow.
+            BLEED_AMOUNT: 0.15, // (0.0 to 1.0)
+            
+            GRADING_ENABLED: true, // You can now enable/disable both effects independently
+
+            init(width, height) {
+                this.postCanvas = document.createElement('canvas');
+                this.postCanvas.width = width;
+                this.postCanvas.height = height;
+                this.postCtx = this.postCanvas.getContext('2d');
+            },
+
+            // A high-saturation, vibrant magical feel.
+            gradeColor(r, g, b) {
+                // Calculate the grayscale value (the "luminance")
+                const gray = 0.299 * r + 0.587 * g + 0.114 * b;
+                
+                // The amount to boost saturation. 1.0 is no change, 1.2 is a 20% boost.
+                const saturationBoost = 2.0;
+
+                // "Lerp" (linear interpolate) from the grayscale value to the original color.
+                // This pushes the color further away from gray, increasing its saturation.
+                r = gray + (r - gray) * saturationBoost;
+                g = gray + (g - gray) * saturationBoost;
+                b = gray + (b - gray) * saturationBoost;
+
+                // Clamp the values
+                r = Math.max(0, Math.min(255, r));
+                g = Math.max(0, Math.min(255, g));
+                b = Math.max(0, Math.min(255, b));
+
+                return [r, g, b];
+            },
+
+            // --- START OF NEW HELPER FUNCTION: applyPixelBleed ---
+            /**
+             * Applies a color bleed effect, making bright pixels "glow" into adjacent dark pixels.
+             * @param {Uint8ClampedArray} sourcePixels - The raw pixel data of the original frame.
+             * @param {Uint8ClampedArray} destPixels - The pixel data array to write the results into.
+             * @param {number} width - The width of the canvas.
+             * @param {number} height - The height of the canvas.
+             */
+            applyPixelBleed(sourcePixels, destPixels, width, height) {
+                for (let y = 0; y < height; y++) {
+                    for (let x = 0; x < width; x++) {
+                        const i = (y * width + x) * 4;
+
+                        // Get the color and brightness of the current pixel.
+                        let r = sourcePixels[i];
+                        let g = sourcePixels[i + 1];
+                        let b = sourcePixels[i + 2];
+                        const brightness = (r + g + b) / (255 * 3);
+
+                        // Check neighbors (N, S, E, W)
+                        const neighbors = [
+                            (y > 0) ? ((y - 1) * width + x) * 4 : -1,         // North
+                            (y < height - 1) ? ((y + 1) * width + x) * 4 : -1, // South
+                            (x > 0) ? (y * width + (x - 1)) * 4 : -1,         // West
+                            (x < width - 1) ? (y * width + (x + 1)) * 4 : -1  // East
+                        ];
+
+                        for (const n_i of neighbors) {
+                            if (n_i === -1) continue;
+
+                            const n_r = sourcePixels[n_i];
+                            const n_g = sourcePixels[n_i + 1];
+                            const n_b = sourcePixels[n_i + 2];
+                            const n_brightness = (n_r + n_g + n_b) / (255 * 3);
+
+                            // If the neighbor is significantly brighter, bleed its color into the current pixel.
+                            if (n_brightness > brightness + this.BLEED_BRIGHTNESS_THRESHOLD) {
+                                r += (n_r - r) * this.BLEED_AMOUNT;
+                                g += (n_g - g) * this.BLEED_AMOUNT;
+                                b += (n_b - b) * this.BLEED_AMOUNT;
+                            }
+                        }
+
+                        // Write the final, potentially modified color to the destination array.
+                        destPixels[i] = r;
+                        destPixels[i + 1] = g;
+                        destPixels[i + 2] = b;
+                        destPixels[i + 3] = 255; // Keep alpha at full
+                    }
+                }
+            },
+            // --- END OF NEW HELPER FUNCTION ---
+
+            apply(mainCtx, mainCanvas) {
+                if (!this.enabled || !this.postCtx) return;
+
+                this.postCtx.drawImage(mainCanvas, 0, 0);
+                const imageData = this.postCtx.getImageData(0, 0, this.postCanvas.width, this.postCanvas.height);
+                const originalPixels = imageData.data;
+                
+                // Create a separate array to write our results into.
+                const processedPixels = new Uint8ClampedArray(originalPixels.length);
+
+                // --- START OF MODIFICATION ---
+                // Apply Pixel Bleed first (if enabled)
+                if (this.BLEED_ENABLED) {
+                    this.applyPixelBleed(originalPixels, processedPixels, this.postCanvas.width, this.postCanvas.height);
+                } else {
+                    // If not enabled, just copy the original data over.
+                    processedPixels.set(originalPixels);
+                }
+
+                // Apply Color Grading on top of the (potentially) bled pixels.
+                if (this.GRADING_ENABLED) {
+                    for (let i = 0; i < processedPixels.length; i += 4) {
+                        const r = processedPixels[i];
+                        const g = processedPixels[i + 1];
+                        const b = processedPixels[i + 2];
+
+                        const [newR, newG, newB] = this.gradeColor(r, g, b);
+
+                        processedPixels[i] = newR;
+                        processedPixels[i + 1] = newG;
+                        processedPixels[i + 2] = newB;
+                    }
+                }
+                
+                // Put the final processed data into the imageData object.
+                imageData.data.set(processedPixels);
+                // --- END OF MODIFICATION ---
+                
+                this.postCtx.putImageData(imageData, 0, 0);
+
+                mainCtx.globalCompositeOperation = 'copy';
+                mainCtx.drawImage(this.postCanvas, 0, 0);
+                mainCtx.globalCompositeOperation = 'source-over';
+            }
+        };
+        // --- END OF COMPLETE REPLACEMENT ---
+
         // --- START OF NEW CODE: AudioManager ---
         const AudioManager = {
             audioContext: null,
@@ -13134,6 +13284,8 @@
                 Profiler.stop('Debug');
             }
 
+            PostProcessManager.apply(ctx, canvas);
+
             Profiler.stop('FrameTotal');
         }
 
@@ -13655,6 +13807,8 @@
                 g: new Float32Array(bloomCanvas.width * bloomCanvas.height),
                 b: new Float32Array(bloomCanvas.width * bloomCanvas.height)
             };
+
+            PostProcessManager.init(renderWidth, renderHeight);
 
             // Store the player's spawn sector coordinates for biome and set piece calculations
             playerSpawnSX = Math.floor(player.x / SECTOR_SIZE);
