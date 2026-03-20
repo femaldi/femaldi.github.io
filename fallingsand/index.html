@@ -4376,7 +4376,7 @@
                 const gray = 0.299 * r + 0.487 * g + 0.214 * b;
                 
                 // The amount to boost saturation. 1.0 is no change, 1.2 is a 20% boost.
-                const saturationBoost = 2.0;
+                const saturationBoost = 1.4;
 
                 // "Lerp" (linear interpolate) from the grayscale value to the original color.
                 // This pushes the color further away from gray, increasing its saturation.
@@ -10708,39 +10708,55 @@
             pixels[destI + 3] = 255;
         }
 
-        // --- START OF NEW FUNCTION ---
+        // --- START OF COMPLETE REPLACEMENT ---
         /**
-         * Scans all set pieces and returns an array of data for those whose
+         * Scans all PLACED set pieces and returns an array of data for those whose
          * background images are currently visible on screen.
-         * @returns {Array<object>} An array of objects, each containing bounds, imageData, and width for a visible background.
+         * This is a self-contained, corrected version.
          */
         function getVisibleSetPieceBackgrounds() {
             const visibleBGs = [];
-            for (const piece of SetPieceManager.setPieces) {
-                // Check if the piece has the necessary data to be rendered
+            const cameraBounds = { x: camera.x, y: camera.y, width: viewWidth, height: viewHeight };
+
+            // The size of a single tile unit in the world, needed for calculations.
+            const gridUnit = 22 * WANG_TILE_SCALE;
+
+            // FIX 1: Iterate over the correct array of `placedPieces`.
+            for (const piece of SetPieceManager.placedPieces) {
+
+                // Safety check: The piece must have background data and parsed data to have dimensions.
                 if (!piece.backgroundImageData || !piece.parsedData) continue;
 
-                // Calculate the set piece's world position and bounds
-                const targetSX = playerSpawnSX + piece.targetSectorOffsetX;
-                const targetSY = playerSpawnSY + piece.targetSectorOffsetY;
-                const halfW = Math.floor(piece.parsedData.width / 2);
-                const halfH = Math.floor(piece.parsedData.height / 2);
-                const centerX = (targetSX * SECTOR_SIZE) + piece.spawnLocalX;
-                const centerY = (targetSY * SECTOR_SIZE) + piece.spawnLocalY;
-                const pieceBounds = {
-                    x: centerX - halfW,
-                    y: centerY - halfH,
-                    width: piece.parsedData.width,
-                    height: piece.parsedData.height
-                };
+                let pieceBounds; // This will hold the calculated world-space bounds for the current piece.
 
-                // Check for intersection with the camera's view frustum
-                if (pieceBounds.x < camera.x + viewWidth &&
-                    pieceBounds.x + pieceBounds.width > camera.x &&
-                    pieceBounds.y < camera.y + viewHeight &&
-                    pieceBounds.y + pieceBounds.height > camera.y)
+                // FIX 2: Calculate the bounds correctly based on whether the piece is fixed or random.
+                if (piece.isFixedLocation) {
+                    // For fixed pieces (like the Iron Gate), calculate bounds directly from its sector coordinates.
+                    pieceBounds = {
+                        x: piece.fixedSX * SECTOR_SIZE,
+                        y: piece.fixedSY * SECTOR_SIZE,
+                        width: piece.parsedData.width,
+                        height: piece.parsedData.height
+                    };
+                } else {
+                    // For all other randomly placed pieces, calculate bounds from their tile grid coordinates (tx, ty).
+                    const pieceWorldWidth = piece.tileType === 'horizontal' ? gridUnit * 2 : gridUnit;
+                    const pieceWorldHeight = piece.tileType === 'horizontal' ? gridUnit : gridUnit * 2;
+                    pieceBounds = {
+                        x: piece.tx * gridUnit,
+                        y: piece.ty * gridUnit,
+                        width: pieceWorldWidth,
+                        height: pieceWorldHeight
+                    };
+                }
+
+                // FIX 3: Use the newly calculated, correct bounds to check for visibility against the camera.
+                if (pieceBounds.x < cameraBounds.x + cameraBounds.width &&
+                    pieceBounds.x + pieceBounds.width > cameraBounds.x &&
+                    pieceBounds.y < cameraBounds.y + cameraBounds.height &&
+                    pieceBounds.y + pieceBounds.height > cameraBounds.y)
                 {
-                    // If visible, add its pre-calculated data to the list for the renderer to use
+                    // If the piece is on screen, add its background data to the list to be rendered.
                     visibleBGs.push({
                         bounds: pieceBounds,
                         imageData: piece.backgroundImageData.data,
@@ -10750,6 +10766,7 @@
             }
             return visibleBGs;
         }
+        // --- END OF COMPLETE REPLACEMENT ---
 
 
         function render() {
@@ -10893,6 +10910,7 @@
                                     currentFramePixels[destI + 2] = bg.imageData[srcI + 2];
                                     currentFramePixels[destI + 3] = 255;
                                     backgroundDrawn = true;
+                                    //console.log("drawing bg");
                                     break;
                                 }
                             }
