@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Falling Sand Platformer</title>
+    <title>Falling Alchemy</title>
     
     <style>
         body {
@@ -101,11 +101,11 @@
 </head>
 <body>
    <div id="loading-overlay" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #1a1a2a; color: #fff; z-index: 1000; display: flex; justify-content: center; align-items: center; flex-direction: column;">
-        <h1 style="font-size: 2.5em; margin-bottom: 20px;">Falling Sand Platformer</h1>
+        <h1 style="font-size: 2.5em; margin-bottom: 20px;">Falling Alchemy</h1>
         <p id="loading-status" style="font-size: 1.2em; font-family: monospace;">Initializing...</p>
     </div>
 
-    <div class="controls">
+    <div class="controls" style="display:none">
         <button class="btn-sand active" onclick="setMaterial('sand')">Sand</button>
         <button class="btn-soil" onclick="setMaterial('soil')">Soil</button>
         <button class="btn-ground" onclick="setMaterial('ground')">Ground</button>
@@ -444,7 +444,7 @@
                 return;
             }
 
-            const body = new RigidBody(x, y, def.width, def.height, MAT.WOOD, def.name);
+            const body = new RigidBody(x, y, def.width, def.height, MAT.WOOD, def.name, true);
             body.pixels = new Uint8Array(def.pixels);
 
             // --- NEW LOGIC: Sample the sprite and bake its colors ---
@@ -466,7 +466,10 @@
                 body.spritePixels = imageData.data; 
             }
 
-            body.rebuildFixtures();
+            body.rebuildFixtures({
+                filterCategoryBits: CATEGORY_MATERIAL_CHUNK,
+                filterMaskBits: MASK_MATERIAL_CHUNK
+            });
             const userData = body.body.getUserData();
             userData.isPickup = true;
             userData.definitionId = definitionId;
@@ -678,15 +681,19 @@
                     displayMessage("Inventory Full", "Cannot pick up the potion.", 240);
                 }
             }
+
             // Handle special "onPickup" items like upgrade tablets
-            else if (userData.onPickup) {
+            if (userData.onPickup) {
                 userData.onPickup(player);
-                body.isDestroyed = true; 
-                createShapeDissolveEffect({ x: pickupPos.x * B2_SCALE, y: pickupPos.y * B2_SCALE, shapeImage: ringSprite });
-                return;
+
+                if (!userData.isRune) {
+                    body.isDestroyed = true; 
+                    createShapeDissolveEffect({ x: pickupPos.x * B2_SCALE, y: pickupPos.y * B2_SCALE, shapeImage: ringSprite });
+                }
             }
+
             // --- NEW LOGIC: Handle picking up material chunks ---
-            else if (userData.isMaterialChunk) {
+            if (userData.isMaterialChunk) {
                 if (player.structurePocket.length < player.maxStructureSlots) {
                     world.destroyBody(body.body);
                     body.body = null;
@@ -1717,15 +1724,15 @@
         // The first essence in the array is the "primary" one discoverable via Basic Analysis.
         const MATERIAL_ESSENCES = {
             // Natural Materials
-            [MAT.WATER]: [ESSENCES.FLUIDITY, ESSENCES.DAMPENING],
+            [MAT.WATER]: [ESSENCES.FLUIDITY], // ESSENCES.DAMPENING],
             [MAT.LAVA]: [ESSENCES.INTENSE_HEAT, ESSENCES.VISCOSITY],
             [MAT.SOIL]: [ESSENCES.STABILITY, ESSENCES.FERTILITY],
             [MAT.STEAM]: [ESSENCES.VAPOR],
             [MAT.SANDSTONE_WALL]: [ESSENCES.PERMEABILITY],
             [MAT.ROCK_WALL]: [ESSENCES.HARDNESS, ESSENCES.WEIGHT],
             [MAT.ADAMANTIUM]: [ESSENCES.HARDNESS, ESSENCES.WEIGHT],
-            [MAT.SAND]: [ESSENCES.GRANULARITY, ESSENCES.ABRASION],
-            [MAT.WOOD]: [ESSENCES.STRUCTURE, ESSENCES.BUOYANCY],
+            [MAT.SAND]: [ESSENCES.ABRASION], //ESSENCES.GRANULARITY
+            [MAT.WOOD]: [ESSENCES.BUOYANCY],
             [MAT.GLASS]: [ESSENCES.BRITTLENESS], // Crude Glass
             [MAT.OBSIDIAN]: [ESSENCES.HARDNESS, ESSENCES.HEAT_RESISTANCE],
             [MAT.METHANE]: [ESSENCES.LEVITY, ESSENCES.VOLATILITY],
@@ -2028,18 +2035,15 @@
         };
 
         const TRADE_INVENTORY = [
-            { name: "Heat Reaction Tablet", type: 'tablet', cost: { [MAT.COPPER]: 50 }, data: { upgradeType: 'unlock_reaction', reactionData: { reactionKey: 'heat_material' } } },
-            { name: "Clear Cauldron Tablet", type: 'tablet', cost: { [MAT.SILVER]: 25 }, data: { upgradeType: 'unlock_reaction', reactionData: { reactionKey: 'clear_cauldrons' } } },
-            { name: "Tool Pouch Expansion", type: 'tablet', cost: { [MAT.GOLD]: 10 }, data: { upgradeType: 'increase_tool_slots' } },
-            { name: "Structure Bag Expansion", type: 'tablet', cost: { [MAT.GOLD]: 10 }, data: { upgradeType: 'increase_structure_slots' } },
-            { name: "Wooden Barrel", type: 'structure', cost: { [MAT.COPPER]: 20 }, data: { definitionId: 'wooden_barrel' } },
+            { name: "Tool Pouch Expansion", type: 'tablet', cost: { [MAT.COPPER]: 100 }, data: { upgradeType: 'increase_tool_slots' } },
+            { name: "Structure Bag Expansion", type: 'tablet', cost: { [MAT.COPPER]: 100 }, data: { upgradeType: 'increase_structure_slots' } },
             { name: "Stone Pick", type: 'tool', cost: { [MAT.COPPER]: 5 }, data: { definitionId: 'stone_pick' } },
             { name: "Firestarter", type: 'tool', cost: { [MAT.COPPER]: 20 }, data: { definitionId: 'firestarter' } },
-            { name: "25 Gunpowder", type: 'material', cost: { [MAT.COPPER]: 5 }, data: { material: MAT.GUNPOWDER, amount: 25 } },
             { name: "25 Oil", type: 'material', cost: { [MAT.COPPER]: 10 }, data: { material: MAT.OIL, amount: 25 } },
+            { name: "100 Water", type: 'material', cost: { [MAT.COPPER]: 10 }, data: { material: MAT.WATER, amount: 100 } },
             { name: "50 Sand", type: 'material', cost: { [MAT.COPPER]: 1 }, data: { material: MAT.SAND, amount: 50 } },
-            { name: "10 Silver", type: 'material', cost: { [MAT.COPPER]: 100 }, data: { material: MAT.SILVER, amount: 10 } },
-            { name: "10 Gold", type: 'material', cost: { [MAT.SILVER]: 100 }, data: { material: MAT.GOLD, amount: 10 } },
+            { name: "10 Silver", type: 'material', cost: { [MAT.COPPER]: 1000 }, data: { material: MAT.SILVER, amount: 10 } },
+            { name: "10 Gold", type: 'material', cost: { [MAT.SILVER]: 1000 }, data: { material: MAT.GOLD, amount: 10 } },
         ];
 
         // --- START OF NEW CODE: POUCH-BASED TRADE LOGIC ---
@@ -3761,8 +3765,8 @@
                     // The first 15 vertical sectors (0-14) below spawn will be caves.
                     // This covers layers 0, 1, and 2.
                     getBounds: (spawnSX, spawnSY) => ({ 
-                        x1: spawnSX - 10, y1: spawnSY, 
-                        x2: spawnSX + 9, y2: spawnSY + 14 
+                        x1: spawnSX - 5, y1: spawnSY, 
+                        x2: spawnSX + 4, y2: spawnSY + 14 
                     }),
                     getGenerationParams: function(sx, sy, bounds) {
                         const sectorsPerLayer = 5;
@@ -3775,8 +3779,8 @@
                     name: "Labyrinth",
                     // The next 5 vertical sectors (15-19) will be the Labyrinth (Layer 3).
                     getBounds: (spawnSX, spawnSY) => ({ 
-                        x1: spawnSX - 10, y1: spawnSY + 15, 
-                        x2: spawnSX + 9, y2: spawnSY + 19 
+                        x1: spawnSX - 5, y1: spawnSY + 15, 
+                        x2: spawnSX + 4, y2: spawnSY + 19 
                     }),
                      getGenerationParams: function(sx, sy, bounds) {
                         return { layer:3, bounds: bounds };
@@ -3786,13 +3790,23 @@
                     name: "MagicDungeon",
                     // The final 5 vertical sectors (20-24) will be the Magic Dungeon (Layer 4).
                     getBounds: (spawnSX, spawnSY) => ({ 
-                        x1: spawnSX - 10, y1: spawnSY + 20, 
-                        x2: spawnSX + 9, y2: spawnSY + 24 
+                        x1: spawnSX - 5, y1: spawnSY + 20, 
+                        x2: spawnSX + 4, y2: spawnSY + 24 
                     }),
                      getGenerationParams: function(sx, sy, bounds) {
                         return { layer:4, bounds: bounds };
                     }
-                }
+                },
+                {
+                    name: "GroundStrata",
+                    getBounds: (spawnSX, spawnSY) => ({ 
+                        x1: spawnSX - 5, y1: spawnSY - 2, 
+                        x2: spawnSX + 4, y2: spawnSY - 1 
+                    }),
+                     getGenerationParams: function(sx, sy, bounds) {
+                        return { bounds: bounds };
+                    }
+                },
             ],
 
             // Finds the appropriate biome for a given sector coordinate.
@@ -3870,7 +3884,7 @@
 
             // --- 3. Create and Attach RigidBody instances for rendering ---
             const createDummyRigidBody = (body, width, height, name) => {
-                const rb = new RigidBody(0, 0, width, height, MAT.IRON, name);
+                const rb = new RigidBody(0, 0, width, height, MAT.ADAMANTIUM, name);
                 world.destroyBody(rb.body);
                 rb.body = body;
                 body.setUserData(rb);
@@ -3891,14 +3905,14 @@
                 worldX: worldX - bucketOffsetX,
                 worldY: bucketCenterY,
                 width: bucketWidth, height: bucketHeight, thickness: wallThickness,
-                material: MAT.IRON, name: "Scale Bucket"
+                material: MAT.ADAMANTIUM, name: "Scale Bucket"
             });
 
             const rightBucket = createRectangularBucket({
                 worldX: worldX + bucketOffsetX,
                 worldY: bucketCenterY,
                 width: bucketWidth, height: bucketHeight, thickness: wallThickness,
-                material: MAT.IRON, name: "Scale Bucket"
+                material: MAT.ADAMANTIUM, name: "Scale Bucket"
             });
             
             // --- 5. Define and Create all the Joints ---
@@ -4169,6 +4183,9 @@
                 coolerSlot:       { r: 254, g: 200, b: 200 },
                 // General Markers
                 treasureMarker:   { r: 1, g: 1, b: 1 },
+                treasureMarker2:   { r: 1, g: 1, b: 2 },
+                treasureMarker3:   { r: 1, g: 1, b: 3 },
+                treasureMarker4:   { r: 1, g: 1, b: 4 },
                 // New Markers
                 genericBody:      { r: 166, g: 166, b: 166 },
                 revoluteJoint:    { r: 2,   g: 2,   b: 2 },
@@ -6181,13 +6198,33 @@
                                 y: spawnArea.y + Math.floor(spawnArea.height / 2) - 10
                             };
                         }
+
+                        if (areas.retort) {
+                            const mixtureToSpawn = new Map([
+                                [MAT.ACID, 320]
+                            ]);
+                            console.log("retort", areas.retort, mixtureToSpawn);
+                            spawnMaterialsInArea(areas.retort.points, mixtureToSpawn);
+                        }
+
+                        const potionArea1 = areas.treasureMarker;
+                        createObjectInWorld('empty_potion', pieceInfo.bounds.x + potionArea1.x, pieceInfo.bounds.y + potionArea1.y);
+
+                        const potionArea2 = areas.treasureMarker2;
+                        createObjectInWorld('empty_potion', pieceInfo.bounds.x + potionArea2.x, pieceInfo.bounds.y + potionArea2.y);
+
+                        const potionArea3 = areas.treasureMarker3;
+                        createObjectInWorld('empty_potion', pieceInfo.bounds.x + potionArea3.x, pieceInfo.bounds.y + potionArea3.y);
+
+                        const potionArea4 = areas.treasureMarker4;
+                        createObjectInWorld('empty_potion', pieceInfo.bounds.x + potionArea4.x, pieceInfo.bounds.y + potionArea4.y);
                     }
                 },
                 {
                     name: "ForgottenShrine",
                     imagePath: 'assets/wood_puzzle.png',
                     tileType: 'horizontal',
-                    bounds: { minSectorX: -2, maxSectorX: -2, minSectorY: 4, maxSectorY: 4 },
+                    bounds: { minSectorX: -2, maxSectorX: -2, minSectorY: 3, maxSectorY: 3 },
                     parsedData: null,
                     postGenerationHook: function(piece) {
                         if (!piece.parsedData || !piece.parsedData.functionalAreas || !piece.parsedData.functionalAreas.treasureMarker) return;
@@ -6217,19 +6254,27 @@
                         }
 
                         const treasureArea = piece.parsedData.functionalAreas.treasureMarker;
-                        createMagicTablet(piece.bounds.x + treasureArea.x, piece.bounds.y + treasureArea.y, 'increase_tool_slots');
+                        createRuneInWorld(piece.bounds.x + treasureArea.x, piece.bounds.y + treasureArea.y, {
+                             id: 'combine',
+                             stats: { instability: 5, potency: 2, duration: -10, hazard: 3 },
+                             color: 'colorless'
+                         });
                     }
                 },
                 {
                     name: "FloodedTunnel",
                     imagePath: 'assets/water_puzzle.png',
                     tileType: 'horizontal',
-                    bounds: { minSectorX: 2, maxSectorX: 2, minSectorY: 4, maxSectorY: 4 },
+                    bounds: { minSectorX: 2, maxSectorX: 2, minSectorY: 3, maxSectorY: 3 },
                     parsedData: null,
                     postGenerationHook: function(piece) {
                          if (!piece.parsedData || !piece.parsedData.functionalAreas || !piece.parsedData.functionalAreas.treasureMarker) return;
                         const treasureArea = piece.parsedData.functionalAreas.treasureMarker;
-                        createMagicTablet(piece.bounds.x + treasureArea.x, piece.bounds.y + treasureArea.y, 'increase_tool_slots');
+                        createRuneInWorld(piece.bounds.x + treasureArea.x, piece.bounds.y + treasureArea.y, {
+                             id: 'forma_potion',
+                             stats: { instability: 5, potency: 500, duration: -50, hazard: 3 },
+                             color: 'ruby'
+                         });
                     }
                 },
                 {
@@ -6242,7 +6287,11 @@
                         if (!piece.parsedData) return;
                         if (piece.parsedData.functionalAreas && piece.parsedData.functionalAreas.treasureMarker) {
                             const treasureArea = piece.parsedData.functionalAreas.treasureMarker;
-                            createMagicTablet(piece.bounds.x + treasureArea.x, piece.bounds.y + treasureArea.y, 'increase_structure_slots');
+                            createRuneInWorld(piece.bounds.x + treasureArea.x, piece.bounds.y + treasureArea.y, {
+                                id: 'from_left_crucible',
+                                stats: { instability: 5, potency: -50, duration: 100, hazard: 3 },
+                                color: 'emerald'
+                            });
                         }
                         const worldX = piece.bounds.x + (piece.parsedData.width / 2);
                         const worldY = piece.bounds.y + piece.parsedData.height;
@@ -6253,7 +6302,7 @@
                     name: "WaterTrap",
                     imagePath: 'assets/water_trap.png',
                     tileType: 'vertical',
-                    bounds: { minSectorX: 4, maxSectorX: 4, minSectorY: 1, maxSectorY: 1 },
+                    bounds: { minSectorX: 2, maxSectorX: 2, minSectorY: 1, maxSectorY: 1 },
                     parsedData: null,
                     postGenerationHook: function(piece) {
                         if (!piece.parsedData) return;
@@ -6266,7 +6315,7 @@
                             for (const rbDef of piece.parsedData.genericRigidBodies) {
                                 const newBody = createRigidBodyFromCells({
                                     cells: rbDef.cells,
-                                    material: rbDef.material,
+                                    material: MAT.ADAMANTIUM,
                                     worldOffsetX: piece.bounds.x,
                                     worldOffsetY: piece.bounds.y,
                                     name: 'Trap Door'
@@ -6304,18 +6353,22 @@
                             const treasureWorldY = piece.bounds.y + treasureArea.y;
                             
                             // 1. Create the tablet normally.
-                            createMagicTablet(treasureWorldX, treasureWorldY, 'increase_structure_slots');
+                            createRuneInWorld(piece.bounds.x + treasureArea.x, piece.bounds.y + treasureArea.y, {
+                                id: 'from_left_crucible',
+                                stats: { instability: 5, potency: 400, duration: -50, hazard: 3 },
+                                color: 'ruby'
+                            });
 
-                            // 2. Get a reference to the tablet we just created (it's the last body in the array).
-                            const tabletBody = rigidBodies[rigidBodies.length - 1];
-                            if (tabletBody && tabletBody.body) {
-                                const tabletUserData = tabletBody.body.getUserData();
+                            // 2. Get a reference to the rune we just created (it's the last body in the array).
+                            const runeBody = rigidBodies[rigidBodies.length - 1];
+                            if (runeBody && runeBody.body) {
+                                const runeUserData = runeBody.body.getUserData();
                                 
                                 // 3. Store the original onPickup function.
-                                const originalOnPickup = tabletUserData.onPickup;
+                                const originalOnPickup = runeUserData.onPickup;
 
                                 // 4. Create a new "wrapper" function that calls the original and then adds our new logic.
-                                tabletUserData.onPickup = (player) => {
+                                runeUserData.onPickup = (player) => {
                                     // First, execute the original behavior (e.g., increase slots).
                                     if (originalOnPickup) {
                                         originalOnPickup(player);
@@ -6335,7 +6388,7 @@
                     name: "HollowMountain",
                     imagePath: 'assets/levitation_challenge.png',
                     tileType: 'vertical',
-                    bounds: { minSectorX: -3, maxSectorX: -3, minSectorY: 1, maxSectorY: 1 },
+                    bounds: { minSectorX: -2, maxSectorX: -2, minSectorY: 1, maxSectorY: 1 },
                     parsedData: null,
                     postGenerationHook: function(piece) {
                         if (!piece.parsedData) return;
@@ -6346,7 +6399,11 @@
                             const treasureArea = areas.treasureMarker;
                             const treasureWorldX = piece.bounds.x + treasureArea.x;
                             const treasureWorldY = piece.bounds.y + treasureArea.y;
-                            createMagicTablet(treasureWorldX, treasureWorldY, 'increase_structure_slots');
+                            createRuneInWorld(piece.bounds.x + treasureArea.x, piece.bounds.y + treasureArea.y, {
+                                id: 'from_retort',
+                                stats: { instability: 5, potency: 1, duration: 1, hazard: 3 },
+                                color: 'colorless'
+                            });
                         }
                     }
                 },
@@ -6395,12 +6452,12 @@
                         const leftDoor = createRigidBodyRectangle(
                             pieceInfo.bounds.x + leftBounds.x, pieceInfo.bounds.y + leftBounds.y,
                             leftBounds.width, leftBounds.height,
-                            MAT.IRON, null, 'Iron Door (Left)'
+                            MAT.ADAMANTIUM, null, 'Adamantium Door (Left)'
                         );
                         const rightDoor = createRigidBodyRectangle(
                             pieceInfo.bounds.x + rightBounds.x, pieceInfo.bounds.y + rightBounds.y,
                             rightBounds.width, rightBounds.height,
-                            MAT.IRON, null, 'Iron Door (Right)'
+                            MAT.ADAMANTIUM, null, 'Adamantium Door (Right)'
                         );
 
                         leftDoor.body.setAwake(true);
@@ -6449,9 +6506,9 @@
                         const gateBottomY = pieceInfo.bounds.y + pieceInfo.parsedData.height;
                         createTrigger({
                             name: 'gate_opener',
-                            x: gateCenterX - 50,
-                            y: gateBottomY + 5,
-                            width: 100,
+                            x: gateCenterX - 75,
+                            y: gateBottomY - 30,
+                            width: 50,
                             height: 30,
                             onInteract: (trigger) => {
                                 console.log("Gate trigger activated!");
@@ -6948,38 +7005,35 @@
                 knownRunes: new Set([
                     'from_left_crucible',
                     'yield_to_right_crucible',
-                    'yield_to_retort',
-                    'combine',
-                    'forma_potion',
-                    'extract_essence',
                     'infuse',
-                    'separate',
                     // etc. for all non-variable runes
                 ]),
 
                 // Learned transformations are stored here as objects
-                transform: [
-                    { from: MAT.SAND, to: MAT.GLASS } // Player has learned this specific reaction
-                ],
+                // transform: [
+                //     { from: MAT.SAND, to: MAT.GLASS } // Player has learned this specific reaction
+                // ],
+                transform: [],
                 
                 // Inventory of blank, attunable runes
-                blank_filter_runes: 2,
+                blank_filter_runes: 0,
                 
                 // Learned, specific versions of attunable runes
-                known_filters: new Set([MAT.SAND]),
+                //known_filters: new Set([MAT.SAND]),
+                known_filters: new Set(),
 
                 collectedRunes: [
                     { id: 'from_left_crucible', stats: { instability: 0, potency: 0, duration: 0, hazard: 0 }, color: 'colorless' },
-                    { id: 'from_right_crucible', stats: { instability: 0, potency: 0, duration: 0, hazard: 0 }, color: 'colorless' },
-                    { id: 'filter_by', target: MAT.SAND, stats: { instability: -2, potency: 0, duration: 0, hazard: -1 }, color: 'colorless' },
-                    { id: 'transform', from: MAT.SAND, to: MAT.GLASS, stats: { instability: 1, potency: 0, duration: 0, hazard: 0 }, color: 'colorless' },
-                    { id: 'extract_essence', stats: { instability: 0, potency: 0, duration: 0, hazard: 0 }, color: 'colorless' },
-                    { id: 'combine', stats: { instability: 0, potency: 0, duration: 0, hazard: 0 }, color: 'colorless' },
+                    // { id: 'from_right_crucible', stats: { instability: 0, potency: 0, duration: 0, hazard: 0 }, color: 'colorless' },
+                    // { id: 'filter_by', target: MAT.SAND, stats: { instability: -2, potency: 0, duration: 0, hazard: -1 }, color: 'colorless' },
+                    // { id: 'transform', from: MAT.SAND, to: MAT.GLASS, stats: { instability: 1, potency: 0, duration: 0, hazard: 0 }, color: 'colorless' },
+                    // { id: 'extract_essence', stats: { instability: 0, potency: 0, duration: 0, hazard: 0 }, color: 'colorless' },
+                    // { id: 'combine', stats: { instability: 0, potency: 0, duration: 0, hazard: 0 }, color: 'colorless' },
                     { id: 'infuse', stats: { instability: 0, potency: 0, duration: 0, hazard: 0 }, color: 'colorless' },
-                    { id: 'yield_to_retort', stats: { instability: 0, potency: 0, duration: 0, hazard: 0 }, color: 'colorless' },
+                    //{ id: 'yield_to_retort', stats: { instability: 0, potency: 0, duration: 0, hazard: 0 }, color: 'colorless' },
                     { id: 'yield_to_right_crucible', stats: { instability: 0, potency: 0, duration: 0, hazard: 0 }, color: 'colorless' },
-                    { id: 'yield_to_left_crucible', stats: { instability: 0, potency: 0, duration: 0, hazard: 0 }, color: 'colorless' },
-                    { id: 'forma_potion', stats: { instability: 0, potency: 0, duration: 0, hazard: 0 }, color: 'colorless' },
+                    //{ id: 'yield_to_left_crucible', stats: { instability: 0, potency: 0, duration: 0, hazard: 0 }, color: 'colorless' },
+                    //{ id: 'forma_potion', stats: { instability: 0, potency: 0, duration: 0, hazard: 0 }, color: 'colorless' },
                 ],
             },
             
@@ -7068,11 +7122,21 @@
                     }
 
                     player.aether -= AETHER_COST;
-                    if (materialInfo.isRigidBody) { materialInfo.body.isDestroyed = true; } 
-                    else { setGrid(materialInfo.x, materialInfo.y, MAT.EMPTY); }
+
+                    if (materialInfo.isRigidBody) {
+                        materialInfo.body.isDestroyed = true; 
+                    } 
+                    else { 
+                        const removeMaterialsBatch = new Map([
+                                    [materialInfo.type, 640]
+                                ]);
+                        removeMaterialsFromArea(stationGeo.athanor.worldPoints, removeMaterialsBatch, { animateRemoval: true });
+                    }
 
                     const discoveredEssence = undiscoveredEssences[Math.floor(Math.random() * undiscoveredEssences.length)];
                     discoverEssenceForMaterial(materialInfo.type, discoveredEssence);
+
+                    
 
                     const materialName = MATERIAL_NAME[materialInfo.type];
                     const essenceName = discoveredEssence.replace(/_/g, ' ');
@@ -7146,6 +7210,12 @@
                 case 'Digit3': activeContainer = 'tool'; break;
                 case 'Digit4': activeContainer = 'structure'; break;
                 
+                case 'Escape':
+                    if (GrimoireManager.isVisible) {
+                        GrimoireManager.isVisible = false;
+                    }
+                    break;
+
                 case 'KeyR': // R for "dRink"
                     consumePotion();
                     break;
@@ -8623,7 +8693,7 @@
                         break;
                     case 'tool':
                         if (player.toolPocket.length > 0 && toolUseCooldown <= 0) {
-                             const toolName = player.toolPocket[0]; // Assuming one tool for now
+                             const toolName = player.toolPocket[player.toolIndex];
                              const toolDef = Object.values(OBJECT_DEFINITIONS).find(d => d.name === toolName);
                              if (toolDef && toolDef.onUse) {
                                  toolDef.onUse(player, mouse);
@@ -9488,7 +9558,12 @@
                                     setGrid(wx, wy, MAT.EMPTY);
                                     createStoreParticles(wx, wy, type);
                                     
-                                    // We've gathered one pixel, that's enough for one click.
+                                    if (!player.discoveredMaterials.has(type)) {
+                                        player.discoveredMaterials.add(type);
+                                        const materialName = MATERIAL_NAME[type] || 'Unknown Material';
+                                        displayZoneMessage(`Discovered: ${materialName}`);
+                                    }
+
                                     return;
                                 }
                             }
@@ -10302,7 +10377,8 @@
                 const myAux = getAuxData(etcChunkMap, x, y);
                 const belowAux = getAuxData(etcChunkMap, x, y + 1);
 
-                if ([MAT.EMPTY, ...GASES].includes(belowType)) {
+                //if ([MAT.EMPTY, ...GASES].includes(belowType)) {
+                if ([MAT.EMPTY].includes(belowType)) {
                     if (isSectorLoaded(x, y + 1)) {
                         setGrid(x, y, belowType, false); setAuxData(etcChunkMap, x, y, belowAux);
                         setGrid(x, y + 1, type, false); setAuxData(etcChunkMap, x, y + 1, myAux);
@@ -11509,7 +11585,7 @@
             const selectedRecipe = player.grimoire.pages[GrimoireManager.selectedRecipeIndex];
             if (selectedRecipe) {
                 ctx.fillStyle = '#90ee90';
-                ctx.fillText(`[3] START: Recipe ${GrimoireManager.selectedRecipeIndex + 1}`, boxX + 15, yOff);
+                ctx.fillText(`[3] START: Recipe ${selectedRecipe.name}`, boxX + 15, yOff);
             } else {
                 ctx.fillStyle = '#666';
                 ctx.fillText(`[3] No Recipe Selected`, boxX + 15, yOff);
@@ -13001,26 +13077,6 @@
             }
         }
         
-        // This group of functions can remain as-is
-		function getDominantMaterialInArea(x, y, width, height) {
-            const counts = {};
-            let maxCount = 0,
-                domMat = null;
-            for (let iy = y; iy < y + height; iy++) {
-                for (let ix = x; ix < x + width; ix++) {
-                    const type = getGrid(ix, iy);
-                    if (STORABLE_SOLIDS.has(type) || STORABLE_LIQUIDS.has(type)) {
-                        counts[type] = (counts[type] || 0) + 1;
-                        if (counts[type] > maxCount) {
-                            maxCount = counts[type];
-                            domMat = type;
-                        }
-                    }
-                }
-            }
-            return domMat;
-        }
-
         function processAlchemyJobs() {
             if (alchemyJobs.length === 0) return;
             const particlesToTeleport = 5;
@@ -13984,9 +14040,9 @@
             // startingPotion.body = null;
             // player.structurePocket.push(startingPotion);
 
-            createPotionInWorld('corrosive_contact', player.x + 150, player.y - 10, {potency:10});
-            createPotionInWorld('liquid_form', player.x + 170, player.y - 10);
-            createWoodenBox(player.x + 200, player.y);
+            //createPotionInWorld('gaseous_form', player.x + 150, player.y - 10, {duration:600});
+            //createPotionInWorld('liquid_form', player.x + 170, player.y - 10);
+            //createWoodenBox(player.x + 200, player.y);
 
             // createRuneInWorld(player.x + 50, player.y - 10, {
             //     id: 'combine',

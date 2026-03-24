@@ -1009,25 +1009,55 @@ self.onmessage = async (event) => {
         currentSectorSX = sx;
         currentSectorSY = sy;
 
-        const layerIndex = biomeInfo.params.layer ?? 1; // Default to layer 1 (ROCK_WALL) if not specified
-        const wallMaterial = LAYER_WALL_MATERIALS[layerIndex] || MAT.ROCK_WALL;
-
-        // Temporarily override the Wang Tile generator's material mapping for this run
-        COLOR_TO_MAT_MAP.set('ffffff', wallMaterial);
-        DEFAULT_MAT = wallMaterial;
         const stampedPieces = [];
         const allStampedTiles = [];
 
-        // Step 1: Generate the base blocky cave structure.
-        await generateWangTileSector(sx, sy, terrainMap, setPieces, stampedPieces, allStampedTiles);
+        // Check for our special "solid rock" biome case first.
+        if (!biomeInfo || biomeInfo.name === "OceanOfRock") {
+            
+            console.log(`[WORKER] Generating solid OceanOfRock for sector [${sx}, ${sy}]`);
+            const startX = sx * SECTOR_SIZE;
+            const startY = sy * SECTOR_SIZE;
+            
+            // Simple loop to fill the entire sector with ROCK_WALL.
+            for (let y = 0; y < SECTOR_SIZE; y++) {
+                for (let x = 0; x < SECTOR_SIZE; x++) {
+                    setGrid(startX + x, startY + y, MAT.ROCK_WALL, terrainMap);
+                }
+            }
+            // No set pieces are stamped in the Ocean of Rock.
 
-        // Step 2: Apply the smoothing algorithm to the generated base.
-        applySmoothingPass(sx, sy, terrainMap, wallMaterial, stampedPieces);
+        } else if (!biomeInfo || biomeInfo.name === "GroundStrata") {
+            console.log(`[WORKER] Generating GroundStrata for sector [${sx}, ${sy}]`);
+            const startX = sx * SECTOR_SIZE;
+            const startY = sy * SECTOR_SIZE;
+            
+            // Simple loop to fill the entire sector with ROCK_WALL.
+            for (let y = 0; y < SECTOR_SIZE; y++) {
+                for (let x = 0; x < SECTOR_SIZE; x++) {
+                    setGrid(startX + x, startY + y, MAT.GROUND, terrainMap);
+                }
+            }
+        } else {
 
-        stampBiomeBoundaries(sx, sy, biomeInfo, terrainMap);
+            const layerIndex = biomeInfo.params.layer ?? 1; // Default to layer 1 (ROCK_WALL) if not specified
+            const wallMaterial = LAYER_WALL_MATERIALS[layerIndex] || MAT.ROCK_WALL;
 
-        for (const piece of stampedPieces) {
-            stampSetPiece(piece, terrainMap);
+            // Temporarily override the Wang Tile generator's material mapping for this run
+            COLOR_TO_MAT_MAP.set('ffffff', wallMaterial);
+            DEFAULT_MAT = wallMaterial;
+
+            // Step 1: Generate the base blocky cave structure.
+            await generateWangTileSector(sx, sy, terrainMap, setPieces, stampedPieces, allStampedTiles);
+
+            // Step 2: Apply the smoothing algorithm to the generated base.
+            applySmoothingPass(sx, sy, terrainMap, wallMaterial, stampedPieces);
+
+            stampBiomeBoundaries(sx, sy, biomeInfo, terrainMap);
+
+            for (const piece of stampedPieces) {
+                stampSetPiece(piece, terrainMap);
+            }
         }
 
         const sectorBackground = generateSectorBackground(sx, sy, biomeInfo);
