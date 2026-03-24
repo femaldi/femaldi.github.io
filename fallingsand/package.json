@@ -6,7 +6,7 @@
   "scripts": {
     "start": "electron .",
     "dist": "electron-builder",
-    "build": "html-minifier-terser --minify-js true --collapse-whitespace --remove-comments -o dist/index.html index.html"
+    "build": "html-minifier-terser --minify-js true --collapse-whitespace --remove-comments -o index.html game.html"
   },
   "keywords": [],
   "author": "Facundo Emaldi",
