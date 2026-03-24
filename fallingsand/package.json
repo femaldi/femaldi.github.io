@@ -1,7 +1,7 @@
 {
-  "name": "my-sand-game",
+  "name": "falling-alchemy",
   "version": "1.0.0",
-  "description": "A falling sand platformer game.",
+  "description": "A falling sand alchemy game.",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
@@ -12,18 +12,20 @@
   "author": "Facundo Emaldi",
   "license": "ISC",
   "devDependencies": {
-    "electron": "^28.1.0",
-    "electron-builder": "^24.9.1",
+    "electron": "^41.0.3",
+    "electron-builder": "^26.8.1",
+    "electron-rebuild": "^3.2.9",
     "html-minifier-terser": "^7.2.0"
   },
   "build": {
-    "appId": "com.femaldi.fallingsandplatformer",
-    "productName": "Falling Sand Platformer",
+    "appId": "com.femaldi.fallingalchemy",
+    "productName": "Falling Alchemy",
     "files": [
       "index.html",
       "generation.worker.js",
       "main.js",
       "preload.js",
+      "inside.png",
       "assets/",
       "node_modules/**/*"
     ],

@@ -27,6 +27,8 @@ function createWindow() {
     show: false, // Don't show the window until it's ready
   });
 
+  //mainWindow.webContents.openDevTools();
+
   // Load your game's index.html file.
   mainWindow.loadFile('index.html');
 
