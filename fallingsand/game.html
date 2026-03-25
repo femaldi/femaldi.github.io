@@ -6917,6 +6917,8 @@
                     chunk.cy = chunkData.cy;
                 }
 
+                backgroundQueue.push({ sx, sy });
+
                 return true;
             } catch (e) {
                 console.error(`Failed to load sector [${sx}, ${sy}].`, e);
