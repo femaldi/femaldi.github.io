@@ -182,6 +182,75 @@
         const MASK_MATERIAL_CHUNK = CATEGORY_DEFAULT;
         const MASK_TEMP_SAND = CATEGORY_PLAYER;
 
+        const SECTOR_DB_NAME = 'falling-sand-sector-db';
+        const SECTOR_DB_VERSION = 1;
+        const SECTOR_STORE_NAME = 'sectors';
+
+        let sectorDbPromise = null;
+
+        function getSectorDb() {
+            if (sectorDbPromise) return sectorDbPromise;
+
+            sectorDbPromise = new Promise((resolve, reject) => {
+                const request = indexedDB.open(SECTOR_DB_NAME, SECTOR_DB_VERSION);
+
+                request.onupgradeneeded = (event) => {
+                    const db = event.target.result;
+
+                    if (!db.objectStoreNames.contains(SECTOR_STORE_NAME)) {
+                        db.createObjectStore(SECTOR_STORE_NAME);
+                    }
+                };
+
+                request.onsuccess = () => resolve(request.result);
+                request.onerror = () => reject(request.error);
+            });
+
+            return sectorDbPromise;
+        }
+
+        async function idbSet(storeName, key, value) {
+            const db = await getSectorDb();
+
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction(storeName, 'readwrite');
+                const store = tx.objectStore(storeName);
+
+                const request = store.put(value, key);
+
+                request.onsuccess = () => resolve();
+                request.onerror = () => reject(request.error);
+            });
+        }
+
+        async function idbGet(storeName, key) {
+            const db = await getSectorDb();
+
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction(storeName, 'readonly');
+                const store = tx.objectStore(storeName);
+
+                const request = store.get(key);
+
+                request.onsuccess = () => resolve(request.result);
+                request.onerror = () => reject(request.error);
+            });
+        }
+
+        async function idbDelete(storeName, key) {
+            const db = await getSectorDb();
+
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction(storeName, 'readwrite');
+                const store = tx.objectStore(storeName);
+
+                const request = store.delete(key);
+
+                request.onsuccess = () => resolve();
+                request.onerror = () => reject(request.error);
+            });
+        }
+
         // --- Add this listener for SOLID splashes ---
         world.on('begin-contact', function(contact) {
             const now = performance.now();
@@ -2307,7 +2376,7 @@
         const BUOYANCY_FORCE = 6.0;
 
         const MAX_CHUNKS_PER_FRAME = 210;
-        const REGEN_COOLDOWN = 250;
+        const REGEN_COOLDOWN = 1; //IN FRAMES
         const REBUILD_COOLDOWN = 250;
         const MIN_ISLAND_PIXELS = 5;
         const LAVA_SOLIDIFICATION_DEPTH = 10;
@@ -2951,8 +3020,9 @@
                     const state = sector ? sector.state : 'unloaded';
 
                     if (state === 'unloaded') {
-                        if (loadSectorFromStorage(sx, sy)) {
+                        if (await loadSectorFromStorage(sx, sy)) {
                             sectorGrid.set(key, { state: 'ready', sx, sy });
+                            reactivateDynamicBodiesForSector(sx, sy);
                             isRenderCacheInvalid = true; 
                             markSectorBordersDirty(sx, sy);
                         } else {
@@ -2986,6 +3056,14 @@
                 this.lastRebuildTime = 0;
                 this.isSplit = false;
                 this.fixedRotation = fixedRotation;
+                this.isStreamedOut = false;
+                this.streamedOutBySectorKey = null;
+                this.savedLinearVelocity = pl.Vec2(0, 0);
+                this.savedAngularVelocity = 0;
+                this.pendingReactivation = true;
+                this.reactivationDelayFrames = 20;
+                this.pendingWakeVelocity = pl.Vec2(0, 0);
+                this.pendingWakeAngularVelocity = 0;
 
                 this.pixels.fill(this.materialType);
 
@@ -2995,6 +3073,7 @@
                     fixedRotation: fixedRotation
                 });
                 this.body.setUserData(this);
+                this.body.setAwake(false);
                 
                 this._createFixturesFromPixels(); 
             }
@@ -3162,7 +3241,7 @@
                 this.body.setAngularVelocity(oldAngVel);
 
                 // 4. Wake the body up to ensure the physics engine re-evaluates it immediately.
-                this.body.setAwake(true);
+                if (!this.pendingReactivation) this.body.setAwake(true);
             }
 
             getBinaryMask() {
@@ -3887,6 +3966,7 @@
                 const rb = new RigidBody(0, 0, width, height, MAT.ADAMANTIUM, name);
                 world.destroyBody(rb.body);
                 rb.body = body;
+                rb.body.setAwake(false);
                 body.setUserData(rb);
                 rigidBodies.push(rb);
             };
@@ -4021,6 +4101,7 @@
             // Link the renderable object to our custom physics body
             world.destroyBody(rb.body);
             rb.body = body;
+            rb.body.setAwake(false);
             body.setUserData(rb);
 
             // --- Part 3: Manually create the hollow pixel art ---
@@ -6460,8 +6541,8 @@
                             MAT.ADAMANTIUM, null, 'Adamantium Door (Right)'
                         );
 
-                        leftDoor.body.setAwake(true);
-                        rightDoor.body.setAwake(true);
+                        //leftDoor.body.setAwake(true);
+                        //rightDoor.body.setAwake(true);
                         
                         // 2. Create the Prismatic Joints based on the joint markers from the parsed data.
                         const leftJointMarker = leftDoorDef.joints[0]; // Assuming one joint per door
@@ -6724,7 +6805,28 @@
         let backgroundQueue = [];
         let isGeneratingBackground = false;
 
-        function saveSectorToStorage(sx, sy) {
+        function destroyStaticBodiesForSector(sx, sy) {
+            const startCX = sx * (SECTOR_SIZE / CHUNK_SIZE);
+            const startCY = sy * (SECTOR_SIZE / CHUNK_SIZE);
+            const endCX = startCX + (SECTOR_SIZE / CHUNK_SIZE);
+            const endCY = startCY + (SECTOR_SIZE / CHUNK_SIZE);
+
+            for (let cy = startCY; cy < endCY; cy++) {
+                for (let cx = startCX; cx < endCX; cx++) {
+                    const key = coordToKey(cx, cy);
+
+                    const chunk = chunkMap.get(key);
+                    if (chunk && chunk.staticBody) {
+                        world.destroyBody(chunk.staticBody);
+                        chunk.staticBody = null;
+                    }
+
+                    activeStaticChunks.delete(key);
+                }
+            }
+        }
+
+        async function saveSectorToStorage(sx, sy) {
             const storageKey = `fsp-sector-${sx},${sy}`;
             const sectorData = {
                 terrain: [],
@@ -6740,50 +6842,54 @@
             for (let cy = startCY; cy < endCY; cy++) {
                 for (let cx = startCX; cx < endCX; cx++) {
                     const key = coordToKey(cx, cy);
-                    
+
                     const terrainChunk = chunkMap.get(key);
                     if (terrainChunk) {
-                        sectorData.terrain.push({ cx, cy, data: compressRLE(terrainChunk.data) });
+                        sectorData.terrain.push({
+                            cx,
+                            cy,
+                            data: compressRLE(terrainChunk.data)
+                        });
                         chunkMap.delete(key);
                     }
 
                     const lightChunk = lightChunkMap.get(key);
                     if (lightChunk) {
-                        sectorData.light.push({ cx, cy, data: compressRLE(lightChunk.data) });
+                        sectorData.light.push({
+                            cx,
+                            cy,
+                            data: compressRLE(lightChunk.data)
+                        });
                         lightChunkMap.delete(key);
                     }
 
                     const fogChunk = fogChunkMap.get(key);
                     if (fogChunk) {
-                        sectorData.fog.push({ cx, cy, data: compressRLE(fogChunk.data) });
+                        sectorData.fog.push({
+                            cx,
+                            cy,
+                            data: compressRLE(fogChunk.data)
+                        });
                         fogChunkMap.delete(key);
                     }
                 }
             }
 
             try {
-                // Now only saving terrain and light, which is much smaller.
                 sectorWangTileData.delete(coordToKey(sx, sy));
-                localStorage.setItem(storageKey, JSON.stringify(sectorData));
-                console.log(`Sector [${sx}, ${sy}] saved to storage (without background).`);
+                await idbSet(SECTOR_STORE_NAME, storageKey, sectorData);
+                console.log(`Sector [${sx}, ${sy}] saved to IndexedDB.`);
             } catch (e) {
                 console.error(`Failed to save sector [${sx}, ${sy}].`, e);
             }
         }
 
-        /**
-         * Loads a sector from storage and queues its background for regeneration.
-         */
-        function loadSectorFromStorage(sx, sy) {
+        async function loadSectorFromStorage(sx, sy) {
             const storageKey = `fsp-sector-${sx},${sy}`;
-            const savedData = localStorage.getItem(storageKey);
-
-            if (!savedData) {
-                return false;
-            }
 
             try {
-                const sectorData = JSON.parse(savedData);
+                const sectorData = await idbGet(SECTOR_STORE_NAME, storageKey);
+                if (!sectorData) return false;
 
                 for (const chunkData of sectorData.terrain) {
                     const key = coordToKey(chunkData.cx, chunkData.cy);
@@ -6791,6 +6897,8 @@
                     chunk.data = decompressRLE(chunkData.data);
                     chunk.cx = chunkData.cx;
                     chunk.cy = chunkData.cy;
+                    chunk.staticBody = null;
+                    chunk.dirty = true;
                 }
 
                 for (const chunkData of sectorData.light) {
@@ -6801,25 +6909,17 @@
                     chunk.cy = chunkData.cy;
                 }
 
-                if (sectorData.fog) { // Check if fog data exists for backwards compatibility
-                    for (const chunkData of sectorData.fog) {
-                        const key = coordToKey(chunkData.cx, chunkData.cy);
-                        const chunk = getChunk(fogChunkMap, key);
-                        chunk.data = decompressRLE(chunkData.data);
-                        chunk.cx = chunkData.cx;
-                        chunk.cy = chunkData.cy;
-                    }
+                for (const chunkData of sectorData.fog) {
+                    const key = coordToKey(chunkData.cx, chunkData.cy);
+                    const chunk = getChunk(fogChunkMap, key);
+                    chunk.data = decompressRLE(chunkData.data);
+                    chunk.cx = chunkData.cx;
+                    chunk.cy = chunkData.cy;
                 }
-                
-                // CRITICAL: Instead of loading a background, queue it for regeneration.
-                backgroundQueue.push({ sx, sy });
 
-                localStorage.removeItem(storageKey); 
-                console.log(`Sector [${sx}, ${sy}] loaded from storage. Background queued for regeneration.`);
-                isRenderCacheInvalid = true;
                 return true;
             } catch (e) {
-                console.error(`Failed to load or parse sector [${sx}, ${sy}] from storage.`, e);
+                console.error(`Failed to load sector [${sx}, ${sy}].`, e);
                 return false;
             }
         }
@@ -6828,7 +6928,7 @@
          * Checks if the number of ready sectors exceeds the limit and unloads the oldest one.
          * This now uses the sectorGrid Map as the single source of truth.
          */
-        function manageSectorMemory() {
+        async function manageSectorMemory() {
             // Use sectorGrid.size, which counts only 'ready' and 'queued' sectors.
             if (sectorGrid.size <= MAX_READY_SECTORS) {
                 return;
@@ -6845,7 +6945,9 @@
             for (const [key, sector] of sectorGrid.entries()) {
                 // Find the first sector that is 'ready' and NOT protected.
                 if (sector.state === 'ready' && !protectedKeys.has(key)) {
-                    saveSectorToStorage(sector.sx, sector.sy);
+                    deactivateDynamicBodiesForSector(sector.sx, sector.sy);
+                    destroyStaticBodiesForSector(sector.sx, sector.sy);
+                    await saveSectorToStorage(sector.sx, sector.sy);
                     sectorBackgrounds.delete(key);
                     sectorGrid.delete(key); // Unload it by removing it from the map.
                     
@@ -9047,7 +9149,19 @@
             // 2. Populate the grid with new stub locations and track the chunks used.
             const buffer = 1;
             for (const body of rigidBodies) {
-                if (body.isDestroyed || !body.body) continue;
+                if (body.pendingReactivation) {
+                    body.reactivationDelayFrames--;
+
+                    if (body.reactivationDelayFrames <= 0) {
+                        body.body.setLinearVelocity(body.pendingWakeVelocity || pl.Vec2(0, 0));
+                        body.body.setAngularVelocity(body.pendingWakeAngularVelocity || 0);
+                        body.body.setAwake(true);
+
+                        body.pendingReactivation = false;
+                    }
+                }
+
+                if (body.isDestroyed || !body.body || body.isStreamedOut || body.pendingReactivation) continue;
 
                 for (let y = 0; y < body.height; y++) {
                     for (let x = 0; x < body.width; x++) {
@@ -9767,6 +9881,175 @@
                 }
             }
             Profiler.stop('Sim:Gas');
+        }
+
+        function rigidBodyOverlapsSector(rb, sx, sy) {
+            if (!rb || !rb.body || rb.isDestroyed) return false;
+
+            const pos = rb.body.getPosition();
+            const centerX = pos.x * B2_SCALE;
+            const centerY = pos.y * B2_SCALE;
+
+            const halfW = rb.width * 0.5;
+            const halfH = rb.height * 0.5;
+
+            const bodyLeft   = centerX - halfW;
+            const bodyRight  = centerX + halfW;
+            const bodyTop    = centerY - halfH;
+            const bodyBottom = centerY + halfH;
+
+            const sectorLeft   = sx * SECTOR_SIZE;
+            const sectorRight  = sectorLeft + SECTOR_SIZE;
+            const sectorTop    = sy * SECTOR_SIZE;
+            const sectorBottom = sectorTop + SECTOR_SIZE;
+
+            return !(
+                bodyRight <= sectorLeft ||
+                bodyLeft >= sectorRight ||
+                bodyBottom <= sectorTop ||
+                bodyTop >= sectorBottom
+            );
+        }
+
+        function rigidBodyOverlapsAnyLoadedSector(rb) {
+            if (!rb || !rb.body || rb.isDestroyed) return false;
+
+            const pos = rb.body.getPosition();
+            const centerX = pos.x * B2_SCALE;
+            const centerY = pos.y * B2_SCALE;
+
+            const halfW = rb.width * 0.5;
+            const halfH = rb.height * 0.5;
+
+            const minSX = Math.floor((centerX - halfW) / SECTOR_SIZE);
+            const maxSX = Math.floor((centerX + halfW) / SECTOR_SIZE);
+            const minSY = Math.floor((centerY - halfH) / SECTOR_SIZE);
+            const maxSY = Math.floor((centerY + halfH) / SECTOR_SIZE);
+
+            for (let sy = minSY; sy <= maxSY; sy++) {
+                for (let sx = minSX; sx <= maxSX; sx++) {
+                    const sector = sectorGrid.get(coordToKey(sx, sy));
+                    if (sector && sector.state === 'ready' && rigidBodyOverlapsSector(rb, sx, sy)) {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        function deactivateDynamicBodiesForSector(sx, sy) {
+            const sectorKey = coordToKey(sx, sy);
+
+            for (const rb of rigidBodies) {
+                if (!rb || !rb.body || rb.isDestroyed || rb.isStreamedOut) continue;
+                if (rb.body.getType() !== 'dynamic') continue;
+
+                if (!rigidBodyOverlapsSector(rb, sx, sy)) continue;
+
+                // Only stream it out if it does NOT overlap any other still-loaded sector.
+                let stillCoveredByAnotherLoadedSector = false;
+
+                const pos = rb.body.getPosition();
+                const centerX = pos.x * B2_SCALE;
+                const centerY = pos.y * B2_SCALE;
+                const halfW = rb.width * 0.5;
+                const halfH = rb.height * 0.5;
+
+                const minSX = Math.floor((centerX - halfW) / SECTOR_SIZE);
+                const maxSX = Math.floor((centerX + halfW) / SECTOR_SIZE);
+                const minSY = Math.floor((centerY - halfH) / SECTOR_SIZE);
+                const maxSY = Math.floor((centerY + halfH) / SECTOR_SIZE);
+
+                for (let testSY = minSY; testSY <= maxSY && !stillCoveredByAnotherLoadedSector; testSY++) {
+                    for (let testSX = minSX; testSX <= maxSX; testSX++) {
+                        if (testSX === sx && testSY === sy) continue;
+
+                        const sector = sectorGrid.get(coordToKey(testSX, testSY));
+                        if (sector && sector.state === 'ready' && rigidBodyOverlapsSector(rb, testSX, testSY)) {
+                            stillCoveredByAnotherLoadedSector = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (stillCoveredByAnotherLoadedSector) continue;
+
+                rb.savedLinearVelocity = rb.body.getLinearVelocity().clone();
+                rb.savedAngularVelocity = rb.body.getAngularVelocity();
+                rb.body.setLinearVelocity(pl.Vec2(0, 0));
+                rb.body.setAngularVelocity(0);
+                rb.body.setAwake(false);
+                rb.body.setActive(false);
+
+                rb.isStreamedOut = true;
+                rb.streamedOutBySectorKey = sectorKey;
+            }
+        }
+
+        function reactivateDynamicBodiesForSector(sx, sy) {
+            const bodiesToReactivate = [];
+
+            for (const rb of rigidBodies) {
+                if (!rb || !rb.body || rb.isDestroyed || !rb.isStreamedOut) continue;
+                if (rb.body.getType() !== 'dynamic') continue;
+                if (!rigidBodyOverlapsSector(rb, sx, sy)) continue;
+
+                bodiesToReactivate.push(rb);
+            }
+
+            // Rebuild nearby static colliders first.
+            for (const rb of bodiesToReactivate) {
+                ensureStaticBodiesAroundRigidBody(rb, 1);
+            }
+
+            // Schedule wake-up a few frames later to avoid race conditions.
+            for (const rb of bodiesToReactivate) {
+                rb.body.setActive(true);
+                rb.body.setLinearVelocity(pl.Vec2(0, 0));
+                rb.body.setAngularVelocity(0);
+                rb.body.setAwake(false);
+
+                rb.pendingWakeVelocity = rb.savedLinearVelocity || pl.Vec2(0, 0);
+                rb.pendingWakeAngularVelocity = rb.savedAngularVelocity || 0;
+                rb.pendingReactivation = true;
+                rb.reactivationDelayFrames = 20; // try 3; increase to 5 if needed
+
+                rb.isStreamedOut = false;
+                rb.streamedOutBySectorKey = null;
+            }
+        }
+
+        function ensureStaticBodiesAroundRigidBody(rb, chunkRadius = 1) {
+            if (!rb || !rb.body || rb.isDestroyed) return;
+
+            const pos = rb.body.getPosition();
+            const centerX = pos.x * B2_SCALE;
+            const centerY = pos.y * B2_SCALE;
+
+            const halfW = rb.width * 0.5;
+            const halfH = rb.height * 0.5;
+
+            const minChunkX = Math.floor((centerX - halfW) / CHUNK_SIZE) - chunkRadius;
+            const maxChunkX = Math.floor((centerX + halfW) / CHUNK_SIZE) + chunkRadius;
+            const minChunkY = Math.floor((centerY - halfH) / CHUNK_SIZE) - chunkRadius;
+            const maxChunkY = Math.floor((centerY + halfH) / CHUNK_SIZE) + chunkRadius;
+
+            for (let cy = minChunkY; cy <= maxChunkY; cy++) {
+                for (let cx = minChunkX; cx <= maxChunkX; cx++) {
+                    const key = coordToKey(cx, cy);
+                    const chunk = chunkMap.get(key);
+                    if (!chunk) continue;
+
+                    if (chunk.staticBody) {
+                        world.destroyBody(chunk.staticBody);
+                        chunk.staticBody = null;
+                    }
+
+                    activeStaticChunks.delete(key);
+                    generateStaticBodyForChunk(chunk);
+                }
+            }
         }
 
         // in index.html
@@ -11514,7 +11797,7 @@
             // --- END OF NEW CONSTANTS ---
 
             for (const body of rigidBodies) {
-                if (body.isDestroyed || !body.body) continue;
+                if (body.isDestroyed || !body.body || body.isStreamedOut || body.pendingReactivation) continue;
                 body.lastSplitTime=body.lastSplitTime??0; body.pendingStructuralDelta=body.pendingStructuralDelta??0;
                 let pixelsChanged=false, structuralEditsThisTick=0;
                 
@@ -13182,7 +13465,7 @@
             checkGenerationQueue() 
 
             await updateSectors(); // Await the async function
-            manageSectorMemory();  // Check if we need to unload a sector
+            await manageSectorMemory();  // Check if we need to unload a sector
             Profiler.stop('UpdateSectors');
 
             const t0 = performance.now();
@@ -13626,51 +13909,179 @@
             const setHitRatio = debugStats.setCalls > 0 ? (debugStats.setHits / debugStats.setCalls * 100).toFixed(1) : "N/A";
             const activeParticles = magicParticlePool.filter(p => p.active).length;
 
-            // --- 2. UI positioning and styling ---
+            // --- 2. Scan actual Planck world bodies ---
+            let worldBodyCount = 0;
+            let dynamicWorldBodyCount = 0;
+            let staticWorldBodyCount = 0;
+            let kinematicWorldBodyCount = 0;
+            let awakeBodyCount = 0;
+            let worldFixtureCount = 0;
+
+            let trackedRigidWithBody = 0;
+            let trackedRigidDestroyed = 0;
+            let trackedRigidMissingBody = 0;
+            let trackedNeedsShapeUpdate = 0;
+            let trackedSplitBodies = 0;
+            let trackedZeroFixtures = 0;
+
+            let untrackedDynamicBodies = 0;
+            let untrackedStaticBodies = 0;
+            let untrackedKinematicBodies = 0;
+
+            let streamedOutBodies = 0;
+            let activeDynamicBodies = 0;
+
+            const topBodies = [];
+
+            for (let b = world.getBodyList(); b; b = b.getNext()) {
+                worldBodyCount++;
+
+                const type = b.getType();
+                if (type === 'dynamic') dynamicWorldBodyCount++;
+                else if (type === 'static') staticWorldBodyCount++;
+                else if (type === 'kinematic') kinematicWorldBodyCount++;
+
+                if (b.isAwake && b.isAwake()) awakeBodyCount++;
+
+                let fixtureCount = 0;
+                for (let f = b.getFixtureList(); f; f = f.getNext()) fixtureCount++;
+                worldFixtureCount += fixtureCount;
+
+                const ud = b.getUserData();
+                const isTrackedRigid = ud instanceof RigidBody;
+
+                if (!isTrackedRigid) {
+                    if (type === 'dynamic') untrackedDynamicBodies++;
+                    else if (type === 'static') untrackedStaticBodies++;
+                    else if (type === 'kinematic') untrackedKinematicBodies++;
+                } else {
+                    topBodies.push({
+                        name: ud.name || 'Object',
+                        fixtures: fixtureCount,
+                        pixels: ud.pixels ? ud.pixels.reduce((n, v) => n + (v !== MAT.EMPTY), 0) : 0,
+                        pending: ud.pendingStructuralDelta || 0,
+                        needsUpdate: !!ud.needsShapeUpdate,
+                        destroyed: !!ud.isDestroyed,
+                        split: !!ud.isSplit,
+                        bodyType: type
+                    });
+                }
+            }
+
+            for (const rb of rigidBodies) {
+                if (rb.isDestroyed) trackedRigidDestroyed++;
+                if (!rb.body) trackedRigidMissingBody++;
+                else trackedRigidWithBody++;
+
+                if (rb.needsShapeUpdate) trackedNeedsShapeUpdate++;
+                if (rb.isSplit) trackedSplitBodies++;
+                if (rb.body && rb.fixtureCount === 0) trackedZeroFixtures++;
+                if (rb.isStreamedOut) streamedOutBodies++;
+                if (rb.body && rb.body.getType() === 'dynamic' && rb.body.isActive()) activeDynamicBodies++;
+            }
+
+            topBodies.sort((a, b) => {
+                if (b.fixtures !== a.fixtures) return b.fixtures - a.fixtures;
+                if (b.pixels !== a.pixels) return b.pixels - a.pixels;
+                return b.pending - a.pending;
+            });
+
+            const suspects = topBodies.slice(0, 5);
+
+            // --- 3. UI positioning and styling ---
             const startX = 10;
-            let startY = 50; // Position below the player stats UI
+            let startY = 50;
             const lineHeight = 10;
             const sectionSpacing = 5;
-            const boxWidth = 200;
-            const boxHeight = 130;
-            
-            // --- 3. Draw background box ---
-            ctx.fillStyle = "rgba(0,0,0,0.6)";
+            const boxWidth = 330;
+            const boxHeight = 270;
+
+            // --- 4. Draw background box ---
+            ctx.fillStyle = "rgba(0,0,0,0.78)";
             ctx.fillRect(startX - 4, startY - 4, boxWidth, boxHeight);
 
-            // --- 4. Setup text rendering ---
+            // --- 5. Setup text rendering ---
             ctx.font = "8px monospace";
             ctx.textAlign = "left";
             ctx.textBaseline = "top";
-            
-            // Helper for aligned text
-            const drawStat = (label, value) => {
-                ctx.fillStyle = "white";
-                ctx.fillText(`${label.padEnd(12, ' ')}: ${String(value).padStart(8, ' ')}`, startX, startY);
+
+            const drawStat = (label, value, color = "white") => {
+                ctx.fillStyle = color;
+                ctx.fillText(`${label.padEnd(18, ' ')}: ${String(value)}`, startX, startY);
                 startY += lineHeight;
             };
+
             const drawHeader = (text) => {
                 ctx.fillStyle = '#aaa';
                 ctx.fillText(text, startX, startY);
                 startY += lineHeight;
             };
-            
-            // --- 5. Display stats ---
-            drawHeader("== Chunks (Active/Pending) ==");
+
+            // --- 6. Display stats ---
+            //drawHeader("== Chunks (Active/Pending) ==");
             drawStat("Solids", `${activeSolidChunks.size}/${pendingSolidChunks.length}`);
             drawStat("Liquids", `${activeLiquidChunks.size}/${pendingLiquidChunks.length}`);
             drawStat("Gases", `${activeGasChunks.size}/${pendingGasChunks.length}`);
             startY += sectionSpacing;
 
-            drawHeader("== World ==");
+            //drawHeader("== World ==");
             drawStat("Sectors", `${activeSectors}/${MAX_READY_SECTORS}`);
-            drawStat("Bodies", rigidBodies.length);
+            drawStat("Tracked rigidBodies", rigidBodies.length);
+            drawStat("World bodies total", worldBodyCount, worldBodyCount > rigidBodies.length + staticWorldBodies.length ? "#ffcc66" : "white");
+            drawStat("World fixtures", worldFixtureCount);
             drawStat("Particles", `${activeParticles}/${MAX_MAGIC_PARTICLES}`);
             startY += sectionSpacing;
 
-            drawHeader("== Cache Hits ==");
+            //drawHeader("== Planck Bodies ==");
+            drawStat("Dynamic", dynamicWorldBodyCount);
+            drawStat("Active dynamic", activeDynamicBodies);
+            drawStat("Streamed out", streamedOutBodies, streamedOutBodies > 0 ? "#ffcc66" : "white");
+            drawStat("Static", staticWorldBodyCount);
+            drawStat("Kinematic", kinematicWorldBodyCount);
+            drawStat("Awake", awakeBodyCount);
+            startY += sectionSpacing;
+
+            //drawHeader("== Tracked Rigid Bodies ==");
+            drawStat("With body", trackedRigidWithBody);
+            drawStat("Destroyed flag", trackedRigidDestroyed, trackedRigidDestroyed > 0 ? "#ff8888" : "white");
+            drawStat("Missing body", trackedRigidMissingBody, trackedRigidMissingBody > 0 ? "#ff8888" : "white");
+            drawStat("Needs update", trackedNeedsShapeUpdate, trackedNeedsShapeUpdate > 0 ? "#ffcc66" : "white");
+            drawStat("Zero fixtures", trackedZeroFixtures, trackedZeroFixtures > 0 ? "#ff8888" : "white");
+            drawStat("Split bodies", trackedSplitBodies);
+            startY += sectionSpacing;
+
+            //drawHeader("== Untracked World Bodies ==");
+            drawStat("Untracked dynamic", untrackedDynamicBodies, untrackedDynamicBodies > 0 ? "#ff6666" : "white");
+            drawStat("Untracked static", untrackedStaticBodies);
+            drawStat("Untracked kinematic", untrackedKinematicBodies, untrackedKinematicBodies > 0 ? "#ffcc66" : "white");
+            startY += sectionSpacing;
+
+            //drawHeader("== Cache Hits ==");
             drawStat("getGrid", `${getHitRatio}%`);
             drawStat("setGrid", `${setHitRatio}%`);
+            startY += sectionSpacing;
+
+            //drawHeader("== Top Fixture Suspects ==");
+            if (suspects.length === 0) {
+                drawStat("None", "-");
+            } else {
+                for (const s of suspects) {
+                    const flags = [
+                        s.bodyType[0].toUpperCase(),
+                        s.needsUpdate ? "U" : "-",
+                        s.destroyed ? "D" : "-",
+                        s.split ? "S" : "-"
+                    ].join('');
+
+                    ctx.fillStyle = (s.fixtures > 32 || s.pending > 50) ? "#ff8888" : "white";
+                    ctx.fillText(
+                        `${String(s.name).slice(0, 18).padEnd(18, ' ')} f:${String(s.fixtures).padStart(3, ' ')} p:${String(s.pixels).padStart(4, ' ')} d:${String(s.pending).padStart(3, ' ')} ${flags}`,
+                        startX,
+                        startY
+                    );
+                    startY += lineHeight;
+                }
+            }
         }
 
         function drawActiveChunkOutlines() {
@@ -13945,6 +14356,8 @@
                                     chunk.data = payload.data;
                                     chunk.cx = payload.cx;
                                     chunk.cy = payload.cy;
+                                    chunk.staticBody = null;
+                                    chunk.dirty = true;
                                 }
                                 if (lightChunks) {
                                     for (const [key, payload] of lightChunks) {
@@ -13980,6 +14393,7 @@
 
                     const key = coordToKey(sx, sy);
                     sectorGrid.set(key, { state: 'ready', sx: sx, sy: sy });
+                    reactivateDynamicBodiesForSector(sx, sy);
                     markSectorBordersDirty(sx, sy);
                 }
             }
@@ -14095,9 +14509,9 @@
             for (const key of neededChunks) {
                 const chunk = getChunk(chunkMap, key);
                 if (chunk.dirty && chunk.staticBody) {
-                    if (now - chunk.lastRegenTime > REGEN_COOLDOWN) { world.destroyBody(chunk.staticBody); chunk.staticBody = null; }
+                    if (frameCount - chunk.lastRegenTime > REGEN_COOLDOWN) { world.destroyBody(chunk.staticBody); chunk.staticBody = null; }
                 }
-                if (!chunk.staticBody) { chunk.staticBody = generateStaticBodyForChunk(chunk); chunk.dirty = false; chunk.lastRegenTime = now; }
+                if (!chunk.staticBody) { chunk.staticBody = generateStaticBodyForChunk(chunk); chunk.dirty = false; chunk.lastRegenTime = frameCount; }
                 chunk.staticBody.setActive(true);
             }
             Profiler.stop('StaticBodiesForChunks');
@@ -14105,6 +14519,7 @@
         }
 
         function updateRigidBodies(now) {
+
             // THE FIX: Only run the expensive collider update logic periodically.
             if (now - lastColliderUpdateTime > COLLIDER_UPDATE_INTERVAL) {
                 updateWorldColliders(now);
@@ -14181,7 +14596,7 @@
                 body.createFixture(chainShape);
             }
 
-            body.setActive(false);
+            body.setActive(true);
             return body;
         }
         // --- END OF REPLACEMENT ---
