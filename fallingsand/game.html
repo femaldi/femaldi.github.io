@@ -251,6 +251,26 @@
             });
         }
 
+        function clearSectorDatabase() {
+            return new Promise((resolve, reject) => {
+                // Close existing connection if already opened
+                if (sectorDbPromise) {
+                    sectorDbPromise.then(db => db.close());
+                    sectorDbPromise = null;
+                }
+
+                const request = indexedDB.deleteDatabase(SECTOR_DB_NAME);
+
+                request.onsuccess = () => {
+                    console.log('IndexedDB cleared.');
+                    resolve();
+                };
+
+                request.onerror = () => reject(request.error);
+                request.onblocked = () => console.warn('DB delete blocked (open connection?)');
+            });
+        }
+
         // --- Add this listener for SOLID splashes ---
         world.on('begin-contact', function(contact) {
             const now = performance.now();
@@ -14242,6 +14262,7 @@
 
         async function mainLoader() {
             localStorage.clear();
+            await clearSectorDatabase();
             const loadingOverlay = document.getElementById('loading-overlay');
             const yieldToBrowser = () => new Promise(resolve => setTimeout(resolve, 20));
 
