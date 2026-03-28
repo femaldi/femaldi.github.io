@@ -2414,8 +2414,8 @@
         // --- Add these new variables ---
         const BLOOM_MATERIALS = {
             [MAT.FIRE]: { color: [255, 50, 50], intensity: 0.9, radius: 12 },
-            [MAT.OIL_BURNING]: { color: [255, 10, 0], intensity: 0.8, radius: 10 },
-            [MAT.COAL_BURNING]: { color: [255, 10, 0], intensity: 0.7, radius: 8 },
+            [MAT.OIL_BURNING]: { color: [255, 10, 0], intensity: 1.0, radius: 10 },
+            [MAT.COAL_BURNING]: { color: [255, 10, 0], intensity: 1.0, radius: 8 },
             [MAT.GUNPOWDER_IGNITED]: { color: [200, 10, 0], intensity: 0.5, radius: 4 },
             [MAT.RUNE_WALL]: { color: [200, 200, 50], intensity: 0.3, radius: 6 },
             [MAT.COPPER]: { color: [220, 200, 200], intensity: 0.01, radius: 1 },
@@ -11341,6 +11341,7 @@
                         else if (type === MAT.OIL_BURNING || type === MAT.COAL_BURNING) { 
                             firePixelsCoords.push({ x: screenX, y: screenY });
                             [r, g, b] = varyColor(...COLORS[type], worldX, worldY, type, 4); 
+                            g = 80 + Math.random() * 80;
                         } 
                         else if (LIQUIDS.has(type)) { 
                             [r, g, b] = varyColor(...COLORS[type], worldX, worldY, type, 4); 
@@ -11350,6 +11351,9 @@
                         } 
                         else if (type === MAT.WOOD) {
                             [r, g, b] = woodColor(worldX, worldY, COLORS[type]);
+                        }
+                        else if (type === MAT.ROCK_WALL || type === MAT.SANDSTONE_WALL || type === MAT.GROUND || type === MAT.VOLCANIC_WALL || type === MAT.LABYRINTH_WALL || type === MAT.MAGIC_WALL) {
+                            [r, g, b] = getWallPatternColor(type, worldX, worldY, COLORS[type]);
                         }
                         else { 
                             [r, g, b] = varyColor(...COLORS[type], worldX, worldY, type, 16); 
@@ -12948,6 +12952,134 @@
             return (h ^ (h >> 16)) & 0xff;
         }
 
+        function hash2D(x, y, seed = 0) {
+            let h = (x * 374761393 + y * 668265263 + seed * 1442695041) | 0;
+            h = (h ^ (h >>> 13)) * 1274126177 | 0;
+            h ^= h >>> 16;
+            return (h >>> 0) / 4294967295;
+        }
+
+        function lerp(a, b, t) {
+            return a + (b - a) * t;
+        }
+
+        function smoothstep01(t) {
+            return t * t * (3 - 2 * t);
+        }
+
+        function valueNoise2D(x, y, cellSize, seed = 0) {
+            const gx = Math.floor(x / cellSize);
+            const gy = Math.floor(y / cellSize);
+
+            const fx = (x / cellSize) - gx;
+            const fy = (y / cellSize) - gy;
+
+            const tx = smoothstep01(fx);
+            const ty = smoothstep01(fy);
+
+            const n00 = hash2D(gx,     gy,     seed);
+            const n10 = hash2D(gx + 1, gy,     seed);
+            const n01 = hash2D(gx,     gy + 1, seed);
+            const n11 = hash2D(gx + 1, gy + 1, seed);
+
+            const nx0 = lerp(n00, n10, tx);
+            const nx1 = lerp(n01, n11, tx);
+            return lerp(nx0, nx1, ty);
+        }
+
+        function fbm2D(x, y, baseCellSize, seed = 0) {
+            let value = 0;
+            let amp = 0.55;
+            let norm = 0;
+            let cell = baseCellSize;
+
+            for (let i = 0; i < 3; i++) {
+                value += valueNoise2D(x, y, cell, seed + i * 101) * amp;
+                norm += amp;
+                amp *= 0.5;
+                cell *= 0.5;
+            }
+
+            return value / norm;
+        }
+
+        function clampByte(v) {
+            return v < 0 ? 0 : v > 255 ? 255 : v | 0;
+        }
+
+        function getWallPatternColor(type, worldX, worldY, baseColor) {
+            let r = baseColor[0];
+            let g = baseColor[1];
+            let b = baseColor[2];
+
+            const mass   = fbm2D(worldX, worldY, 28, 911);
+            const shape  = fbm2D(worldX, worldY, 14, 1223);
+            const detail = fbm2D(worldX, worldY, 6, 1877);
+            const cracks = valueNoise2D(worldX * 1.2, worldY * 1.2, 8, 4421);
+
+            let shade = 0;
+
+            // Large cave-rock masses
+            if (mass < 0.28) shade -= 30;
+            else if (mass < 0.42) shade -= 14;
+            else if (mass > 0.74) shade += 18;
+            else if (mass > 0.62) shade += 8;
+
+            // Mid-scale breakup to avoid smooth gradients
+            if (shape < 0.35) shade -= 10;
+            else if (shape > 0.68) shade += 8;
+
+            // Fine jagged mineral variation
+            shade += (detail - 0.5) * 12;
+
+            // Sharp dark fissures
+            if (cracks > 0.82) shade -= 22;
+            if (cracks > 0.90) shade -= 12;
+
+            // Occasional brighter mineral flecks
+            const flecks = hash2D(worldX, worldY, 7331);
+            if (flecks > 0.985) shade += 16;
+
+            return [
+                clampByte(r + shade),
+                clampByte(g + shade),
+                clampByte(b + shade)
+            ];
+
+            // if (type === MAT.SANDSTONE_WALL || type === MAT.GROUND) {
+            //     const mass   = fbm2D(worldX, worldY, 24, 1771);
+            //     const shape  = fbm2D(worldX, worldY, 12, 2551);
+            //     const detail = fbm2D(worldX, worldY, 5, 3181);
+            //     const bands  = valueNoise2D(worldX * 0.18, worldY * 0.9, 10, 3881);
+
+            //     let shade = 0;
+
+            //     // Chunky sediment masses, still rocky
+            //     if (mass < 0.30) shade -= 18;
+            //     else if (mass < 0.42) shade -= 8;
+            //     else if (mass > 0.72) shade += 12;
+
+            //     // Broken rocky forms
+            //     if (shape < 0.34) shade -= 8;
+            //     else if (shape > 0.70) shade += 6;
+
+            //     // Fine grain
+            //     shade += (detail - 0.5) * 8;
+
+            //     // Subtle stratification, less smooth than before
+            //     if (bands < 0.22) shade -= 10;
+            //     else if (bands > 0.76) shade += 8;
+
+            //     return [
+            //         clampByte(r + shade + 6),
+            //         clampByte(g + shade + 2),
+            //         clampByte(b + shade - 4)
+            //     ];
+            // }
+
+            return baseColor;
+        }
+
         function metallicColor(x, y, baseRGB) {
             const [br, bg, bb] = baseRGB, s1 = 0.5 + 0.5 * Math.sin((x * 0.35) + (y * 0.18)), s2 = 0.5 + 0.5 * Math.sin((x * 0.08) - (y * 0.12)), t = 0.65 * s1 + 0.35 * s2, glint = (Math.sin(x * 0.9 + y * 0.25) > 0.985) ? 0.25 : 0.0, m = 0.85 + 0.35 * t + glint, r = Math.min(255, Math.max(0, br * m)), g = Math.min(255, Math.max(0, bg * (m * 0.98))), b = Math.min(255, Math.max(0, bb * (m * 1.05)));
             return [r | 0, g | 0, b | 0];
@@ -13953,6 +14085,12 @@
             let streamedOutBodies = 0;
             let activeDynamicBodies = 0;
 
+            let worldContactCount = 0;
+            let touchingContactCount = 0;
+            let enabledContactCount = 0;
+            let dynamicContactCount = 0;
+            let awakeDynamicContactCount = 0;
+
             const topBodies = [];
 
             for (let b = world.getBodyList(); b; b = b.getNext()) {
@@ -14008,6 +14146,42 @@
                 return b.pending - a.pending;
             });
 
+            for (let c = world.getContactList(); c; c = c.getNext()) {
+                worldContactCount++;
+
+                if (c.isTouching && c.isTouching()) {
+                    touchingContactCount++;
+                }
+
+                if (c.isEnabled && c.isEnabled()) {
+                    enabledContactCount++;
+                }
+
+                const fixtureA = c.getFixtureA();
+                const fixtureB = c.getFixtureB();
+                const bodyA = fixtureA ? fixtureA.getBody() : null;
+                const bodyB = fixtureB ? fixtureB.getBody() : null;
+
+                const typeA = bodyA ? bodyA.getType() : null;
+                const typeB = bodyB ? bodyB.getType() : null;
+
+                const hasDynamic =
+                    typeA === 'dynamic' ||
+                    typeB === 'dynamic';
+
+                if (hasDynamic) {
+                    dynamicContactCount++;
+                }
+
+                const hasAwakeDynamic =
+                    (typeA === 'dynamic' && bodyA.isAwake && bodyA.isAwake()) ||
+                    (typeB === 'dynamic' && bodyB.isAwake && bodyB.isAwake());
+
+                if (hasAwakeDynamic) {
+                    awakeDynamicContactCount++;
+                }
+            }
+
             const suspects = topBodies.slice(0, 5);
 
             // --- 3. UI positioning and styling ---
@@ -14047,11 +14221,11 @@
             startY += sectionSpacing;
 
             //drawHeader("== World ==");
-            drawStat("Sectors", `${activeSectors}/${MAX_READY_SECTORS}`);
+            //drawStat("Sectors", `${activeSectors}/${MAX_READY_SECTORS}`);
             drawStat("Tracked rigidBodies", rigidBodies.length);
             drawStat("World bodies total", worldBodyCount, worldBodyCount > rigidBodies.length + staticWorldBodies.length ? "#ffcc66" : "white");
             drawStat("World fixtures", worldFixtureCount);
-            drawStat("Particles", `${activeParticles}/${MAX_MAGIC_PARTICLES}`);
+            //drawStat("Particles", `${activeParticles}/${MAX_MAGIC_PARTICLES}`);
             startY += sectionSpacing;
 
             //drawHeader("== Planck Bodies ==");
@@ -14059,8 +14233,16 @@
             drawStat("Active dynamic", activeDynamicBodies);
             drawStat("Streamed out", streamedOutBodies, streamedOutBodies > 0 ? "#ffcc66" : "white");
             drawStat("Static", staticWorldBodyCount);
-            drawStat("Kinematic", kinematicWorldBodyCount);
+            //drawStat("Kinematic", kinematicWorldBodyCount);
             drawStat("Awake", awakeBodyCount);
+            startY += sectionSpacing;
+
+            //drawHeader("== Contacts ==");
+            drawStat("Total", worldContactCount, worldContactCount > 200 ? "#ffcc66" : "white");
+            drawStat("Touching", touchingContactCount, touchingContactCount > 100 ? "#ffcc66" : "white");
+            drawStat("Enabled", enabledContactCount);
+            drawStat("With dynamic", dynamicContactCount, dynamicContactCount > 100 ? "#ffcc66" : "white");
+            drawStat("Awake dynamic", awakeDynamicContactCount, awakeDynamicContactCount > 50 ? "#ff8888" : "white");
             startY += sectionSpacing;
 
             //drawHeader("== Tracked Rigid Bodies ==");
