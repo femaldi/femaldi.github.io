@@ -79,11 +79,31 @@
         }
         .info-bar { font-size: 14px; color: #ccc; }
         .info-bar strong { color: white; }
-        canvas {
+        /* canvas {
             border: 2px solid #555;
             background-color: #000;
             cursor: crosshair;
             image-rendering: pixelated; 
+        } */
+        #gameContainer {
+            position: relative;
+            display: inline-block;
+        }
+
+        #gameCanvas {
+            border: 2px solid #555;
+            background-color: #000;
+            cursor: crosshair;
+            image-rendering: pixelated;
+            display: block;
+        }
+
+        #uiCanvas {
+            position: absolute;
+            left: 0;
+            top: 0;
+            pointer-events: none;
+            image-rendering: auto;
         }
         #controls_ui {
             position: fixed;
@@ -138,7 +158,10 @@
         Generating...
     </div>
 
-    <canvas id="canvas"></canvas>
+    <div id="gameContainer">
+        <canvas id="gameCanvas"></canvas>
+        <canvas id="uiCanvas"></canvas>
+    </div>
 
     <script src="https://cdn.jsdelivr.net/npm/earcut@2.2.4/dist/earcut.min.js"></script>
     <script src="https://unpkg.com/planck-js@0.3.0/dist/planck.min.js"></script>
@@ -146,8 +169,11 @@
 
     <script>
         // --- CONFIGURATION ---
-        const canvas = document.getElementById('canvas');
+        const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
+
+        const uiCanvas = document.getElementById('uiCanvas');
+        const uiCtx = uiCanvas.getContext('2d');
         const pl = planck;
         let debugMode = false;
         const STATION_FLOOR_Y = 0;
@@ -432,14 +458,140 @@
 
         canvas.style.imageRendering = "pixelated";
 
-        /*
-        
-        createMagicTablet(550, STATION_FLOOR_Y - 16, 'increase_tool_slots');
-        createMagicTablet(570, STATION_FLOOR_Y - 16, 'increase_structure_slots');
-        createMagicTablet(590, STATION_FLOOR_Y - 16, 'unlock_reaction', { reactionKey: 'heat_material' });
-        createMagicTablet(610, STATION_FLOOR_Y - 16, 'unlock_reaction', { reactionKey: 'filter_material' });
-        
-        */
+        uiCanvas.width = viewWidth * scale;
+        uiCanvas.height = viewHeight * scale;
+        uiCanvas.style.width = viewWidth * scale + "px";
+        uiCanvas.style.height = viewHeight * scale + "px";
+
+        const UI_SCALE = scale; // or whatever your display scale is
+
+        const _fillText = uiCtx.fillText.bind(uiCtx);
+
+        uiCtx.fillText = function (text, x, y, maxWidth) {
+            if (maxWidth !== undefined) {
+                return _fillText(text, x * UI_SCALE, y * UI_SCALE, maxWidth * UI_SCALE);
+            }
+            return _fillText(text, x * UI_SCALE, y * UI_SCALE);
+        };
+
+        const _fillRect = uiCtx.fillRect.bind(uiCtx);
+        uiCtx.fillRect = (x, y, w, h) =>
+            _fillRect(x * UI_SCALE, y * UI_SCALE, w * UI_SCALE, h * UI_SCALE);
+
+        const _strokeRect = uiCtx.strokeRect.bind(uiCtx);
+        uiCtx.strokeRect = (x, y, w, h) =>
+            _strokeRect(x * UI_SCALE, y * UI_SCALE, w * UI_SCALE, h * UI_SCALE);
+
+        const _rect = uiCtx.rect.bind(uiCtx);
+        uiCtx.rect = (x, y, w, h) =>
+            _rect(x * UI_SCALE, y * UI_SCALE, w * UI_SCALE, h * UI_SCALE);
+
+        const _moveTo = uiCtx.moveTo.bind(uiCtx);
+        uiCtx.moveTo = (x, y) =>
+            _moveTo(x * UI_SCALE, y * UI_SCALE);
+
+        const _lineTo = uiCtx.lineTo.bind(uiCtx);
+        uiCtx.lineTo = (x, y) =>
+            _lineTo(x * UI_SCALE, y * UI_SCALE);
+
+        const _arcTo = uiCtx.arcTo.bind(uiCtx);
+        uiCtx.arcTo = (x, y, h, w, r) =>
+            _arcTo(x * UI_SCALE, y * UI_SCALE, w * UI_SCALE, h * UI_SCALE, r * UI_SCALE);
+
+        const _fontDesc = Object.getOwnPropertyDescriptor(CanvasRenderingContext2D.prototype, 'font');
+
+        Object.defineProperty(uiCtx, 'font', {
+            set(value) {
+                // Replace numbers like "8px" → scaled value
+                const scaled = value.replace(/(\d+\.?\d*)px/g, (_, size) => {
+                    return (parseFloat(size) * UI_SCALE) + 'px';
+                });
+                _fontDesc.set.call(this, scaled);
+            },
+            get() {
+                return _fontDesc.get.call(this);
+            }
+        });
+
+        const quests = new Map();
+        const activeQuestIds = [];
+        const completedQuestIds = new Set();
+
+        function createQuest(def) {
+            return {
+                id: def.id,
+                title: def.title,
+                description: def.description || "",
+                objectives: def.objectives.map(obj => ({
+                    id: obj.id,
+                    text: obj.text,
+                    completed: !!obj.completed,
+                    isCompleted: typeof obj.isCompleted === "function" ? obj.isCompleted : null
+                })),
+                unlocks: def.unlocks ? [...def.unlocks] : [],
+                visible: def.visible !== false
+            };
+        }
+
+        function registerQuest(def) {
+            quests.set(def.id, createQuest(def));
+        }
+
+        function startQuest(questId) {
+            if (!quests.has(questId)) return;
+            if (activeQuestIds.includes(questId)) return;
+            if (completedQuestIds.has(questId)) return;
+            activeQuestIds.push(questId);
+        }
+
+        function isQuestComplete(quest) {
+            return quest.objectives.every(obj => obj.completed);
+        }
+
+        function completeQuest(questId) {
+            const quest = quests.get(questId);
+            if (!quest) return;
+            if (completedQuestIds.has(questId)) return;
+
+            completedQuestIds.add(questId);
+
+            const index = activeQuestIds.indexOf(questId);
+            if (index !== -1) activeQuestIds.splice(index, 1);
+
+            for (const nextQuestId of quest.unlocks) {
+                startQuest(nextQuestId);
+            }
+        }
+
+        function updateQuestProgress() {
+            for (let i = activeQuestIds.length - 1; i >= 0; i--) {
+                const questId = activeQuestIds[i];
+                const quest = quests.get(questId);
+                if (!quest) continue;
+
+                if (isQuestComplete(quest)) {
+                    completeQuest(questId);
+                }
+            }
+        }
+
+        function setObjectiveComplete(questId, objectiveId, completed = true) {
+            const quest = quests.get(questId);
+            if (!quest) return;
+
+            const objective = quest.objectives.find(o => o.id === objectiveId);
+            if (!objective) return;
+
+            objective.completed = completed;
+        }
+
+        function completeObjective(questId, objectiveId) {
+            setObjectiveComplete(questId, objectiveId, true);
+        }
+
+        function resetObjective(questId, objectiveId) {
+            setObjectiveComplete(questId, objectiveId, false);
+        }
 
         function createMagicTablet(x, y, upgradeType, data = {}) {
             const width = 16;
@@ -899,6 +1051,7 @@
                                 spawnMaterialsInArea(stationGeo.inputCrucible.worldPoints, mixtureToSpawn);
                                 const athanor = stationGeo.athanor;
                                 spawnFloatingArrow(athanor.x + athanor.width / 2, athanor.y - 20);
+                                startQuest("intro_extract_fluidity_essence");
                             }
                             //DialogueManager.closeDialogue();
                         }
@@ -1138,6 +1291,56 @@
             }
         };
 
+        function renderQuestLog(startX, startY) {
+            const visibleQuests = activeQuestIds
+                .map(id => quests.get(id))
+                .filter(q => q && q.visible);
+
+            if (visibleQuests.length === 0) return;
+
+            const lineHeight = 5;
+            const sectionGap = 6;
+            const boxWidth = 140;
+
+            let lineCount = 1; // header
+            for (const quest of visibleQuests) {
+                lineCount += 1; // title
+                lineCount += quest.objectives.length;
+                lineCount += 1; // spacing
+            }
+
+            const boxHeight = lineCount * lineHeight + 8;
+
+            uiCtx.fillStyle = "rgba(0, 0, 0, 0.2)";
+            uiCtx.fillRect(startX - 4, startY - 4, boxWidth, boxHeight);
+
+            uiCtx.fillStyle = "white";
+            uiCtx.font = "4px monospace";
+            uiCtx.textAlign = "left";
+            uiCtx.textBaseline = "top";
+
+            uiCtx.fillText("Objectives", startX, startY);
+            startY += lineHeight + 2;
+
+            for (const quest of visibleQuests) {
+                uiCtx.fillStyle = "#ffd27a";
+                uiCtx.fillText(quest.title, startX, startY);
+                startY += lineHeight;
+
+                for (const obj of quest.objectives) {
+                    uiCtx.fillStyle = obj.completed ? "#8fd48f" : "#d8d8d8";
+                    uiCtx.fillText(
+                        `${obj.completed ? "[x]" : "[ ]"} ${obj.text}`,
+                        startX + 3,
+                        startY
+                    );
+                    startY += lineHeight;
+                }
+
+                startY += sectionGap;
+            }
+        }
+
         function renderBuffsUI() {
             if (player.activeBuffs.length === 0) return;
 
@@ -1147,8 +1350,8 @@
             const boxH = 20;
             const spacing = 5;
 
-            ctx.font = '6px monospace';
-            ctx.textBaseline = 'top';
+            uiCtx.font = '6px monospace';
+            uiCtx.textBaseline = 'top';
 
             for (const buff of player.activeBuffs) {
                 // Find the potion definition to get its name
@@ -1157,20 +1360,20 @@
                 const remainingSeconds = (buff.duration / 60).toFixed(1);
 
                 // Background
-                ctx.fillStyle = 'rgba(0,0,0,0.7)';
-                ctx.fillRect(x, y, boxW, boxH);
+                uiCtx.fillStyle = 'rgba(0,0,0,0.7)';
+                uiCtx.fillRect(x, y, boxW, boxH);
                 
                 // Duration bar
                 const durationPercent = buff.duration / buff.maxDuration;
-                ctx.fillStyle = 'rgba(200, 200, 255, 0.5)';
-                ctx.fillRect(x, y + boxH - 4, boxW * durationPercent, 4);
+                uiCtx.fillStyle = 'rgba(200, 200, 255, 0.5)';
+                uiCtx.fillRect(x, y + boxH - 4, boxW * durationPercent, 4);
 
                 // Text
-                ctx.fillStyle = 'white';
-                ctx.textAlign = 'left';
-                ctx.fillText(name, x + 5, y + 2);
-                ctx.textAlign = 'right';
-                ctx.fillText(`${remainingSeconds}s`, x + boxW - 5, y + 2);
+                uiCtx.fillStyle = 'white';
+                uiCtx.textAlign = 'left';
+                uiCtx.fillText(name, x + 5, y + 2);
+                uiCtx.textAlign = 'right';
+                uiCtx.fillText(`${remainingSeconds}s`, x + boxW - 5, y + 2);
 
                 y += boxH + spacing;
             }
@@ -1234,30 +1437,30 @@
             const cornerRadius = 6;
 
             // Draw background box (using rounded rectangle path)
-            ctx.fillStyle = `rgba(30, 20, 10, ${0.8 * alpha})`;
-            ctx.strokeStyle = `rgba(255, 180, 80, ${0.9 * alpha})`;
-            ctx.lineWidth = 2;
+            uiCtx.fillStyle = `rgba(30, 20, 10, ${0.8 * alpha})`;
+            uiCtx.strokeStyle = `rgba(255, 180, 80, ${0.9 * alpha})`;
+            uiCtx.lineWidth = 2;
             
-            ctx.beginPath();
-            ctx.moveTo(boxX + cornerRadius, boxY);
-            ctx.lineTo(boxX + boxW - cornerRadius, boxY);
-            ctx.arcTo(boxX + boxW, boxY, boxX + boxW, boxY + cornerRadius, cornerRadius);
-            ctx.lineTo(boxX + boxW, boxY + boxH - cornerRadius);
-            ctx.arcTo(boxX + boxW, boxY + boxH, boxX + boxW - cornerRadius, boxY + boxH, cornerRadius);
-            ctx.lineTo(boxX + cornerRadius, boxY + boxH);
-            ctx.arcTo(boxX, boxY + boxH, boxX, boxY + boxH - cornerRadius, cornerRadius);
-            ctx.lineTo(boxX, boxY + cornerRadius);
-            ctx.arcTo(boxX, boxY, boxX + cornerRadius, boxY, cornerRadius);
-            ctx.closePath();
-            ctx.fill();
-            ctx.stroke();
+            uiCtx.beginPath();
+            uiCtx.moveTo(boxX + cornerRadius, boxY);
+            uiCtx.lineTo(boxX + boxW - cornerRadius, boxY);
+            uiCtx.arcTo(boxX + boxW, boxY, boxX + boxW, boxY + cornerRadius, cornerRadius);
+            uiCtx.lineTo(boxX + boxW, boxY + boxH - cornerRadius);
+            uiCtx.arcTo(boxX + boxW, boxY + boxH, boxX + boxW - cornerRadius, boxY + boxH, cornerRadius);
+            uiCtx.lineTo(boxX + cornerRadius, boxY + boxH);
+            uiCtx.arcTo(boxX, boxY + boxH, boxX, boxY + boxH - cornerRadius, cornerRadius);
+            uiCtx.lineTo(boxX, boxY + cornerRadius);
+            uiCtx.arcTo(boxX, boxY, boxX + cornerRadius, boxY, cornerRadius);
+            uiCtx.closePath();
+            uiCtx.fill();
+            uiCtx.stroke();
 
             // Draw Text
-            ctx.fillStyle = `rgba(255, 220, 150, ${alpha})`;
-            ctx.font = 'bold 10px monospace';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText(ZoneMessageManager.text, renderWidth / 2, boxY + boxH / 2);
+            uiCtx.fillStyle = `rgba(255, 220, 150, ${alpha})`;
+            uiCtx.font = 'bold 10px monospace';
+            uiCtx.textAlign = 'center';
+            uiCtx.textBaseline = 'middle';
+            uiCtx.fillText(ZoneMessageManager.text, renderWidth / 2, boxY + boxH / 2);
         }
         // --- END OF NEW CODE ---
 
@@ -1284,21 +1487,21 @@
             const boxY = 100;
 
             // Draw background box
-            ctx.fillStyle = `rgba(20, 20, 30, ${0.8 * alpha})`;
-            ctx.fillRect(boxX, boxY, boxW, boxH);
-            ctx.strokeStyle = `rgba(160, 160, 192, ${0.9 * alpha})`;
-            ctx.strokeRect(boxX, boxY, boxW, boxH);
+            uiCtx.fillStyle = `rgba(20, 20, 30, ${0.8 * alpha})`;
+            uiCtx.fillRect(boxX, boxY, boxW, boxH);
+            uiCtx.strokeStyle = `rgba(160, 160, 192, ${0.9 * alpha})`;
+            uiCtx.strokeRect(boxX, boxY, boxW, boxH);
 
             // Draw Title
-            ctx.fillStyle = `rgba(255, 217, 102, ${alpha})`;
-            ctx.font = 'bold 10px monospace';
-            ctx.textAlign = 'left';
-            ctx.textBaseline = 'top';
-            ctx.fillText(UIMessageManager.title, boxX + 10, boxY + 8);
+            uiCtx.fillStyle = `rgba(255, 217, 102, ${alpha})`;
+            uiCtx.font = 'bold 10px monospace';
+            uiCtx.textAlign = 'left';
+            uiCtx.textBaseline = 'top';
+            uiCtx.fillText(UIMessageManager.title, boxX + 10, boxY + 8);
 
             // Draw Body Text (with word wrapping)
-            ctx.fillStyle = `rgba(255, 255, 255, ${alpha})`;
-            ctx.font = '8px monospace';
+            uiCtx.fillStyle = `rgba(255, 255, 255, ${alpha})`;
+            uiCtx.font = '8px monospace';
             
             const text = UIMessageManager.text;
             const textX = boxX + 10;
@@ -1311,14 +1514,14 @@
             for (let i = 0; i < words.length; i++) {
                 const testLine = currentLine + words[i] + ' ';
                 if (ctx.measureText(testLine).width > maxWidth && i > 0) {
-                    ctx.fillText(currentLine, textX, textY);
+                    uiCtx.fillText(currentLine, textX, textY);
                     currentLine = words[i] + ' ';
                     textY += lineHeight;
                 } else {
                     currentLine = testLine;
                 }
             }
-            ctx.fillText(currentLine, textX, textY);
+            uiCtx.fillText(currentLine, textX, textY);
         }
 
 
@@ -6613,6 +6816,7 @@
                             height: 30,
                             onInteract: (trigger) => {
                                 console.log("Gate trigger activated!");
+                                completeObjective("intro_silver_mines", "open_adamantium_doors");
                                 leftJoint.enableMotor(true);
                                 rightJoint.enableMotor(true);
                                 trigger.isDestroyed = true;
@@ -8613,7 +8817,10 @@
                     setGrid(x, y, MAT.GUNPOWDER_IGNITED);
                     setAuxData(etcChunkMap, x, y, 3 + Math.floor(Math.random() * 5));
                     break;
-                case MAT.OIL: setGrid(x, y, MAT.OIL_BURNING); break;
+                case MAT.OIL: 
+                    setGrid(x, y, MAT.OIL_BURNING);
+                    setAuxData(etcChunkMap, x, y, 80 + Math.floor(Math.random() * 80));
+                    break;
                 case MAT.COAL: setGrid(x, y, MAT.COAL_BURNING); break;
                 case MAT.WOOD: setGrid(x, y, MAT.FIRE); break;
                 // --- ADD METHANE ---
@@ -10264,98 +10471,408 @@
             }
         }
         
-        // --- START OF COMPLETE REPLACEMENT ---
         function updateFire(x, y, idx, moved, grid, w, h, getIdx, setter) {
             const isWorldSim = !grid;
             let nearbyFuel = false;
+            let woodNearby = false;
             let targetX = x, targetY = y;
 
+            const dirs8 = [
+                {x:0,y:1},{x:0,y:-1},{x:1,y:0},{x:-1,y:0},
+                {x:-1,y:-1},{x:1,y:-1},{x:-1,y:1},{x:1,y:1}
+            ];
+
             if (isWorldSim) {
-                for (let n of [{x:0,y:1},{x:0,y:-1},{x:1,y:0},{x:-1,y:0},{x:-1,y:-1},{x:1,y:-1},{x:-1,y:1},{x:1,y:1}]) {
+                // --- Existing world interactions kept ---
+                for (let n of dirs8) {
                     const nx = x + n.x, ny = y + n.y;
                     const nType = getGrid(nx, ny);
-                    if (nType === MAT.SAND && Math.random() < 0.05) setGrid(nx, ny, MAT.GLASS, true);
-                    if (nType === MAT.GUNPOWDER && Math.random() < 0.5) { setGrid(nx, ny, MAT.GUNPOWDER_IGNITED, true); setAuxData(etcChunkMap, nx, ny, 8 + Math.floor(Math.random() * 6)); return; }
-                    if (nType === MAT.OIL) { setGrid(nx, ny, MAT.OIL_BURNING, true); return; }
-                    if (nType === MAT.COAL) { setGrid(nx, ny, MAT.COAL_BURNING, true); return; }
-                    if (nType === MAT.METHANE && Math.random() < 0.9) { tryIgniteAt(nx, ny); setGrid(x, y, MAT.SMOKE, true); return; }
-                    if (nType === MAT.WOOD) { nearbyFuel = true; if (Math.random() < 0.02) setGrid(nx, ny, MAT.FIRE, true); }
-                    if (nType === MAT.WATER) { setGrid(nx, ny, MAT.STEAM, true); setGrid(x, y, MAT.STEAM, true); return; }
-                }
 
-                if (!nearbyFuel && y > 0) {
-                    let nextX = x, nextY = y - 1;
-                    if (Math.random() < 0.5) nextX += Math.random() < 0.5 ? -1 : 1;
-                    const nextType = getGrid(nextX, nextY);
-                    if (FIRE_PASSABLE.has(nextType)) {
-                        setGrid(x, y, nextType, true);
-                        setGrid(nextX, nextY, MAT.FIRE, true);
-                        targetX = nextX; targetY = nextY;
+                    if (nType === MAT.SAND && Math.random() < 0.05) setGrid(nx, ny, MAT.GLASS, true);
+
+                    if (nType === MAT.GUNPOWDER && Math.random() < 0.5) {
+                        setGrid(nx, ny, MAT.GUNPOWDER_IGNITED, true);
+                        setAuxData(etcChunkMap, nx, ny, 8 + Math.floor(Math.random() * 6));
+                        return;
+                    }
+
+                    if (nType === MAT.OIL) {
+                        setGrid(nx, ny, MAT.OIL_BURNING, true);
+                        setAuxData(etcChunkMap, nx, ny, 80 + Math.floor(Math.random() * 80));
+                        nearbyFuel = true;
+                    }
+
+                    if (nType === MAT.COAL) {
+                        setGrid(nx, ny, MAT.COAL_BURNING, true);
+                        nearbyFuel = true;
+                    }
+
+                    if (nType === MAT.METHANE && Math.random() < 0.9) {
+                        tryIgniteAt(nx, ny);
+                        setGrid(x, y, MAT.SMOKE, true);
+                        return;
+                    }
+
+                    if (nType === MAT.WOOD) {
+                        nearbyFuel = true;
+                        woodNearby = true;
+                        if (Math.random() < 0.02) setGrid(nx, ny, MAT.FIRE, true);
+                    }
+
+                    if (nType === MAT.WATER) {
+                        setGrid(nx, ny, MAT.STEAM, true);
+                        setGrid(x, y, MAT.STEAM, true);
+                        return;
                     }
                 }
-                if (Math.random() < (nearbyFuel ? 0.01 : 0.15)) {
-                    setGrid(targetX, targetY, Math.random() < 0.15 ? MAT.SMOKE : MAT.EMPTY, true);
+
+                // Burning oil / coal nearby should also count as fuel
+                for (let n of dirs8) {
+                    const nx = x + n.x, ny = y + n.y;
+                    const nType = getGrid(nx, ny);
+                    if (nType === MAT.OIL_BURNING || nType === MAT.COAL_BURNING || nType === MAT.FIRE) {
+                        nearbyFuel = true;
+                        break;
+                    }
                 }
-            } else { // Inventory simulation
+
+                // --- Only move if not anchored to nearby wood ---
+                if (!woodNearby) {
+                    // Slower, less floaty fire:
+                    // - reduced straight-up chance
+                    // - reduced diagonal-up chance
+                    // - a bit less sideways licking
+                    const movementOptions = [
+                        { dx:  0, dy: -1, p: 0.45 }, // up
+                        { dx: -1, dy: -1, p: 0.28 }, // up-left
+                        { dx:  1, dy: -1, p: 0.28 }, // up-right
+                        { dx: -1, dy:  0, p: 0.18 }, // left
+                        { dx:  1, dy:  0, p: 0.18 }, // right
+                        { dx:  0, dy:  1, p: 0.03 }  // down (rare)
+                    ];
+
+                    // randomize left/right ordering a bit so it doesn't bias
+                    if (Math.random() < 0.5) {
+                        const tmp = movementOptions[1];
+                        movementOptions[1] = movementOptions[2];
+                        movementOptions[2] = tmp;
+                    }
+                    if (Math.random() < 0.5) {
+                        const tmp = movementOptions[3];
+                        movementOptions[3] = movementOptions[4];
+                        movementOptions[4] = tmp;
+                    }
+
+                    let movedFire = false;
+
+                    // Near fuel, fire drifts even less.
+                    const moveDamp = nearbyFuel ? 0.15 : 0.20;
+
+                    for (const opt of movementOptions) {
+                        if (Math.random() >= opt.p * moveDamp) continue;
+
+                        const nx = x + opt.dx;
+                        const ny = y + opt.dy;
+                        const nextType = getGrid(nx, ny);
+
+                        if (FIRE_PASSABLE.has(nextType)) {
+                            setGrid(x, y, nextType, true);
+                            setGrid(nx, ny, MAT.FIRE, true);
+                            targetX = nx;
+                            targetY = ny;
+                            movedFire = true;
+                            break;
+                        }
+                    }
+
+                    // If it didn't move, let it occasionally lick sideways into passable space.
+                    if (!movedFire && Math.random() < 0.12) {
+                        const dir = Math.random() < 0.5 ? -1 : 1;
+                        const nx = x + dir;
+                        const ny = y;
+                        const nextType = getGrid(nx, ny);
+                        if (FIRE_PASSABLE.has(nextType)) {
+                            setGrid(x, y, nextType, true);
+                            setGrid(nx, ny, MAT.FIRE, true);
+                            targetX = nx;
+                            targetY = ny;
+                        }
+                    }
+                }
+
+                // --- If wood is nearby, fire should persist and keep trying to ignite wood ---
+                // Longer life without fuel:
+                // old no-fuel decay was 0.14, now reduced to 0.04
+                if (!woodNearby) {
+                    if (Math.random() < (nearbyFuel ? 0.004 : 0.04)) {
+                        setGrid(targetX, targetY, Math.random() < 0.18 ? MAT.SMOKE : MAT.EMPTY, true);
+                    }
+                }
+
+                activateChunkAt(targetX, targetY, MAT.FIRE);
+            } else {
+                // --- Inventory simulation kept, but make it live a bit longer there too ---
                 for (let n of [{x:0,y:1},{x:0,y:-1},{x:1,y:0},{x:-1,y:0}]) {
                     const nIdx = getIdx(x + n.x, y + n.y);
                     if (nIdx !== -1 && isFlammable(grid[nIdx])) {
                         nearbyFuel = true;
-                        if(Math.random() < 0.05) { setter(nIdx, MAT.FIRE); moved[nIdx] = 1; }
+                        if (Math.random() < 0.05) {
+                            setter(nIdx, MAT.FIRE);
+                            moved[nIdx] = 1;
+                        }
                     }
                 }
-                if (Math.random() < (nearbyFuel ? 0.01 : 0.25)) {
+
+                if (Math.random() < (nearbyFuel ? 0.008 : 0.12)) {
                     setter(idx, MAT.EMPTY);
                     moved[idx] = 1;
                 }
             }
         }
-        // --- END OF COMPLETE REPLACEMENT ---
 
-        // --- START OF COMPLETE REPLACEMENT ---
         function updateBurningCoal(x, y, idx, moved, grid, w, h, getIdx, setter) {
             const isWorldSim = !grid;
+
             if (isWorldSim) {
+                // Existing local ignition logic kept
                 for (const n of [{x:0,y:1},{x:0,y:-1},{x:1,y:0},{x:-1,y:0}]) {
                     const nx = x + n.x, ny = y + n.y;
                     if (getGrid(nx, ny) === MAT.SAND && Math.random() < 0.08) setGrid(nx, ny, MAT.GLASS, true);
                     tryIgniteAt(nx, ny, 0.02);
                 }
-                if (Math.random() < 0.02 && getGrid(x, y - 1) === MAT.EMPTY) setGrid(x, y - 1, MAT.FIRE, true);
-                if (Math.random() < 0.003) setGrid(x, y, Math.random() < 0.15 ? MAT.SMOKE : MAT.EMPTY, true);
+
+                // Slightly better coal chain propagation: ignite nearby coal directly, but slower than oil
+                for (const n of [
+                    {x:0,y:1},{x:0,y:-1},{x:1,y:0},{x:-1,y:0},
+                    {x:1,y:1},{x:-1,y:1},{x:1,y:-1},{x:-1,y:-1}
+                ]) {
+                    const nx = x + n.x, ny = y + n.y;
+                    const nType = getGrid(nx, ny);
+
+                    if (nType === MAT.COAL && Math.random() < 0.06) {
+                        setGrid(nx, ny, MAT.COAL_BURNING, true);
+                    } else if (nType === MAT.OIL && Math.random() < 0.10) {
+                        setGrid(nx, ny, MAT.OIL_BURNING, true);
+                        setAuxData(etcChunkMap, nx, ny, 80 + Math.floor(Math.random() * 80));
+                    } else if (nType === MAT.WOOD && Math.random() < 0.025) {
+                        setGrid(nx, ny, MAT.FIRE, true);
+                    }
+                }
+
+                // Existing upward fire emission kept, slightly stronger
+                if (Math.random() < 0.035) {
+                    const above = getGrid(x, y - 1);
+                    if (above === MAT.EMPTY || above === MAT.SMOKE || above === MAT.STEAM) {
+                        setGrid(x, y - 1, MAT.FIRE, true);
+                    }
+                }
+
+                // Occasional sideways/upward flame licking from coal
+                if (Math.random() < 0.012) {
+                    const dir = Math.random() < 0.5 ? -1 : 1;
+                    const nx = x + dir;
+                    const ny = y - (Math.random() < 0.75 ? 1 : 0);
+                    const t = getGrid(nx, ny);
+                    if (t === MAT.EMPTY || t === MAT.SMOKE || t === MAT.STEAM) {
+                        setGrid(nx, ny, MAT.FIRE, true);
+                    }
+                }
+
+                // Existing burnout logic kept
+                if (Math.random() < 0.003) {
+                    setGrid(x, y, Math.random() < 0.15 ? MAT.SMOKE : MAT.EMPTY, true);
+                }
+
                 activateChunkAt(x, y, getGrid(x, y)); // Keep chunk active while burning
-            } else { // Inventory simulation
+            } else {
+                // Inventory simulation kept
                 if (Math.random() < 0.01) {
                     setter(idx, MAT.EMPTY);
                     moved[idx] = 1;
                 }
             }
         }
-        // --- END OF COMPLETE REPLACEMENT ---
 
         function updateBurningOil(x, y, idx, moved, grid, w, h, getIdx, setter) {
             const isWorldSim = !grid;
-            const _get = (gx, gy) => isWorldSim ? getGrid(gx, gy) : (getIdx(gx, gy) !== -1 ? grid[getIdx(gx, gy)] : MAT.ROCK_WALL);
-            const _set = (gx, gy, gtype) => {
-                if (isWorldSim) {
-                    setGrid(gx, gy, gtype);
-                } else {
-                    const gidx = getIdx(gx, gy);
-                    if (gidx !== -1) { setter(gidx, gtype); moved[gidx] = 1; }
-                }
-            };
-            const _tryIgniteAt = (gx, gy, prob) => {
-                 if (isWorldSim) tryIgniteAt(gx, gy, prob);
+
+            const _get = (gx, gy) => {
+                if (isWorldSim) return getGrid(gx, gy);
+                const gidx = getIdx(gx, gy);
+                return gidx !== -1 ? grid[gidx] : MAT.ROCK_WALL;
             };
 
-            for (const n of [{x:0,y:1},{x:0,y:-1},{x:1,y:0},{x:-1,y:0},{x:1,y:1},{x:-1,y:1},{x:1,y:-1},{x:-1,y:-1}]) {
-                const nx = x + n.x, ny = y + n.y;
-                if (_get(nx, ny) === MAT.SAND && Math.random() < 0.1) _set(nx, ny, MAT.GLASS);
-                _tryIgniteAt(nx, ny, 0.05);
+            const _set = (gx, gy, gtype) => {
+                if (isWorldSim) {
+                    setGrid(gx, gy, gtype, true);
+                } else {
+                    const gidx = getIdx(gx, gy);
+                    if (gidx !== -1) {
+                        setter(gidx, gtype);
+                        moved[gidx] = 1;
+                    }
+                }
+            };
+
+            const _getAux = (gx, gy) => isWorldSim ? getAuxData(etcChunkMap, gx, gy) : 0;
+            const _setAux = (gx, gy, v) => {
+                if (isWorldSim) setAuxData(etcChunkMap, gx, gy, v);
+            };
+
+            const _canMoveInto = (t) => (
+                t === MAT.EMPTY ||
+                t === MAT.GAS ||
+                t === MAT.FIRE ||
+                t === MAT.SMOKE
+            );
+
+            const _igniteOil = (gx, gy) => {
+                if (_get(gx, gy) !== MAT.OIL) return;
+                _set(gx, gy, MAT.OIL_BURNING);
+                if (isWorldSim && _getAux(gx, gy) <= 0) {
+                    _setAux(gx, gy, 80 + Math.floor(Math.random() * 80));
+                }
+            };
+
+            const _igniteCoal = (gx, gy) => {
+                if (_get(gx, gy) !== MAT.COAL) return;
+                _set(gx, gy, MAT.COAL_BURNING);
+            };
+
+            const _moveBurningOil = (fromX, fromY, toX, toY, carriedAux) => {
+                const displaced = _get(toX, toY);
+                const displacedAux = isWorldSim ? _getAux(toX, toY) : 0;
+
+                _set(toX, toY, MAT.OIL_BURNING);
+                _set(fromX, fromY, displaced);
+
+                if (isWorldSim) {
+                    _setAux(toX, toY, carriedAux);
+                    _setAux(fromX, fromY, displacedAux);
+                }
+            };
+
+            let targetX = x;
+            let targetY = y;
+
+            // --- burn timer ---
+            let burnLife = isWorldSim ? _getAux(x, y) : 0;
+            if (isWorldSim) {
+                burnLife--;
+                _setAux(x, y, burnLife);
+
+                if (burnLife <= 0) {
+                    _set(x, y, Math.random() < 0.18 ? MAT.SMOKE : MAT.EMPTY);
+                    _setAux(x, y, 0);
+                    return;
+                }
             }
-            if (Math.random() < 0.05 && _get(x, y - 1) === MAT.EMPTY) _set(x, y - 1, MAT.FIRE);
-            if (Math.random() < 0.008) _set(x, y, Math.random() < 0.15 ? MAT.SMOKE : MAT.EMPTY);
-            if (isWorldSim && getGrid(x, y) === MAT.OIL_BURNING) activateChunkAt(x, y, getGrid(x, y));
+
+            // --- movement first ---
+            const below = _get(x, y + 1);
+            if (_canMoveInto(below)) {
+                _moveBurningOil(x, y, x, y + 1, burnLife);
+                targetX = x;
+                targetY = y + 1;
+            } else {
+                const dirFirst = Math.random() < 0.5 ? -1 : 1;
+                const dirSecond = -dirFirst;
+
+                let movedOil = false;
+
+                for (const dir of [dirFirst, dirSecond]) {
+                    const diag = _get(x + dir, y + 1);
+                    if (_canMoveInto(diag)) {
+                        _moveBurningOil(x, y, x + dir, y + 1, burnLife);
+                        targetX = x + dir;
+                        targetY = y + 1;
+                        movedOil = true;
+                        break;
+                    }
+                }
+
+                if (!movedOil) {
+                    for (const dir of [dirFirst, dirSecond]) {
+                        const side = _get(x + dir, y);
+                        if (_canMoveInto(side)) {
+                            _moveBurningOil(x, y, x + dir, y, burnLife);
+                            targetX = x + dir;
+                            targetY = y;
+                            movedOil = true;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // --- interactions from final position only ---
+            for (const n of [
+                {x:0,y:1},{x:0,y:-1},{x:1,y:0},{x:-1,y:0},
+                {x:1,y:1},{x:-1,y:1},{x:1,y:-1},{x:-1,y:-1}
+            ]) {
+                const nx = targetX + n.x;
+                const ny = targetY + n.y;
+                const nt = _get(nx, ny);
+
+                if (nt === MAT.SAND && Math.random() < 0.10) {
+                    _set(nx, ny, MAT.GLASS);
+                }
+
+                if (isWorldSim) {
+                    tryIgniteAt(nx, ny, 0.05);
+                }
+
+                // Lower than before so it doesn't look like cloning everywhere.
+                if (nt === MAT.OIL && Math.random() < 0.04) {
+                    _igniteOil(nx, ny);
+                }
+
+                if (nt === MAT.COAL && Math.random() < 0.02) {
+                    _igniteCoal(nx, ny);
+                }
+
+                if (nt === MAT.WOOD && Math.random() < 0.03) {
+                    _set(nx, ny, MAT.FIRE);
+                }
+            }
+
+            // --- upward flame emission ---
+            if (Math.random() < 0.14) {
+                const upwardTargets = Math.random() < 0.5
+                    ? [{x:0,y:-1}, {x:-1,y:-1}, {x:1,y:-1}]
+                    : [{x:0,y:-1}, {x:1,y:-1}, {x:-1,y:-1}];
+
+                for (const d of upwardTargets) {
+                    const fx = targetX + d.x;
+                    const fy = targetY + d.y;
+                    const t = _get(fx, fy);
+                    if (t === MAT.EMPTY || t === MAT.SMOKE || t === MAT.GAS || t === MAT.STEAM) {
+                        _set(fx, fy, MAT.FIRE);
+                        break;
+                    }
+                }
+            }
+
+            if (Math.random() < 0.04) {
+                const dir = Math.random() < 0.5 ? -1 : 1;
+                const fx = targetX + dir;
+                const fy = targetY;
+                const t = _get(fx, fy);
+                if (t === MAT.EMPTY || t === MAT.SMOKE || t === MAT.GAS) {
+                    _set(fx, fy, MAT.FIRE);
+                }
+            }
+
+            // --- rare random burnout ---
+            if (Math.random() < 0.002) {
+                _set(targetX, targetY, Math.random() < 0.15 ? MAT.SMOKE : MAT.EMPTY);
+                if (isWorldSim) _setAux(targetX, targetY, 0);
+                return;
+            }
+
+            if (isWorldSim && _get(targetX, targetY) === MAT.OIL_BURNING) {
+                activateChunkAt(targetX, targetY, MAT.OIL_BURNING);
+            }
         }
 
         // --- START OF COMPLETE REPLACEMENT ---
@@ -10674,8 +11191,13 @@
                 }
                 const belowType = getGrid(x, y + 1);
                 if (belowType === MAT.FIRE) {
-                    if (type === MAT.OIL) { setGrid(x, y, MAT.OIL_BURNING, true); }
-                    else { setGrid(x, y, MAT.STEAM, true); setGrid(x, y + 1, MAT.STEAM, true); }
+                    if (type === MAT.OIL) {
+                        setGrid(x, y, MAT.OIL_BURNING, true);
+                        setAuxData(etcChunkMap, x, y, 80 + Math.floor(Math.random() * 80));
+                    } else if (type === MAT.WATER) {
+                        setGrid(x, y, MAT.STEAM, true);
+                        if (Math.random() < 0.5) setGrid(x, y + 1, MAT.STEAM, true);
+                    }
                     return;
                 }
                 
@@ -10889,22 +11411,22 @@
             const boxY = renderHeight - boxH - 20;
 
             // Draw background box
-            ctx.fillStyle = 'rgba(20, 20, 30, 0.85)';
-            ctx.fillRect(boxX, boxY, boxW, boxH);
-            ctx.strokeStyle = '#a0a0c0';
-            ctx.strokeRect(boxX, boxY, boxW, boxH);
+            uiCtx.fillStyle = 'rgba(20, 20, 30, 0.85)';
+            uiCtx.fillRect(boxX, boxY, boxW, boxH);
+            uiCtx.strokeStyle = '#a0a0c0';
+            uiCtx.strokeRect(boxX, boxY, boxW, boxH);
 
             // Draw NPC Name
-            ctx.fillStyle = '#ffd966';
-            ctx.font = 'bold 10px monospace';
-            ctx.textAlign = 'left';
-            ctx.textBaseline = 'top';
-            ctx.fillText(DialogueManager.npcName, boxX + 10, boxY + 10);
+            uiCtx.fillStyle = '#ffd966';
+            uiCtx.font = 'bold 10px monospace';
+            uiCtx.textAlign = 'left';
+            uiCtx.textBaseline = 'top';
+            uiCtx.fillText(DialogueManager.npcName, boxX + 10, boxY + 10);
 
             // --- START: Word Wrapping Implementation ---
 
-            ctx.fillStyle = 'white';
-            ctx.font = '8px monospace';
+            uiCtx.fillStyle = 'white';
+            uiCtx.font = '8px monospace';
             
             const text = DialogueManager.currentNode.text;
             const textX = boxX + 10;
@@ -10922,7 +11444,7 @@
 
                 // If the next word makes the line too long, draw the current line and start a new one.
                 if (metrics.width > maxWidth && i > 0) {
-                    ctx.fillText(currentLine, textX, textY);
+                    uiCtx.fillText(currentLine, textX, textY);
                     currentLine = word + ' ';
                     textY += lineHeight;
                 } else {
@@ -10931,7 +11453,7 @@
                 }
             }
             // Draw the final remaining line.
-            ctx.fillText(currentLine, textX, textY);
+            uiCtx.fillText(currentLine, textX, textY);
             
             // --- END: Word Wrapping Implementation ---
 
@@ -10940,7 +11462,7 @@
             DialogueManager.currentNode.options.forEach((opt, index) => {
                 // Only draw options if they still fit inside the dialogue box.
                 if (yOff < boxY + boxH - 10) {
-                    ctx.fillText(`[${index + 1}] ${opt.text}`, boxX + 20, yOff);
+                    uiCtx.fillText(`[${index + 1}] ${opt.text}`, boxX + 20, yOff);
                     yOff += 12;
                 }
             });
@@ -11154,6 +11676,7 @@
             // Reset per-frame data
             firePixelsCoords = [];
             glowingPixelsCoords = [];
+            uiCtx.clearRect(0, 0, uiCanvas.width, uiCanvas.height);
 
             const startX = Math.floor(camera.x);
             const startY = Math.floor(camera.y);
@@ -11492,7 +12015,7 @@
                 
                 const animatedY = hintY + Math.sin(frameCount * 0.05) * 3;
                 ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.fillRect(hintX - 8, animatedY - 12, 16, 16);
-                ctx.font = 'bold 12px monospace'; ctx.fillStyle = 'white'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('E', hintX, animatedY);
+                uiCtx.font = 'bold 12px monospace'; uiCtx.fillStyle = 'white'; uiCtx.textAlign = 'center'; uiCtx.textBaseline = 'middle'; uiCtx.fillText('E', hintX, animatedY);
             }
 
             if (!player.transformState.active) {
@@ -11507,6 +12030,7 @@
             renderAlembicUI();
             renderGrimoire();
             renderBuffsUI();
+            renderQuestLog(10, 70);
             renderMessageUI();
             renderZoneMessage();
 
@@ -11880,43 +12404,43 @@
             const boxW = 220, boxH = 150;
             const boxX = (renderWidth - boxW) / 2, boxY = (renderHeight - boxH) / 2;
 
-            ctx.fillStyle = 'rgba(20, 25, 35, 0.95)'; ctx.fillRect(boxX, boxY, boxW, boxH);
-            ctx.strokeStyle = '#a0a0c0'; ctx.strokeRect(boxX, boxY, boxW, boxH);
-            ctx.fillStyle = 'white'; ctx.font = 'bold 12px monospace'; ctx.textAlign = 'left';
-            ctx.fillText("Alembic Interface", boxX + 10, boxY + 10);
+            uiCtx.fillStyle = 'rgba(20, 25, 35, 0.95)'; uiCtx.fillRect(boxX, boxY, boxW, boxH);
+            uiCtx.strokeStyle = '#a0a0c0'; uiCtx.strokeRect(boxX, boxY, boxW, boxH);
+            uiCtx.fillStyle = 'white'; uiCtx.font = 'bold 12px monospace'; uiCtx.textAlign = 'left';
+            uiCtx.fillText("Alembic Interface", boxX + 10, boxY + 10);
 
             let yOff = boxY + 35;
             
-            ctx.fillStyle = 'white'; ctx.font = '10px monospace';
-            ctx.fillText(`[1] Analyze Material`, boxX + 15, yOff); yOff += 20;
-            ctx.fillText("[2] Open Grimoire", boxX + 15, yOff); yOff += 20;
+            uiCtx.fillStyle = 'white'; uiCtx.font = '10px monospace';
+            uiCtx.fillText(`[1] Analyze Material`, boxX + 15, yOff); yOff += 20;
+            uiCtx.fillText("[2] Open Grimoire", boxX + 15, yOff); yOff += 20;
 
             const selectedRecipe = player.grimoire.pages[GrimoireManager.selectedRecipeIndex];
             if (selectedRecipe) {
-                ctx.fillStyle = '#90ee90';
-                ctx.fillText(`[3] START: Recipe ${selectedRecipe.name}`, boxX + 15, yOff);
+                uiCtx.fillStyle = '#90ee90';
+                uiCtx.fillText(`[3] START: Recipe ${selectedRecipe.name}`, boxX + 15, yOff);
             } else {
-                ctx.fillStyle = '#666';
-                ctx.fillText(`[3] No Recipe Selected`, boxX + 15, yOff);
+                uiCtx.fillStyle = '#666';
+                uiCtx.fillText(`[3] No Recipe Selected`, boxX + 15, yOff);
             }
             
-            ctx.fillStyle = '#aaa'; ctx.font = '8px monospace';
-            ctx.fillText("Press [ESC] to close.", boxX + 10, boxY + boxH - 15);
+            uiCtx.fillStyle = '#aaa'; uiCtx.font = '8px monospace';
+            uiCtx.fillText("Press [ESC] to close.", boxX + 10, boxY + boxH - 15);
         }
 
         // --- START OF REPLACEMENT ---
         function drawRuneInSlot(rune, x, y, w, h) {
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
+            uiCtx.textAlign = 'center';
+            uiCtx.textBaseline = 'middle';
 
             if (rune) {
                 const runeDef = RUNE_DEFINITIONS[rune.id];
                 if (!runeDef) return;
 
-                ctx.fillStyle = '#2d3748';
-                ctx.fillRect(x, y, w, h);
-                ctx.strokeStyle = '#a0a0c0';
-                ctx.strokeRect(x, y, w, h);
+                uiCtx.fillStyle = '#2d3748';
+                uiCtx.fillRect(x, y, w, h);
+                uiCtx.strokeStyle = '#a0a0c0';
+                uiCtx.strokeRect(x, y, w, h);
 
                 // --- NEW LOGIC: Use rune.id for special text formatting ---
                 let runeText = runeDef.name;
@@ -11937,16 +12461,16 @@
                         break;
                 }
 
-                ctx.fillStyle = 'white';
-                ctx.font = '10px monospace';
-                ctx.fillText(runeText, x + w / 2, y + h / 2);
+                uiCtx.fillStyle = 'white';
+                uiCtx.font = '10px monospace';
+                uiCtx.fillText(runeText, x + w / 2, y + h / 2);
 
             } else {
-                ctx.strokeStyle = '#4a5568';
-                ctx.strokeRect(x, y, w, h);
-                ctx.fillStyle = '#666';
-                ctx.font = '10px monospace';
-                ctx.fillText('[ Empty Slot ]', x + w / 2, y + h / 2);
+                uiCtx.strokeStyle = '#4a5568';
+                uiCtx.strokeRect(x, y, w, h);
+                uiCtx.fillStyle = '#666';
+                uiCtx.font = '10px monospace';
+                uiCtx.fillText('[ Empty Slot ]', x + w / 2, y + h / 2);
             }
         }
 
@@ -11955,28 +12479,28 @@
          * Renders the pop-up for selecting a discovered essence for the Extract Essence rune.
          */
         function renderEssenceSelectorPopup(x, y, w, h) {
-            ctx.fillStyle = "rgba(0, 0, 0, 0.5)";
-            ctx.fillRect(x, y, w, h);
+            uiCtx.fillStyle = "rgba(0, 0, 0, 0.5)";
+            uiCtx.fillRect(x, y, w, h);
 
             const popW = 250;
             const popH = 180;
             const popX = x + (w - popW) / 2;
             const popY = y + (h - popH) / 2;
 
-            ctx.fillStyle = '#2d3748';
-            ctx.fillRect(popX, popY, popW, popH);
-            ctx.strokeStyle = '#a0a0c0';
-            ctx.strokeRect(popX, popY, popW, popH);
+            uiCtx.fillStyle = '#2d3748';
+            uiCtx.fillRect(popX, popY, popW, popH);
+            uiCtx.strokeStyle = '#a0a0c0';
+            uiCtx.strokeRect(popX, popY, popW, popH);
 
-            ctx.fillStyle = 'white';
-            ctx.font = 'bold 10px monospace';
-            ctx.textAlign = 'center';
-            ctx.fillText("Select an Essence to Extract", popX + popW / 2, popY + 15);
+            uiCtx.fillStyle = 'white';
+            uiCtx.font = 'bold 10px monospace';
+            uiCtx.textAlign = 'center';
+            uiCtx.fillText("Select an Essence to Extract", popX + popW / 2, popY + 15);
 
             let yOff = popY + 30;
-            ctx.font = '10px monospace';
-            ctx.textAlign = 'left';
-            ctx.textBaseline = 'top';
+            uiCtx.font = '10px monospace';
+            uiCtx.textAlign = 'left';
+            uiCtx.textBaseline = 'top';
 
             // Create a unique set of all discovered essence IDs
             const allDiscovered = new Set();
@@ -11985,20 +12509,20 @@
             });
 
             if (allDiscovered.size === 0) {
-                ctx.fillStyle = '#ff6b6b';
-                ctx.textAlign = 'center';
-                ctx.fillText("You haven't discovered any essences yet!", popX + popW / 2, popY + popH / 2);
+                uiCtx.fillStyle = '#ff6b6b';
+                uiCtx.textAlign = 'center';
+                uiCtx.fillText("You haven't discovered any essences yet!", popX + popW / 2, popY + popH / 2);
             } else {
                 const sortedEssences = Array.from(allDiscovered).sort();
                 for (const essenceId of sortedEssences) {
                     if (yOff > popY + popH - 15) break; // Prevent overflow
                     const essenceName = essenceId.replace(/_/g, ' ');
-                    ctx.fillText(`- [${essenceName}]`, popX + 15, yOff);
+                    uiCtx.fillText(`- [${essenceName}]`, popX + 15, yOff);
                     yOff += 15;
                 }
             }
 
-            ctx.textBaseline = 'alphabetic';
+            uiCtx.textBaseline = 'alphabetic';
         }
 
         // --- END OF REPLACEMENT ---
@@ -12008,8 +12532,8 @@
          */
         function renderAttunementPopup(x, y, w, h) {
             // Draw a semi-transparent overlay to focus the player's attention
-            ctx.fillStyle = "rgba(0, 0, 0, 0.5)";
-            ctx.fillRect(x, y, w, h);
+            uiCtx.fillStyle = "rgba(0, 0, 0, 0.5)";
+            uiCtx.fillRect(x, y, w, h);
 
             const popW = 200;
             const popH = 150;
@@ -12017,30 +12541,30 @@
             const popY = y + (h - popH) / 2;
 
             // Draw pop-up background
-            ctx.fillStyle = '#2d3748';
-            ctx.fillRect(popX, popY, popW, popH);
-            ctx.strokeStyle = '#a0a0c0';
-            ctx.strokeRect(popX, popY, popW, popH);
+            uiCtx.fillStyle = '#2d3748';
+            uiCtx.fillRect(popX, popY, popW, popH);
+            uiCtx.strokeStyle = '#a0a0c0';
+            uiCtx.strokeRect(popX, popY, popW, popH);
 
             // Draw title
-            ctx.fillStyle = 'white';
-            ctx.font = 'bold 10px monospace';
-            ctx.textAlign = 'center';
-            ctx.fillText("Select a Material to Attune", popX + popW / 2, popY + 15);
+            uiCtx.fillStyle = 'white';
+            uiCtx.font = 'bold 10px monospace';
+            uiCtx.textAlign = 'center';
+            uiCtx.fillText("Select a Material to Attune", popX + popW / 2, popY + 15);
 
             // List discovered materials
             let yOff = popY + 30;
-            ctx.font = '10px monospace';
+            uiCtx.font = '10px monospace';
             const sortedMaterials = Array.from(player.discoveredMaterials).sort((a,b)=>MATERIAL_NAME[a].localeCompare(MATERIAL_NAME[b]));
 
-            ctx.textBaseline = 'top';
+            uiCtx.textBaseline = 'top';
 
             for (const matId of sortedMaterials) {
                 if (yOff > popY + popH - 15) {
-                     ctx.fillText("...", popX + popW / 2, yOff);
+                     uiCtx.fillText("...", popX + popW / 2, yOff);
                      break; // Don't overflow the box
                 }
-                ctx.fillText(MATERIAL_NAME[matId], popX + popW / 2, yOff);
+                uiCtx.fillText(MATERIAL_NAME[matId], popX + popW / 2, yOff);
                 yOff += 12;
             }
         }
@@ -12054,34 +12578,34 @@
             const buttonY = y + h - buttonH - 5;
             let buttonX = x + 5;
             
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.font = '10px monospace';
+            uiCtx.textAlign = 'center';
+            uiCtx.textBaseline = 'middle';
+            uiCtx.font = '10px monospace';
 
             // New Recipe Button
-            ctx.fillStyle = '#2d3748';
-            ctx.fillRect(buttonX, buttonY, buttonW, buttonH);
-            ctx.strokeStyle = '#a0a0c0';
-            ctx.strokeRect(buttonX, buttonY, buttonW, buttonH);
-            ctx.fillStyle = 'white';
-            ctx.fillText("New", buttonX + buttonW / 2, buttonY + buttonH / 2);
+            uiCtx.fillStyle = '#2d3748';
+            uiCtx.fillRect(buttonX, buttonY, buttonW, buttonH);
+            uiCtx.strokeStyle = '#a0a0c0';
+            uiCtx.strokeRect(buttonX, buttonY, buttonW, buttonH);
+            uiCtx.fillStyle = 'white';
+            uiCtx.fillText("New", buttonX + buttonW / 2, buttonY + buttonH / 2);
             buttonX += buttonW + 5;
 
             // Rename Button
-            ctx.fillStyle = '#2d3748';
-            ctx.fillRect(buttonX, buttonY, buttonW, buttonH);
-            ctx.strokeRect(buttonX, buttonY, buttonW, buttonH);
-            ctx.fillStyle = player.grimoire.pages[GrimoireManager.selectedRecipeIndex] ? 'white' : '#666';
-            ctx.fillText("Rename", buttonX + buttonW / 2, buttonY + buttonH / 2);
+            uiCtx.fillStyle = '#2d3748';
+            uiCtx.fillRect(buttonX, buttonY, buttonW, buttonH);
+            uiCtx.strokeRect(buttonX, buttonY, buttonW, buttonH);
+            uiCtx.fillStyle = player.grimoire.pages[GrimoireManager.selectedRecipeIndex] ? 'white' : '#666';
+            uiCtx.fillText("Rename", buttonX + buttonW / 2, buttonY + buttonH / 2);
             buttonX += buttonW + 5;
             
             // Delete Button
-            ctx.fillStyle = '#452020';
-            ctx.fillRect(buttonX, buttonY, buttonW, buttonH);
-            ctx.strokeStyle = '#c06060';
-            ctx.strokeRect(buttonX, buttonY, buttonW, buttonH);
-            ctx.fillStyle = player.grimoire.pages[GrimoireManager.selectedRecipeIndex] ? '#ffc0c0' : '#805050';
-            ctx.fillText("Delete", buttonX + buttonW / 2, buttonY + buttonH / 2);
+            uiCtx.fillStyle = '#452020';
+            uiCtx.fillRect(buttonX, buttonY, buttonW, buttonH);
+            uiCtx.strokeStyle = '#c06060';
+            uiCtx.strokeRect(buttonX, buttonY, buttonW, buttonH);
+            uiCtx.fillStyle = player.grimoire.pages[GrimoireManager.selectedRecipeIndex] ? '#ffc0c0' : '#805050';
+            uiCtx.fillText("Delete", buttonX + buttonW / 2, buttonY + buttonH / 2);
         }
 
         // --- START OF REPLACEMENT for getRuneTooltipText ---
@@ -12247,7 +12771,7 @@
             const { name, color, stats } = hover.details;
             const lines = [name, `Color: ${color}`, ...stats];
 
-            ctx.font = '8px monospace';
+            uiCtx.font = '8px monospace';
             const textWidth = Math.max(...lines.map(line => ctx.measureText(line).width));
             
             const boxW = textWidth + 12;
@@ -12260,18 +12784,18 @@
             if (boxY < 0) boxY = 0;
             if (boxY + boxH > renderHeight) boxY = renderHeight - boxH;
 
-            ctx.fillStyle = 'rgba(10, 10, 20, 0.9)';
-            ctx.fillRect(boxX, boxY, boxW, boxH);
-            ctx.strokeStyle = '#a0a0c0';
-            ctx.strokeRect(boxX, boxY, boxW, boxH);
+            uiCtx.fillStyle = 'rgba(10, 10, 20, 0.9)';
+            uiCtx.fillRect(boxX, boxY, boxW, boxH);
+            uiCtx.strokeStyle = '#a0a0c0';
+            uiCtx.strokeRect(boxX, boxY, boxW, boxH);
             
-            ctx.fillStyle = 'white';
-            ctx.textAlign = 'left';
-            ctx.textBaseline = 'top';
+            uiCtx.fillStyle = 'white';
+            uiCtx.textAlign = 'left';
+            uiCtx.textBaseline = 'top';
 
             let yOffset = boxY + 5;
             for (const line of lines) {
-                ctx.fillText(line, boxX + 6, yOffset);
+                uiCtx.fillText(line, boxX + 6, yOffset);
                 yOffset += 10;
             }
         }
@@ -12288,39 +12812,39 @@
             const color = RUNE_COLORS[runeColorName] || RUNE_COLORS.colorless;
 
             if (!sprite) {
-                ctx.strokeStyle = '#4a5568';
-                ctx.strokeRect(x, y, size, size);
+                uiCtx.strokeStyle = '#4a5568';
+                uiCtx.strokeRect(x, y, size, size);
                 return;
             }
             
             // 1. Draw the colored background square.
-            ctx.fillStyle = color;
-            ctx.fillRect(x, y, size, size);
+            uiCtx.fillStyle = color;
+            uiCtx.fillRect(x, y, size, size);
 
             // 2. Draw the rune sprite directly on top.
-            ctx.drawImage(sprite, x, y, size, size);
+            uiCtx.drawImage(sprite, x * UI_SCALE, y * UI_SCALE, size * UI_SCALE, size * UI_SCALE);
 
             // 3. Draw the border on top of everything.
-            ctx.strokeStyle = 'rgba(255,255,255,0.2)';
-            ctx.strokeRect(x, y, size, size);
+            uiCtx.strokeStyle = 'rgba(255,255,255,0.2)';
+            uiCtx.strokeRect(x, y, size, size);
         }
         // --- END OF REPLACEMENT ---
 
         function renderGrimoire() {
             if (!GrimoireManager.isVisible) return;
             const boxW = 440, boxH = 260, boxX = (renderWidth - boxW) / 2, boxY = (renderHeight - boxH) / 2;
-            ctx.fillStyle = 'rgba(20, 25, 35, 0.95)'; ctx.fillRect(boxX, boxY, boxW, boxH);
-            ctx.strokeStyle = '#a0a0c0'; ctx.lineWidth = 1; ctx.strokeRect(boxX, boxY, boxW, boxH);
+            uiCtx.fillStyle = 'rgba(20, 25, 35, 0.95)'; uiCtx.fillRect(boxX, boxY, boxW, boxH);
+            uiCtx.strokeStyle = '#a0a0c0'; uiCtx.lineWidth = 1; uiCtx.strokeRect(boxX, boxY, boxW, boxH);
             const tabs = ['Compendium', 'Grimoire & Runes'];
             const tabWidth = boxW / tabs.length;
             tabs.forEach((tabName, index) => {
                 const tabX = boxX + index * tabWidth;
                 const isActive = GrimoireManager.activeTab === tabName.toLowerCase().replace(' & ', '_');
-                ctx.fillStyle = isActive ? '#4a5568' : '#2d3748'; ctx.fillRect(tabX, boxY, tabWidth, 20);
-                ctx.strokeStyle = '#a0a0c0'; ctx.strokeRect(tabX, boxY, tabWidth, 20);
-                ctx.fillStyle = isActive ? 'white' : '#a0a0c0';
-                ctx.font = 'bold 10px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-                ctx.fillText(tabName, tabX + tabWidth / 2, boxY + 10);
+                uiCtx.fillStyle = isActive ? '#4a5568' : '#2d3748'; uiCtx.fillRect(tabX, boxY, tabWidth, 20);
+                uiCtx.strokeStyle = '#a0a0c0'; uiCtx.strokeRect(tabX, boxY, tabWidth, 20);
+                uiCtx.fillStyle = isActive ? 'white' : '#a0a0c0';
+                uiCtx.font = 'bold 10px monospace'; uiCtx.textAlign = 'center'; uiCtx.textBaseline = 'middle';
+                uiCtx.fillText(tabName, tabX + tabWidth / 2, boxY + 10);
             });
             const contentX = boxX, contentY = boxY + 20, contentW = boxW, contentH = boxH - 20;
             if (GrimoireManager.activeTab === 'compendium') {
@@ -12344,11 +12868,11 @@
             const categoryX = x, listX = x + categoryW, detailX = listX + listW;
 
             // Draw panel backgrounds/dividers
-            ctx.fillStyle = '#2d3748';
-            ctx.fillRect(categoryX, y, categoryW, h);
-            ctx.strokeStyle = '#4a5568';
-            ctx.beginPath(); ctx.moveTo(listX, y); ctx.lineTo(listX, y + h); ctx.stroke();
-            ctx.beginPath(); ctx.moveTo(detailX, y); ctx.lineTo(detailX, y + h); ctx.stroke();
+            uiCtx.fillStyle = '#2d3748';
+            uiCtx.fillRect(categoryX, y, categoryW, h);
+            uiCtx.strokeStyle = '#4a5568';
+            uiCtx.beginPath(); uiCtx.moveTo(listX, y); uiCtx.lineTo(listX, y + h); uiCtx.stroke();
+            uiCtx.beginPath(); uiCtx.moveTo(detailX, y); uiCtx.lineTo(detailX, y + h); uiCtx.stroke();
 
             renderCompendiumCategories(categoryX, y, categoryW, h);
             renderCompendiumList(listX, y, listW, h);
@@ -12357,7 +12881,7 @@
 
         function renderCompendiumCategories(x, y, w, h) {
             let yOff = y + 10;
-            ctx.font = 'bold 10px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+            uiCtx.font = 'bold 10px monospace'; uiCtx.textAlign = 'left'; uiCtx.textBaseline = 'top';
 
             const categories = { materials: "Materials", potions: "Potions", oils: "Oils", alkahests: "Alkahests", gems: "Gems" };
             const formaMap = { potions: 'forma_potion', oils: 'forma_oil', alkahests: 'forma_alkahest', gems: 'forma_gem' };
@@ -12367,12 +12891,12 @@
                 const isActive = GrimoireManager.compendiumActiveCategory === catKey;
                 
                 if (isActive) {
-                    ctx.fillStyle = '#4a5568';
-                    ctx.fillRect(x, yOff - 2, w, 15);
+                    uiCtx.fillStyle = '#4a5568';
+                    uiCtx.fillRect(x, yOff - 2, w, 15);
                 }
 
-                ctx.fillStyle = isKnown ? (isActive ? '#ffd966' : '#a0a0c0') : '#666';
-                ctx.fillText(isKnown ? categories[catKey] : `[${categories[catKey]}]`, x + 10, yOff);
+                uiCtx.fillStyle = isKnown ? (isActive ? '#ffd966' : '#a0a0c0') : '#666';
+                uiCtx.fillText(isKnown ? categories[catKey] : `[${categories[catKey]}]`, x + 10, yOff);
                 yOff += 18;
             }
         }
@@ -12391,8 +12915,8 @@
                     break;
                 // TODO: Cases for oils, alkahests, gems
                 default:
-                    ctx.fillStyle = '#666'; ctx.textAlign='center';
-                    ctx.fillText("[Not Implemented]", x + w / 2, y + h / 2);
+                    uiCtx.fillStyle = '#666'; uiCtx.textAlign='center';
+                    uiCtx.fillText("[Not Implemented]", x + w / 2, y + h / 2);
                     return;
             }
 
@@ -12402,10 +12926,10 @@
             if (GrimoireManager.compendiumListScroll < 0) GrimoireManager.compendiumListScroll = 0;
 
             let yOff = y + 10 - GrimoireManager.compendiumListScroll;
-            ctx.font = '8px monospace'; ctx.textAlign = 'left';
+            uiCtx.font = '8px monospace'; uiCtx.textAlign = 'left';
 
-            ctx.save();
-            ctx.beginPath(); ctx.rect(x, y, w, h); ctx.clip();
+            //ctx.save();
+            uiCtx.beginPath(); uiCtx.rect(x, y, w, h); uiCtx.clip();
 
             for (const itemId of itemList) {
                 if (yOff >= y && yOff < y + h - itemHeight) {
@@ -12420,67 +12944,67 @@
                     
                     const isSelected = GrimoireManager.compendiumSelectedItem === itemId;
                     if (isSelected) {
-                        ctx.fillStyle = '#4a5568';
-                        ctx.fillRect(x + 2, yOff - 2, w - 4, itemHeight + 2);
+                        uiCtx.fillStyle = '#4a5568';
+                        uiCtx.fillRect(x + 2, yOff - 2, w - 4, itemHeight + 2);
                     }
-                    ctx.fillStyle = isDiscovered ? (isSelected ? 'white' : '#a0a0c0') : '#666';
-                    ctx.fillText(name, x + 10, yOff);
+                    uiCtx.fillStyle = isDiscovered ? (isSelected ? 'white' : '#a0a0c0') : '#666';
+                    uiCtx.fillText(name, x + 10, yOff);
                 }
                 yOff += itemHeight;
             }
-            ctx.restore();
+            //ctx.restore();
 
             // Draw Scrollbar
             if (maxScroll > 0) {
                 const scrollbarX = x + w - 8;
                 const thumbH = Math.max(10, (h / contentHeight) * h);
                 const thumbY = y + (GrimoireManager.compendiumListScroll / maxScroll) * (h - thumbH);
-                ctx.fillStyle = '#4a5568';
-                ctx.fillRect(scrollbarX, thumbY, 6, thumbH);
+                uiCtx.fillStyle = '#4a5568';
+                uiCtx.fillRect(scrollbarX, thumbY, 6, thumbH);
             }
         }
         
         function renderCompendiumDetails(x, y, w, h) {
             const item = GrimoireManager.compendiumSelectedItem;
             if (item === null) {
-                ctx.fillStyle = '#666'; ctx.font = '10px monospace'; ctx.textAlign = 'center';
-                ctx.fillText("Select an item to view details.", x + w / 2, y + h / 2);
+                uiCtx.fillStyle = '#666'; uiCtx.font = '10px monospace'; uiCtx.textAlign = 'center';
+                uiCtx.fillText("Select an item to view details.", x + w / 2, y + h / 2);
                 return;
             }
 
-            ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+            uiCtx.textAlign = 'left'; uiCtx.textBaseline = 'top';
             let yOff = y + 10;
 
             if (GrimoireManager.compendiumActiveCategory === 'materials') {
                 const matId = item, matName = MATERIAL_NAME[matId], matColor = COLORS[matId];
-                ctx.fillStyle = `rgb(${matColor[0]}, ${matColor[1]}, ${matColor[2]})`;
-                ctx.fillRect(x + 10, yOff, 24, 24);
-                ctx.fillStyle = 'white'; ctx.font = 'bold 12px monospace';
-                ctx.fillText(matName, x + 40, yOff + 5);
+                uiCtx.fillStyle = `rgb(${matColor[0]}, ${matColor[1]}, ${matColor[2]})`;
+                uiCtx.fillRect(x + 10, yOff, 24, 24);
+                uiCtx.fillStyle = 'white'; uiCtx.font = 'bold 12px monospace';
+                uiCtx.fillText(matName, x + 40, yOff + 5);
                 yOff += 40;
-                ctx.font = '10px monospace';
+                uiCtx.font = '10px monospace';
                 const allEssences = MATERIAL_ESSENCES[matId] || [];
                 if (allEssences.length > 0) {
-                    ctx.fillStyle = '#a0a0c0'; ctx.fillText("Contains Essences:", x + 10, yOff); yOff += 15;
+                    uiCtx.fillStyle = '#a0a0c0'; uiCtx.fillText("Contains Essences:", x + 10, yOff); yOff += 15;
                     const known = player.discoveredEssences.get(matId) || new Set();
                     allEssences.forEach(e => {
-                        ctx.fillStyle = known.has(e) ? 'white' : '#666';
-                        ctx.fillText(`- [${known.has(e) ? e.replace(/_/g,' ') : 'Undiscovered'}]`, x + 20, yOff);
+                        uiCtx.fillStyle = known.has(e) ? 'white' : '#666';
+                        uiCtx.fillText(`- [${known.has(e) ? e.replace(/_/g,' ') : 'Undiscovered'}]`, x + 20, yOff);
                         yOff += 12;
                     });
                 }
             } else if (GrimoireManager.compendiumActiveCategory === 'potions') {
                 const def = POTION_DEFINITIONS[item];
-                ctx.fillStyle = 'white'; ctx.font = 'bold 12px monospace';
-                ctx.fillText(def.name, x + 10, yOff); yOff += 20;
-                ctx.fillStyle = '#a0a0c0'; ctx.font = '8px monospace';
-                ctx.fillText(def.description, x + 10, yOff); yOff += 25; // More space for recipe
-                ctx.fillStyle = '#a0a0c0'; ctx.font = '10px monospace';
-                ctx.fillText("Recipe:", x + 10, yOff); yOff += 15;
-                ctx.fillStyle = 'white';
-                ctx.fillText(`- Base: ${MATERIAL_NAME[def.recipe.base]}`, x + 20, yOff); yOff += 12;
+                uiCtx.fillStyle = 'white'; uiCtx.font = 'bold 12px monospace';
+                uiCtx.fillText(def.name, x + 10, yOff); yOff += 20;
+                uiCtx.fillStyle = '#a0a0c0'; uiCtx.font = '8px monospace';
+                uiCtx.fillText(def.description, x + 10, yOff); yOff += 25; // More space for recipe
+                uiCtx.fillStyle = '#a0a0c0'; uiCtx.font = '10px monospace';
+                uiCtx.fillText("Recipe:", x + 10, yOff); yOff += 15;
+                uiCtx.fillStyle = 'white';
+                uiCtx.fillText(`- Base: ${MATERIAL_NAME[def.recipe.base]}`, x + 20, yOff); yOff += 12;
                 def.recipe.essences.forEach(e => {
-                    ctx.fillText(`- Essence: [${e.replace(/_/g, ' ')}]`, x + 20, yOff); yOff += 12;
+                    uiCtx.fillText(`- Essence: [${e.replace(/_/g, ' ')}]`, x + 20, yOff); yOff += 12;
                 });
             }
         }
@@ -12497,8 +13021,8 @@
         
             const RUNE_SLOT_SIZE = 16;
             
-            ctx.save();
-            ctx.globalAlpha = 0.8;
+            uiCtx.save();
+            uiCtx.globalAlpha = 0.8;
             
             const screenX = (mouse.x / scale) - RUNE_SLOT_SIZE / 2;
             const screenY = (mouse.y / scale) - RUNE_SLOT_SIZE / 2;
@@ -12509,7 +13033,7 @@
             renderRuneWithTint(sprite, screenX, screenY, RUNE_SLOT_SIZE, heldRune.color);
             // --- END OF FIX ---
             
-            ctx.restore();
+            uiCtx.restore();
         }
         // --- END OF COMPLETE REPLACEMENT ---
 
@@ -12523,14 +13047,14 @@
             const recipeAreaHeight = (player.grimoire.maxPages * RECIPE_ROW_HEIGHT) + 30;
 
             // --- Render Grimoire (Top Section) ---
-            ctx.fillStyle = '#a0a0c0'; ctx.font = 'bold 10px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
-            ctx.fillText("GRIMOIRE", x + 10, y + 5);
+            uiCtx.fillStyle = '#a0a0c0'; uiCtx.font = 'bold 10px monospace'; uiCtx.textAlign = 'left'; uiCtx.textBaseline = 'top';
+            uiCtx.fillText("GRIMOIRE", x + 10, y + 5);
 
             let recipeY = y + 15;
             for (let i = 0; i < player.grimoire.maxPages; i++) {
                 const isSelected = GrimoireManager.selectedRecipeIndex === i;
-                ctx.fillStyle = isSelected ? '#ffd966' : 'white';
-                ctx.font = 'bold 12px monospace'; ctx.fillText(`[${i + 1}]`, x + 15, recipeY + 8);
+                uiCtx.fillStyle = isSelected ? '#ffd966' : 'white';
+                uiCtx.font = 'bold 12px monospace'; uiCtx.fillText(`[${i + 1}]`, x + 15, recipeY + 8);
                 
                 const page = player.grimoire.pages[i];
                 let slotX = x + 40;
@@ -12552,24 +13076,24 @@
                             }
                         }
                     } else {
-                        ctx.strokeStyle = '#4a5568'; ctx.strokeRect(slotX, recipeY, RUNE_SLOT_SIZE, RUNE_SLOT_SIZE);
+                        uiCtx.strokeStyle = '#4a5568'; uiCtx.strokeRect(slotX, recipeY, RUNE_SLOT_SIZE, RUNE_SLOT_SIZE);
                     }
                     slotX += RUNE_SLOT_SIZE + RUNE_SLOT_SPACING;
                 }
 
                 // --- NEW: Render Stat Totals ---
                 if (page) {
-                    ctx.font = '8px monospace';
-                    ctx.textAlign = 'left';
+                    uiCtx.font = '8px monospace';
+                    uiCtx.textAlign = 'left';
                     let statX = slotX + 15;
                     for (const [stat, value] of Object.entries(totalStats)) {
                         if (value === 0) continue;
                         const sign = value > 0 ? '+' : '';
-                        ctx.fillStyle = value > 0 ? '#ff6b6b' : '#81e6d9'; // Red for positive (bad), Teal for negative (good)
+                        uiCtx.fillStyle = value > 0 ? '#ff6b6b' : '#81e6d9'; // Red for positive (bad), Teal for negative (good)
                         if (stat === 'potency' || stat === 'duration') {
-                            ctx.fillStyle = value > 0 ? '#81e6d9' : '#ff6b6b'; // Good stats are inverted
+                            uiCtx.fillStyle = value > 0 ? '#81e6d9' : '#ff6b6b'; // Good stats are inverted
                         }
-                        ctx.fillText(`${stat.substring(0,3)}: ${sign}${value}`, statX, recipeY + 8);
+                        uiCtx.fillText(`${stat.substring(0,3)}: ${sign}${value}`, statX, recipeY + 8);
                         statX += 65;
                     }
                 }
@@ -12577,11 +13101,11 @@
             }
 
             // --- Render Rune Repertoire (Bottom Section) ---
-            ctx.strokeStyle = '#4a5568';
-            ctx.beginPath(); ctx.moveTo(x + 5, y + recipeAreaHeight - 5); ctx.lineTo(x + w - 5, y + recipeAreaHeight - 5); ctx.stroke();
+            uiCtx.strokeStyle = '#4a5568';
+            uiCtx.beginPath(); uiCtx.moveTo(x + 5, y + recipeAreaHeight - 5); uiCtx.lineTo(x + w - 5, y + recipeAreaHeight - 5); uiCtx.stroke();
             const runesAreaY = y + recipeAreaHeight;
-            ctx.fillStyle = '#a0a0c0'; ctx.font = 'bold 10px monospace';
-            ctx.fillText("RUNE REPERTOIRE", x + 10, runesAreaY);
+            uiCtx.fillStyle = '#a0a0c0'; uiCtx.font = 'bold 10px monospace';
+            uiCtx.fillText("RUNE REPERTOIRE", x + 10, runesAreaY);
             renderRunesArea(x, runesAreaY, w, h - recipeAreaHeight);
             // Filters area is removed as it's now part of the main repertoire grid
         }
@@ -12632,8 +13156,8 @@
                     }
                 } else {
                     // If no, draw an empty slot
-                    ctx.strokeStyle = '#4a5568'; // Use a darker gray for empty slots
-                    ctx.strokeRect(currentX, currentY, RUNE_SLOT_SIZE, RUNE_SLOT_SIZE);
+                    uiCtx.strokeStyle = '#4a5568'; // Use a darker gray for empty slots
+                    uiCtx.strokeRect(currentX, currentY, RUNE_SLOT_SIZE, RUNE_SLOT_SIZE);
                 }
             }
         }
@@ -12643,55 +13167,55 @@
          * Renders the pop-up menu for selecting a known rune to place in a recipe.
          */
         function renderRuneSelectorPopup(x, y, w, h) {
-            ctx.fillStyle = "rgba(0, 0, 0, 0.5)";
-            ctx.fillRect(x, y, w, h);
+            uiCtx.fillStyle = "rgba(0, 0, 0, 0.5)";
+            uiCtx.fillRect(x, y, w, h);
 
             const popW = 250; const popH = 180;
             const popX = x + (w - popW) / 2; const popY = y + (h - popH) / 2;
 
-            ctx.fillStyle = '#2d3748';
-            ctx.fillRect(popX, popY, popW, popH);
-            ctx.strokeStyle = '#a0a0c0';
-            ctx.strokeRect(popX, popY, popW, popH);
+            uiCtx.fillStyle = '#2d3748';
+            uiCtx.fillRect(popX, popY, popW, popH);
+            uiCtx.strokeStyle = '#a0a0c0';
+            uiCtx.strokeRect(popX, popY, popW, popH);
 
-            ctx.fillStyle = 'white';
-            ctx.font = 'bold 10px monospace';
-            ctx.textAlign = 'center';
-            ctx.fillText("Select a Rune", popX + popW / 2, popY + 15);
+            uiCtx.fillStyle = 'white';
+            uiCtx.font = 'bold 10px monospace';
+            uiCtx.textAlign = 'center';
+            uiCtx.fillText("Select a Rune", popX + popW / 2, popY + 15);
 
             let yOff = popY + 30;
-            ctx.font = '10px monospace';
-            ctx.textAlign = 'left';
-            ctx.textBaseline = 'top';
+            uiCtx.font = '10px monospace';
+            uiCtx.textAlign = 'left';
+            uiCtx.textBaseline = 'top';
 
             // --- Draw all known runes in a single, clickable list ---
 
             // Simple Runes
             player.runeInventory.knownRunes.forEach(runeId => {
-                ctx.fillText(`- ${RUNE_DEFINITIONS[runeId].name}`, popX + 15, yOff);
+                uiCtx.fillText(`- ${RUNE_DEFINITIONS[runeId].name}`, popX + 15, yOff);
                 yOff += 15;
             });
 
             // Transform Runes
             player.runeInventory.transform.forEach(t => {
-                ctx.fillText(`- Transform: ${MATERIAL_NAME[t.from]} -> ${MATERIAL_NAME[t.to]}`, popX + 15, yOff);
+                uiCtx.fillText(`- Transform: ${MATERIAL_NAME[t.from]} -> ${MATERIAL_NAME[t.to]}`, popX + 15, yOff);
                 yOff += 15;
             });
 
             // Filter Runes (Known)
             player.runeInventory.known_filters.forEach(matId => {
-                ctx.fillText(`- Filter By: ${MATERIAL_NAME[matId]}`, popX + 15, yOff);
+                uiCtx.fillText(`- Filter By: ${MATERIAL_NAME[matId]}`, popX + 15, yOff);
                 yOff += 15;
             });
 
             // Filter Runes (Create New)
             if (player.runeInventory.blank_filter_runes > 0) {
-                ctx.fillStyle = '#ffd966'; // Highlight this option
-                ctx.fillText(`- Create New Filter... (x${player.runeInventory.blank_filter_runes})`, popX + 15, yOff);
-                ctx.fillStyle = 'white';
+                uiCtx.fillStyle = '#ffd966'; // Highlight this option
+                uiCtx.fillText(`- Create New Filter... (x${player.runeInventory.blank_filter_runes})`, popX + 15, yOff);
+                uiCtx.fillStyle = 'white';
             }
 
-            ctx.textBaseline = 'alphabetic'; 
+            uiCtx.textBaseline = 'alphabetic'; 
         }
 
         // --- END OF REPLACEMENT ---
@@ -12703,34 +13227,34 @@
             const editorW = w - listWidth;
 
             // --- Draw Page List (Left Panel) ---
-            ctx.fillStyle = '#2d3748';
-            ctx.fillRect(x, y, listWidth, h);
+            uiCtx.fillStyle = '#2d3748';
+            uiCtx.fillRect(x, y, listWidth, h);
 
             let yOff = y + 10;
-            ctx.font = '10px monospace';
-            ctx.textAlign = 'left';
+            uiCtx.font = '10px monospace';
+            uiCtx.textAlign = 'left';
             
             // *** THE FIX: Set the text baseline to 'top' to align text with its clickable area. ***
-            ctx.textBaseline = 'top';
+            uiCtx.textBaseline = 'top';
 
             for (let i = 0; i < player.grimoire.maxPages; i++) {
                 const page = player.grimoire.pages[i];
                 const isSelected = GrimoireManager.selectedRecipeIndex === i;
 
-                ctx.fillStyle = isSelected ? '#ffd966' : page ? 'white' : '#666';
-                ctx.fillText(`Page ${i + 1}: ${page ? page.name : '[Empty]'}`, x + 10, yOff);
+                uiCtx.fillStyle = isSelected ? '#ffd966' : page ? 'white' : '#666';
+                uiCtx.fillText(`Page ${i + 1}: ${page ? page.name : '[Empty]'}`, x + 10, yOff);
                 yOff += 15;
             }
 
             // Reset baseline for other renderers (good practice)
-            ctx.textBaseline = 'alphabetic';
+            uiCtx.textBaseline = 'alphabetic';
 
             // --- Draw the vertical divider line ---
-            ctx.strokeStyle = '#a0a0c0';
-            ctx.beginPath();
-            ctx.moveTo(editorX, y);
-            ctx.lineTo(editorX, y + h);
-            ctx.stroke();
+            uiCtx.strokeStyle = '#a0a0c0';
+            uiCtx.beginPath();
+            uiCtx.moveTo(editorX, y);
+            uiCtx.lineTo(editorX, y + h);
+            uiCtx.stroke();
 
             // Draw the action buttons at the bottom of the page list panel
             drawRecipePageButtons(x, y, listWidth, h);
@@ -12739,9 +13263,9 @@
             const selectedRecipe = player.grimoire.pages[GrimoireManager.selectedRecipeIndex];
             if (selectedRecipe) {
                 yOff = y + 15;
-                ctx.fillStyle = 'white';
-                ctx.font = 'bold 12px monospace';
-                ctx.fillText(selectedRecipe.name, editorX + 15, yOff);
+                uiCtx.fillStyle = 'white';
+                uiCtx.font = 'bold 12px monospace';
+                uiCtx.fillText(selectedRecipe.name, editorX + 15, yOff);
                 yOff += 30;
 
                 const maxSlots = selectedRecipe.maxRunes;
@@ -12754,10 +13278,10 @@
                     drawRuneInSlot(rune, editorX + 15, slotY, editorW - 30, slotHeight);
                 }
             } else {
-                ctx.fillStyle = '#666';
-                ctx.font = '10px monospace';
-                ctx.textAlign = 'center';
-                ctx.fillText("Select a page or create a new one.", editorX + editorW / 2, y + h / 2);
+                uiCtx.fillStyle = '#666';
+                uiCtx.font = '10px monospace';
+                uiCtx.textAlign = 'center';
+                uiCtx.fillText("Select a page or create a new one.", editorX + editorW / 2, y + h / 2);
             }
         }
         // --- END OF REPLACEMENT ---
@@ -12784,18 +13308,18 @@
 
         function drawToolbarSlot(screenX, screenY, label, content, contentW, contentH, maxSlots, isActive) {
             // Draw stacked card effect
-            ctx.fillStyle = 'rgba(0,0,0,0.5)';
+            uiCtx.fillStyle = 'rgba(0,0,0,0.5)';
             for (let i = 0; i < maxSlots; i++) {
-                ctx.strokeRect(screenX - i * TOOLBAR_STACK_OFFSET, screenY - i * TOOLBAR_STACK_OFFSET, TOOLBAR_SLOT_SIZE, TOOLBAR_SLOT_SIZE);
+                uiCtx.strokeRect(screenX - i * TOOLBAR_STACK_OFFSET, screenY - i * TOOLBAR_STACK_OFFSET, TOOLBAR_SLOT_SIZE, TOOLBAR_SLOT_SIZE);
             }
 
             // Draw main slot background
-            ctx.fillRect(screenX, screenY, TOOLBAR_SLOT_SIZE, TOOLBAR_SLOT_SIZE);
+            uiCtx.fillRect(screenX, screenY, TOOLBAR_SLOT_SIZE, TOOLBAR_SLOT_SIZE);
             
             // Draw highlight for active slot
-            ctx.strokeStyle = isActive ? 'white' : '#888';
-            ctx.lineWidth = 2;
-            ctx.strokeRect(screenX, screenY, TOOLBAR_SLOT_SIZE, TOOLBAR_SLOT_SIZE);
+            uiCtx.strokeStyle = isActive ? 'white' : '#888';
+            uiCtx.lineWidth = 2;
+            uiCtx.strokeRect(screenX, screenY, TOOLBAR_SLOT_SIZE, TOOLBAR_SLOT_SIZE);
 
             // Draw content
             if (label === '<Tool>' || label === '<Structure>') {
@@ -12804,11 +13328,11 @@
                 const index = isTool ? player.toolIndex : player.structureIndex;
 
                 if (pocket.length === 0) {
-                    ctx.fillStyle = '#888';
-                    ctx.font = '8px monospace';
-                    ctx.textAlign = 'center';
-                    ctx.textBaseline = 'middle';
-                    ctx.fillText(label, screenX + TOOLBAR_SLOT_SIZE / 2, screenY + TOOLBAR_SLOT_SIZE / 2);
+                    uiCtx.fillStyle = '#888';
+                    uiCtx.font = '8px monospace';
+                    uiCtx.textAlign = 'center';
+                    uiCtx.textBaseline = 'middle';
+                    uiCtx.fillText(label, screenX + TOOLBAR_SLOT_SIZE / 2, screenY + TOOLBAR_SLOT_SIZE / 2);
                 } else {
                     const item = pocket[index];
                     const pixels = isTool ? Object.values(OBJECT_DEFINITIONS).find(d => d.name === item)?.pixels : item.pixels;
@@ -12843,23 +13367,14 @@
                         ctx.fillRect(screenX+x,screenY+y,1,1);
                     }
                 }
-                ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
-                ctx.font = 'bold 8px monospace';
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                ctx.fillText(label, screenX + TOOLBAR_SLOT_SIZE / 2, screenY + TOOLBAR_SLOT_SIZE / 2);
+                uiCtx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+                uiCtx.font = 'bold 8px monospace';
+                uiCtx.textAlign = 'center';
+                uiCtx.textBaseline = 'middle';
+                uiCtx.fillText(label, screenX + TOOLBAR_SLOT_SIZE / 2, screenY + TOOLBAR_SLOT_SIZE / 2);
             }
         }
         // --- END OF REPLACEMENT ---
-
-        function renderContainer(cGrid,cW,cH,screenX,screenY,isActive) {
-            ctx.fillStyle='rgba(0,0,0,0.5)'; ctx.fillRect(screenX-2,screenY-2,cW+4,cH+4);
-            ctx.strokeStyle=isActive?'white':'#888'; ctx.lineWidth=2; ctx.strokeRect(screenX-2,screenY-2,cW+4,cH+4);
-            for(let y=0;y<cH;y++)for(let x=0;x<cW;x++){
-                const type=cGrid[getIdx(x,y,cW,cH)];
-                if(type!==MAT.EMPTY){ let r,g,b; if(SHIMMERING_METALS.has(type)){[r,g,b]=metallicColor(x,y,COLORS[type]);}else{[r,g,b]=varyColor(...COLORS[type],x,y,type,8);} ctx.fillStyle=`rgb(${r},${g},${b})`;ctx.fillRect(screenX+x,screenY+y,1,1); }
-            }
-        }
 
         function renderBloom() {
             const bloomResolution = 4;
@@ -13693,6 +14208,7 @@
             
             cleanupDestroyedBodies();
 
+            evaluateActiveQuestObjectives();
             updatePouredParticles();
             processAlchemyJobs();
             updateMagicParticles();
@@ -13702,6 +14218,7 @@
             updateActiveToolEffects();
             updateMessageSystem();
             updateBuffs();
+            updateQuestProgress();
             updateZoneMessage();
             AlchemyJobManager.update();
 
@@ -13780,15 +14297,15 @@
                 renderDebugUI();
                 renderColliderGeometry();
                 
-                ctx.fillStyle = "white";
-                ctx.font = "8px monospace";
-                ctx.textAlign = "right";
-                ctx.textBaseline = "top";
+                uiCtx.fillStyle = "white";
+                uiCtx.font = "8px monospace";
+                uiCtx.textAlign = "right";
+                uiCtx.textBaseline = "top";
 
                 let yOffset = 25;
                 const results = Profiler.getResults();
                 for (const result of results) {
-                    ctx.fillText(result, renderWidth - 6, yOffset);
+                    uiCtx.fillText(result, renderWidth - 6, yOffset);
                     yOffset += 10;
                 }
 
@@ -13955,28 +14472,28 @@
             ctx.fillRect(0, 0, renderWidth, renderHeight);
 
             // 2. Draw the death message text
-            ctx.font = 'bold 12px monospace';
-            ctx.fillStyle = '#ff4545';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'bottom';
-            ctx.fillText(`You died by: ${causeOfDeath}`, renderWidth / 2, renderHeight / 2 - 20);
+            uiCtx.font = 'bold 12px monospace';
+            uiCtx.fillStyle = '#ff4545';
+            uiCtx.textAlign = 'center';
+            uiCtx.textBaseline = 'bottom';
+            uiCtx.fillText(`You died by: ${causeOfDeath}`, renderWidth / 2, renderHeight / 2 - 20);
 
             // 3. Define button position (centered)
             deathScreenButton.x = (renderWidth - deathScreenButton.width) / 2;
             deathScreenButton.y = renderHeight / 2 + 10;
             
             // 4. Draw the button background
-            // ctx.fillStyle = '#eee';
+            // uiCtx.fillStyle = '#eee';
             // ctx.fillRect(deathScreenButton.x, deathScreenButton.y, deathScreenButton.width, deathScreenButton.height);
             // ctx.strokeStyle = 'white';
             // ctx.lineWidth = 2;
             // ctx.strokeRect(deathScreenButton.x, deathScreenButton.y, deathScreenButton.width, deathScreenButton.height);
 
             // 5. Draw the button text
-            ctx.font = 'bold 8px monospace';
-            ctx.fillStyle = deathScreenButtonHover ? '#ffe' : '#ddd';
-            ctx.textBaseline = 'middle';
-            ctx.fillText('New Game', renderWidth / 2, deathScreenButton.y + deathScreenButton.height / 2);
+            uiCtx.font = 'bold 8px monospace';
+            uiCtx.fillStyle = deathScreenButtonHover ? '#ffe' : '#ddd';
+            uiCtx.textBaseline = 'middle';
+            uiCtx.fillText('New Game', renderWidth / 2, deathScreenButton.y + deathScreenButton.height / 2);
         }
         // --- END OF NEW CODE ---
 
@@ -14004,9 +14521,9 @@
         }
 
         function drawHUD(){
-            ctx.imageSmoothingEnabled=false;ctx.font='8px monospace';ctx.textAlign='right';ctx.textBaseline='top';
-            ctx.fillStyle='#00ff90';ctx.fillText(`FPS: ${hudFPS}`,renderWidth-6,6);
-            ctx.fillStyle='#ffd966';ctx.fillText(`${hudMaterial}`,renderWidth-6,6+10);
+            ctx.imageSmoothingEnabled=false;uiCtx.font='8px monospace';uiCtx.textAlign='right';uiCtx.textBaseline='top';
+            uiCtx.fillStyle='#00ff90';uiCtx.fillText(`FPS: ${hudFPS}`,renderWidth-6,6);
+            uiCtx.fillStyle='#ffd966';uiCtx.fillText(`${hudMaterial}`,renderWidth-6,6+10);
         }
 
         // --- START OF REPLACEMENT (with label position fix) ---
@@ -14024,9 +14541,9 @@
 
             const fillStyle = 'rgba(0, 255, 255, 0.3)';
             const textStyle = 'white';
-            ctx.font = 'bold 8px monospace';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
+            uiCtx.font = 'bold 8px monospace';
+            uiCtx.textAlign = 'center';
+            uiCtx.textBaseline = 'middle';
 
             for (const key in stationGeo) {
                 const area = stationGeo[key];
@@ -14050,8 +14567,8 @@
                     labelScreenX -= 25; 
                 }
 
-                ctx.fillStyle = textStyle;
-                ctx.fillText(key, labelScreenX, labelScreenY);
+                uiCtx.fillStyle = textStyle;
+                uiCtx.fillText(key, labelScreenX, labelScreenY);
             }
         }
         // --- END OF REPLACEMENT ---
@@ -14193,23 +14710,23 @@
             const boxHeight = 270;
 
             // --- 4. Draw background box ---
-            ctx.fillStyle = "rgba(0,0,0,0.78)";
-            ctx.fillRect(startX - 4, startY - 4, boxWidth, boxHeight);
+            uiCtx.fillStyle = "rgba(0,0,0,0.78)";
+            uiCtx.fillRect(startX - 4, startY - 4, boxWidth, boxHeight);
 
             // --- 5. Setup text rendering ---
-            ctx.font = "8px monospace";
-            ctx.textAlign = "left";
-            ctx.textBaseline = "top";
+            uiCtx.font = "8px monospace";
+            uiCtx.textAlign = "left";
+            uiCtx.textBaseline = "top";
 
             const drawStat = (label, value, color = "white") => {
-                ctx.fillStyle = color;
-                ctx.fillText(`${label.padEnd(18, ' ')}: ${String(value)}`, startX, startY);
+                uiCtx.fillStyle = color;
+                uiCtx.fillText(`${label.padEnd(18, ' ')}: ${String(value)}`, startX, startY);
                 startY += lineHeight;
             };
 
             const drawHeader = (text) => {
-                ctx.fillStyle = '#aaa';
-                ctx.fillText(text, startX, startY);
+                uiCtx.fillStyle = '#aaa';
+                uiCtx.fillText(text, startX, startY);
                 startY += lineHeight;
             };
 
@@ -14277,8 +14794,8 @@
                         s.split ? "S" : "-"
                     ].join('');
 
-                    ctx.fillStyle = (s.fixtures > 32 || s.pending > 50) ? "#ff8888" : "white";
-                    ctx.fillText(
+                    uiCtx.fillStyle = (s.fixtures > 32 || s.pending > 50) ? "#ff8888" : "white";
+                    uiCtx.fillText(
                         `${String(s.name).slice(0, 18).padEnd(18, ' ')} f:${String(s.fixtures).padStart(3, ' ')} p:${String(s.pixels).padStart(4, ' ')} d:${String(s.pending).padStart(3, ' ')} ${flags}`,
                         startX,
                         startY
@@ -14393,18 +14910,18 @@
             }
             // --- END: NEW LOGIC TO COUNT METALS ---
 
-            ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(0, 0, renderWidth, renderHeight);
+            uiCtx.fillStyle = 'rgba(0,0,0,0.6)'; uiCtx.fillRect(0, 0, renderWidth, renderHeight);
             const boxW = 340, boxH = 180, boxX = (renderWidth - boxW) / 2, boxY = (renderHeight - boxH) / 2;
-            ctx.fillStyle = '#222'; ctx.fillRect(boxX, boxY, boxW, boxH);
-            ctx.strokeStyle = '#888'; ctx.strokeRect(boxX, boxY, boxW, boxH);
-            ctx.fillStyle = 'white'; ctx.font = '16px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
-            ctx.fillText("Alchemist's Wares:", boxX + 10, boxY + 10);
+            uiCtx.fillStyle = '#222'; uiCtx.fillRect(boxX, boxY, boxW, boxH);
+            uiCtx.strokeStyle = '#888'; uiCtx.strokeRect(boxX, boxY, boxW, boxH);
+            uiCtx.fillStyle = 'white'; uiCtx.font = '16px monospace'; uiCtx.textAlign = 'left'; uiCtx.textBaseline = 'top';
+            uiCtx.fillText("Alchemist's Wares:", boxX + 10, boxY + 10);
 
             // --- ADD: DISPLAY AVAILABLE PAYMENT ---
-            ctx.fillStyle = '#c0c0c0';
-            ctx.font = '8px monospace';
+            uiCtx.fillStyle = '#c0c0c0';
+            uiCtx.font = '8px monospace';
             const paymentText = `Payment Available: ${availableMetals[MAT.COPPER]} Copper, ${availableMetals[MAT.SILVER]} Silver, ${availableMetals[MAT.GOLD]} Gold`;
-            ctx.fillText(paymentText, boxX + 10, boxY + 30);
+            uiCtx.fillText(paymentText, boxX + 10, boxY + 30);
 
 
             const startIndex = TradeManager.currentPage * TradeManager.itemsPerPage;
@@ -14421,26 +14938,132 @@
 
                 const fullItemText = `[${itemNum}] ${item.name} (Cost: ${costString})`;
                 
-                ctx.fillStyle = 'white';
-                ctx.font = '8px monospace';
-                ctx.fillText(fullItemText, boxX + 20, boxY + yOff);
+                uiCtx.fillStyle = 'white';
+                uiCtx.font = '8px monospace';
+                uiCtx.fillText(fullItemText, boxX + 20, boxY + yOff);
                 yOff += 15; // Use a smaller increment for single lines
             });
 
             const totalPages = Math.ceil(TRADE_INVENTORY.length / TradeManager.itemsPerPage);
             if (totalPages > 1) {
-                ctx.fillStyle = '#ffd966';
-                ctx.font = '8px monospace';
+                uiCtx.fillStyle = '#ffd966';
+                uiCtx.font = '8px monospace';
                 // --- MODIFICATION: CLEARER NEXT PAGE TEXT ---
-                ctx.fillText(`Press [0] for Next Page (${TradeManager.currentPage + 1}/${totalPages})`, boxX + 20, boxY + boxH - 40);
+                uiCtx.fillText(`Press [0] for Next Page (${TradeManager.currentPage + 1}/${totalPages})`, boxX + 20, boxY + boxH - 40);
             }
 
-            ctx.fillStyle = '#aaa';
-            ctx.font = '8px monospace';
-            ctx.fillText("Press [ESC] to close.", boxX + 10, boxY + boxH - 25);
+            uiCtx.fillStyle = '#aaa';
+            uiCtx.font = '8px monospace';
+            uiCtx.fillText("Press [ESC] to close.", boxX + 10, boxY + boxH - 25);
         }
 
         function updateLoadingStatus(message) { document.getElementById('loading-status').innerText=message; }
+
+        function evaluateActiveQuestObjectives() {
+            for (let i = activeQuestIds.length - 1; i >= 0; i--) {
+                const questId = activeQuestIds[i];
+                const quest = quests.get(questId);
+                if (!quest) continue;
+
+                for (const objective of quest.objectives) {
+                    if (objective.completed) continue;
+                    if (typeof objective.isCompleted !== "function") continue;
+
+                    let done = false;
+
+                    try {
+                        done = !!objective.isCompleted();
+                    } catch (err) {
+                        console.error(`Quest objective check failed: ${questId}/${objective.id}`, err);
+                    }
+
+                    if (done) {
+                        objective.completed = true;
+                    }
+                }
+
+                if (isQuestComplete(quest)) {
+                    completeQuest(questId);
+                }
+            }
+        }
+
+        function registerAllQuests() {
+            registerQuest({
+                id: "intro_extract_fluidity_essence",
+                title: "Essence Extraction",
+                objectives: [
+                    { id: "analyze_water", text: "Analyze water in Athanor", 
+                        isCompleted: () => player.discoveredEssences.get(MAT.WATER)?.has(ESSENCES.FLUIDITY) || false },
+                    { id: "add_extract_rune", text: "Add Extract (fluidity) rune to Grimoire Recipe", 
+                        isCompleted: () => 
+                            player.grimoire.pages.some(p => p.runes[0]?.id === 'from_left_crucible' 
+                                && p.runes[1]?.id === 'extract_essence' 
+                                && p.runes[1]?.target === 'fluidity' 
+                                && p.runes[2]?.id === 'yield_to_right_crucible') },
+                    { id: "extract_fluidity_essence", text: "Execute recipe to extract fluidity essence from water",
+                        isCompleted: () =>
+                            AlchemyJobManager.activeJobs[0]?.runes[0]?.id === 'from_left_crucible' 
+                            && AlchemyJobManager.activeJobs[0]?.runes[1]?.id === 'extract_essence'
+                            && AlchemyJobManager.activeJobs[0]?.runes[1]?.target === 'fluidity'
+                            && AlchemyJobManager.activeJobs[0]?.runes[2]?.id === 'yield_to_right_crucible' 
+                     },
+                    { id: "gather_fluidity_essence", text: "Gather fluidity essence in flask",
+                        isCompleted: () => flaskGrid.filter(m => m === MAT.UNSTABLE_ESSENCE_FLUIDITY).length > 320
+                    }
+                ],
+                unlocks: ["intro_make_liquid_form_potion"]
+            });
+
+            registerQuest({
+                id: "intro_make_liquid_form_potion",
+                title: "Potion Brewing",
+                objectives: [
+                    { id: "pour_fluidity_essence_in_left_crucible", text: "Pour fluidity essence in Left crucible",
+                        isCompleted: () => getMaterialsInArea(npcs[0].associatedData.stationGeometry.inputCrucible.worldPoints).get(MAT.UNSTABLE_ESSENCE_FLUIDITY) > 320
+                    },
+                    { id: "pour_water_essence_in_left_crucible", text: "Pour water in Left crucible",
+                        isCompleted: () => getMaterialsInArea(npcs[0].associatedData.stationGeometry.inputCrucible.worldPoints).get(MAT.WATER) > 320
+                    },
+                    { id: "make_potion_recipe", text: "Create a recipe with: From Left Crucible + Infuse + Forma:Potion",
+                        isCompleted: () => 
+                            player.grimoire.pages.some(p => p.runes[0]?.id === 'from_left_crucible' 
+                                && p.runes[1]?.id === 'infuse' 
+                                && p.runes[2]?.id === 'forma_potion')
+                    },
+                    { id: "execute_potion_recipe", text: "Execute recipe to make potion.",
+                        isCompleted: () =>
+                            AlchemyJobManager.activeJobs[0]?.runes[0]?.id === 'from_left_crucible' 
+                            && AlchemyJobManager.activeJobs[0]?.runes[1]?.id === 'infuse'
+                            && AlchemyJobManager.activeJobs[0]?.runes[2]?.id === 'forma_potion' 
+                    }
+                ],
+                unlocks: ["intro_silver_mines", "forgotten_shrine"]
+            });
+
+            registerQuest({
+                id: "intro_silver_mines",
+                title: "Reach the Silver mines",
+                objectives: [
+                    { id: "open_adamantium_doors", text: "Open adamantium doors at the Silver Mines entrance" },
+                    { id: "reach_silver_mines", text: "Reach the Silver Mines",
+                        isCompleted: () => player.y > 2700
+                    }
+                ],
+                unlocks: []
+            });
+
+            registerQuest({
+                id: "forgotten_shrine",
+                title: "Forgotten Shrine",
+                objectives: [
+                    { id: "find_forgotten_shrine", text: "Find the Forgotten Shrine" },
+                    { id: "solve_forgotten_shrine", text: "Obtain Forgotten Shrine treasure" }
+                ],
+                unlocks: []
+            });
+
+        }
 
         async function mainLoader() {
             localStorage.clear();
@@ -14510,6 +15133,8 @@
 
             updateLoadingStatus('Preparing Spawn Area...');
             await yieldToBrowser();
+
+            registerAllQuests()
 
             // Loop through the 9 sectors around the player's start and generate them one by one.
             let sectorsLoaded = 0;
@@ -14814,49 +15439,49 @@
             let y = 8;
             const textYOffset = barH / 2; // Center text vertically
             ctx.imageSmoothingEnabled = false;
-            ctx.font = '8px monospace';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
+            uiCtx.font = '8px monospace';
+            uiCtx.textAlign = 'center';
+            uiCtx.textBaseline = 'middle';
 
             // --- Health Bar ---
-            ctx.fillStyle = 'rgba(0,0,0,0.7)';
-            ctx.fillRect(x, y, barW, barH);
+            uiCtx.fillStyle = 'rgba(0,0,0,0.7)';
+            uiCtx.fillRect(x, y, barW, barH);
             const hpP = player.hp / player.maxHp;
-            ctx.fillStyle = '#d14242';
-            ctx.fillRect(x, y, barW * hpP, barH);
-            ctx.fillStyle = 'white';
-            ctx.fillText(`${player.hp}/${player.maxHp}`, x + barW / 2, y + textYOffset);
+            uiCtx.fillStyle = '#d14242';
+            uiCtx.fillRect(x, y, barW * hpP, barH);
+            uiCtx.fillStyle = 'white';
+            uiCtx.fillText(`${player.hp}/${player.maxHp}`, x + barW / 2, y + textYOffset);
             y += barH + 5;
 
             if (player.oxygen < player.maxOxygen) {
-                ctx.fillStyle = 'rgba(0,0,0,0.7)';
-                ctx.fillRect(x, y, barW, barH);
+                uiCtx.fillStyle = 'rgba(0,0,0,0.7)';
+                uiCtx.fillRect(x, y, barW, barH);
                 const o2P = player.oxygen / player.maxOxygen;
-                ctx.fillStyle = '#4299e1'; // A nice blue color
-                ctx.fillRect(x, y, barW * o2P, barH);
-                ctx.fillStyle = 'white';
-                ctx.fillText(`${Math.ceil(player.oxygen)}/${player.maxOxygen}`, x + barW / 2, y + textYOffset);
+                uiCtx.fillStyle = '#4299e1'; // A nice blue color
+                uiCtx.fillRect(x, y, barW * o2P, barH);
+                uiCtx.fillStyle = 'white';
+                uiCtx.fillText(`${Math.ceil(player.oxygen)}/${player.maxOxygen}`, x + barW / 2, y + textYOffset);
                 y += barH + 5;
             }
 
             // --- Hover Energy Bar ---
-            ctx.fillStyle = 'rgba(0,0,0,0.7)';
-            ctx.fillRect(x, y, barW, barH);
+            uiCtx.fillStyle = 'rgba(0,0,0,0.7)';
+            uiCtx.fillRect(x, y, barW, barH);
             const enP = player.hoverEnergy / player.maxHoverEnergy;
-            ctx.fillStyle = '#DDED64';
-            ctx.fillRect(x, y, barW * enP, barH);
-            ctx.fillStyle = 'white';
-            ctx.fillText(`${Math.round(player.hoverEnergy)}/${player.maxHoverEnergy}`, x + barW / 2, y + textYOffset);
+            uiCtx.fillStyle = '#DDED64';
+            uiCtx.fillRect(x, y, barW * enP, barH);
+            uiCtx.fillStyle = 'white';
+            uiCtx.fillText(`${Math.round(player.hoverEnergy)}/${player.maxHoverEnergy}`, x + barW / 2, y + textYOffset);
             y += barH + 5;
             
             // --- NEW: Aether Bar ---
-            ctx.fillStyle = 'rgba(0,0,0,0.7)';
-            ctx.fillRect(x, y, barW, barH);
+            uiCtx.fillStyle = 'rgba(0,0,0,0.7)';
+            uiCtx.fillRect(x, y, barW, barH);
             const aetherP = player.aether / player.maxAether;
-            ctx.fillStyle = '#8b5cf6'; // A vibrant purple
-            ctx.fillRect(x, y, barW * aetherP, barH);
-            ctx.fillStyle = 'white';
-            ctx.fillText(`${player.aether}/${player.maxAether}`, x + barW / 2, y + textYOffset);
+            uiCtx.fillStyle = '#8b5cf6'; // A vibrant purple
+            uiCtx.fillRect(x, y, barW * aetherP, barH);
+            uiCtx.fillStyle = 'white';
+            uiCtx.fillText(`${player.aether}/${player.maxAether}`, x + barW / 2, y + textYOffset);
         }
         // --- END OF REPLACEMENT ---
 
