@@ -529,7 +529,9 @@
                     isCompleted: typeof obj.isCompleted === "function" ? obj.isCompleted : null
                 })),
                 unlocks: def.unlocks ? [...def.unlocks] : [],
-                visible: def.visible !== false
+                visible: def.visible !== false,
+                completedAt: null,
+                completionDisplayMs: def.completionDisplayMs ?? 3000
             };
         }
 
@@ -554,13 +556,16 @@
             if (completedQuestIds.has(questId)) return;
 
             completedQuestIds.add(questId);
-
-            const index = activeQuestIds.indexOf(questId);
-            if (index !== -1) activeQuestIds.splice(index, 1);
+            quest.completedAt = performance.now();
 
             for (const nextQuestId of quest.unlocks) {
                 startQuest(nextQuestId);
             }
+        }
+
+        function finalizeCompletedQuest(questId) {
+            const index = activeQuestIds.indexOf(questId);
+            if (index !== -1) activeQuestIds.splice(index, 1);
         }
 
         function updateQuestProgress() {
@@ -571,6 +576,22 @@
 
                 if (isQuestComplete(quest)) {
                     completeQuest(questId);
+                }
+            }
+        }
+
+        function updateCompletedQuestDisplay() {
+            const now = performance.now();
+
+            for (let i = activeQuestIds.length - 1; i >= 0; i--) {
+                const questId = activeQuestIds[i];
+                const quest = quests.get(questId);
+                if (!quest) continue;
+                if (!completedQuestIds.has(questId)) continue;
+                if (quest.completedAt == null) continue;
+
+                if (now - quest.completedAt >= quest.completionDisplayMs) {
+                    finalizeCompletedQuest(questId);
                 }
             }
         }
@@ -1300,7 +1321,7 @@
 
             const lineHeight = 5;
             const sectionGap = 6;
-            const boxWidth = 140;
+            const boxWidth = 180;
 
             let lineCount = 1; // header
             for (const quest of visibleQuests) {
@@ -1311,7 +1332,7 @@
 
             const boxHeight = lineCount * lineHeight + 8;
 
-            uiCtx.fillStyle = "rgba(0, 0, 0, 0.2)";
+            uiCtx.fillStyle = "rgba(0, 0, 0, 0.1)";
             uiCtx.fillRect(startX - 4, startY - 4, boxWidth, boxHeight);
 
             uiCtx.fillStyle = "white";
@@ -1323,17 +1344,19 @@
             startY += lineHeight + 2;
 
             for (const quest of visibleQuests) {
-                uiCtx.fillStyle = "#ffd27a";
+                const questCompleted = completedQuestIds.has(quest.id);
+                uiCtx.fillStyle = questCompleted ? "#88aa88" : "#ffd27a";
                 uiCtx.fillText(quest.title, startX, startY);
                 startY += lineHeight;
 
                 for (const obj of quest.objectives) {
+                    const text = `${obj.completed ? "[x]" : "[ ]"} ${obj.text}`;
+                    const textX = startX + 3;
+                    const textY = startY;
+
                     uiCtx.fillStyle = obj.completed ? "#8fd48f" : "#d8d8d8";
-                    uiCtx.fillText(
-                        `${obj.completed ? "[x]" : "[ ]"} ${obj.text}`,
-                        startX + 3,
-                        startY
-                    );
+                    uiCtx.fillText(text, textX, textY);
+
                     startY += lineHeight;
                 }
 
@@ -12024,13 +12047,13 @@
             
             renderDamageFlash();
             renderToolbar();
+            renderBuffsUI();
+            renderQuestLog(10, 70);
             renderDialogueUI();
             renderPlayerStatsUI();
             renderTradeUI();
             renderAlembicUI();
             renderGrimoire();
-            renderBuffsUI();
-            renderQuestLog(10, 70);
             renderMessageUI();
             renderZoneMessage();
 
@@ -13303,7 +13326,7 @@
             drawToolbarSlot(startX + 2 * (TOOLBAR_SLOT_SIZE + TOOLBAR_SLOT_SPACING), startY, '<Tool>', player.toolPocket, 0, 0, player.maxToolSlots, activeContainer === 'tool');
 
             // 4. STRUCTURE
-            drawToolbarSlot(startX + 3 * (TOOLBAR_SLOT_SIZE + TOOLBAR_SLOT_SPACING), startY, '<Structure>', player.structurePocket, 0, 0, player.maxStructureSlots, activeContainer === 'structure');
+            drawToolbarSlot(startX + 3 * (TOOLBAR_SLOT_SIZE + TOOLBAR_SLOT_SPACING), startY, '<Object>', player.structurePocket, 0, 0, player.maxStructureSlots, activeContainer === 'structure');
         }
 
         function drawToolbarSlot(screenX, screenY, label, content, contentW, contentH, maxSlots, isActive) {
@@ -13322,14 +13345,14 @@
             uiCtx.strokeRect(screenX, screenY, TOOLBAR_SLOT_SIZE, TOOLBAR_SLOT_SIZE);
 
             // Draw content
-            if (label === '<Tool>' || label === '<Structure>') {
+            if (label === '<Tool>' || label === '<Object>') {
                 const isTool = label === '<Tool>';
                 const pocket = isTool ? player.toolPocket : player.structurePocket;
                 const index = isTool ? player.toolIndex : player.structureIndex;
 
                 if (pocket.length === 0) {
                     uiCtx.fillStyle = '#888';
-                    uiCtx.font = '8px monospace';
+                    uiCtx.font = '6px monospace';
                     uiCtx.textAlign = 'center';
                     uiCtx.textBaseline = 'middle';
                     uiCtx.fillText(label, screenX + TOOLBAR_SLOT_SIZE / 2, screenY + TOOLBAR_SLOT_SIZE / 2);
@@ -14209,6 +14232,7 @@
             cleanupDestroyedBodies();
 
             evaluateActiveQuestObjectives();
+            updateCompletedQuestDisplay();
             updatePouredParticles();
             processAlchemyJobs();
             updateMagicParticles();
