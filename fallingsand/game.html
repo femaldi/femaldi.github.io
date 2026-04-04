@@ -170,10 +170,10 @@
     <script>
         // --- CONFIGURATION ---
         const canvas = document.getElementById('gameCanvas');
-        const ctx = canvas.getContext('2d');
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
 
         const uiCanvas = document.getElementById('uiCanvas');
-        const uiCtx = uiCanvas.getContext('2d');
+        const uiCtx = uiCanvas.getContext('2d', { willReadFrequently: true });
         const pl = planck;
         let debugMode = false;
         const STATION_FLOOR_Y = 0;
@@ -2566,7 +2566,6 @@
         const ALWAYS_VISIBLE_MATERIALS = new Set();
 
         const SHIMMERING_METALS = new Set([
-            MAT.ADAMANTIUM,
             MAT.COPPER,
             MAT.SILVER,
             MAT.GOLD,
@@ -2702,7 +2701,7 @@
             { id: 'player_frame_2', path: 'assets/player_2.png' },
             { id: 'wooden_box_16x16', path: 'assets/wooden_box.png' },
             { id: 'wooden_box_32x32', path: 'assets/wooden_box_large.png' },
-            { id: 'iron_door_27x33', path: 'assets/iron_door.png' },
+            { id: 'adamantium_door_56x42', path: 'assets/adamantium_door.png' },
             { id: 'pickup_shape', path: 'assets/pickup_shape.png' },
             { id: 'filter_shape', path: 'assets/filter_shape.png' },
             { id: 'heat_shape', path: 'assets/heat_shape.png' },
@@ -4711,7 +4710,7 @@
                 this.postCanvas = document.createElement('canvas');
                 this.postCanvas.width = width;
                 this.postCanvas.height = height;
-                this.postCtx = this.postCanvas.getContext('2d');
+                this.postCtx = this.postCanvas.getContext('2d', { willReadFrequently: true });
             },
 
             // A high-saturation, vibrant magical feel.
@@ -6779,12 +6778,12 @@
                         const leftDoor = createRigidBodyRectangle(
                             pieceInfo.bounds.x + leftBounds.x, pieceInfo.bounds.y + leftBounds.y,
                             leftBounds.width, leftBounds.height,
-                            MAT.ADAMANTIUM, null, 'Adamantium Door (Left)'
+                            MAT.ADAMANTIUM, 'adamantium_door_56x42', 'Adamantium Door (Left)'
                         );
                         const rightDoor = createRigidBodyRectangle(
                             pieceInfo.bounds.x + rightBounds.x, pieceInfo.bounds.y + rightBounds.y,
                             rightBounds.width, rightBounds.height,
-                            MAT.ADAMANTIUM, null, 'Adamantium Door (Right)'
+                            MAT.ADAMANTIUM, 'adamantium_door_56x42', 'Adamantium Door (Right)'
                         );
 
                         //leftDoor.body.setAwake(true);
@@ -11892,11 +11891,14 @@
                         else if (LIQUIDS.has(type)) { 
                             [r, g, b] = varyColor(...COLORS[type], worldX, worldY, type, 4); 
                         } 
-                        else if (SHIMMERING_METALS.has(type) || type === MAT.IRON) { 
+                        else if (SHIMMERING_METALS.has(type)) { 
                                 [r, g, b] = metallicColor(worldX, worldY, COLORS[type]); 
                         } 
                         else if (type === MAT.WOOD) {
                             [r, g, b] = woodColor(worldX, worldY, COLORS[type]);
+                        }
+                        else if (type === MAT.IRON || type === MAT.ADAMANTIUM) {
+                            [r, g, b] = getMetalPatternColor(type, worldX, worldY, COLORS[type]);
                         }
                         else if (type === MAT.ROCK_WALL || type === MAT.SANDSTONE_WALL || type === MAT.GROUND || type === MAT.VOLCANIC_WALL || type === MAT.LABYRINTH_WALL || type === MAT.MAGIC_WALL) {
                             [r, g, b] = getWallPatternColor(type, worldX, worldY, COLORS[type]);
@@ -13543,6 +13545,89 @@
 
         function clampByte(v) {
             return v < 0 ? 0 : v > 255 ? 255 : v | 0;
+        }
+
+        function isSameMetal(typeA, typeB) {
+            return typeA === typeB;
+        }
+
+        function getMetalBorderInfo(type, x, y) {
+            let exposed = 0;
+            let brightEdge = 0;
+            let darkEdge = 0;
+
+            const leftType  = getGrid(x - 1, y);
+            const rightType = getGrid(x + 1, y);
+            const upType    = getGrid(x, y - 1);
+            const downType  = getGrid(x, y + 1);
+
+            if (leftType !== type)  exposed++;
+            if (rightType !== type) exposed++;
+            if (upType !== type)    exposed++;
+            if (downType !== type)  exposed++;
+
+            if (upType !== type) brightEdge++;
+            if (leftType !== type) brightEdge++;
+            if (downType !== type) darkEdge++;
+            if (rightType !== type) darkEdge++;
+
+            return { exposed, brightEdge, darkEdge };
+        }
+
+        function getMetalPatternColor(type, worldX, worldY, baseColor, getGrid) {
+            let r = baseColor[0];
+            let g = baseColor[1];
+            let b = baseColor[2];
+
+            // Large "panel" breakup: makes connected metal masses feel manufactured,
+            // not rocky/organic.
+            const panel = valueNoise2D(worldX, worldY, 16, type === MAT.IRON ? 4101 : 5101);
+
+            // Directional brushed-metal streaks. Much more linear than fbm blobs.
+            const streakA = valueNoise2D(worldX * 3.8, worldY * 0.35, 7, type === MAT.IRON ? 4201 : 5201);
+            const streakB = valueNoise2D(worldX * 4.5, worldY * 0.22, 4, type === MAT.IRON ? 4301 : 5301);
+
+            // Small crystalline/specular breakup without looking rocky.
+            const grain = hash2D(worldX, worldY, type === MAT.IRON ? 4401 : 5401);
+
+            let shade = 0;
+
+            // Panel-level value shifts: broad, deliberate-looking surfaces
+            if (panel < 0.22) shade -= 12;
+            else if (panel < 0.42) shade -= 5;
+            else if (panel > 0.82) shade += 12;
+            else if (panel > 0.62) shade += 5;
+
+            // Brushed streaks
+            shade += (streakA - 0.5) * 20;
+            shade += (streakB - 0.5) * 10;
+
+            // Rare specular flecks, but not too noisy
+            if (grain > 0.992) shade += 14;
+            else if (grain < 0.008) shade -= 8;
+
+            const border = getMetalBorderInfo(type, worldX, worldY, getGrid);
+
+            // Keep your border treatment
+            shade += border.brightEdge * 10;
+            shade -= border.darkEdge * 12;
+            shade -= border.exposed * 2;
+
+            if (type === MAT.IRON) {
+                // Iron: duller, slightly warmer gray
+                return [
+                    clampByte(r + shade),
+                    clampByte(g + shade),
+                    clampByte(b + shade - 2)
+                ];
+            }
+
+            // Adamantium: cleaner, colder, more polished
+            return [
+                clampByte(r + shade + 6),
+                clampByte(g + shade + 8),
+                clampByte(b + shade + 14)
+            ];
         }
 
         function getWallPatternColor(type, worldX, worldY, baseColor) {
