@@ -2753,7 +2753,7 @@
         let hoveredBody = null;
 
         const MAX_LIGHT_LEVEL = 30;
-        const VISIBLE_LIQUID_SCAN_INTERVAL = 5; // Update lighting every 30 frames
+        const VISIBLE_LIQUID_SCAN_INTERVAL = 30; // Update lighting every 30 frames
 
         // --- Magic Particle System ---
         const MAX_MAGIC_PARTICLES = 10000;
@@ -11767,12 +11767,17 @@
                 });
             }
 
+            Profiler.start('Render.getVisibleSetPieceBackgrounds');
             const visibleSetPieceBGs = getVisibleSetPieceBackgrounds();
+            Profiler.stop('Render.getVisibleSetPieceBackgrounds');
 
             // This is our main buffer for drawing new pixels for this frame
+            Profiler.start('Render.currentFrameImageData');
             const currentFrameImageData = ctx.getImageData(0, 0, renderWidth, renderHeight);
             const currentFramePixels = currentFrameImageData.data;
-
+            Profiler.stop('Render.currentFrameImageData');
+            
+            Profiler.start('Render.dirtyRects');
             for (const rect of dirtyRects) {
                 const rStartX = Math.max(0, Math.floor(rect.x));
                 const rStartY = Math.max(0, Math.floor(rect.y));
@@ -11924,15 +11929,18 @@
                     }
                 }
             }
+            Profiler.stop('Render.dirtyRects');
 
+            Profiler.start('Render.putImageData&drawImage');
             // Put the final, combined image data (with shifted old parts and newly drawn dirty parts) onto the main canvas.
             ctx.putImageData(currentFrameImageData, 0, 0);
-
+            
             // --- 3. UPDATE THE CACHE FOR THE NEXT FRAME ---
             // The main canvas now holds the definitive image for this frame. Copy it to our cache canvas.
             cacheCtx.globalCompositeOperation = 'copy';
             cacheCtx.drawImage(canvas, 0, 0);
             cacheCtx.globalCompositeOperation = 'source-over';
+            Profiler.stop('Render.putImageData&drawImage');
 
             for (const p of magicParticlePool) {
                 if (p.active && p.isShapeParticle && p.phase !== 'waiting') {
@@ -11953,9 +11961,13 @@
                 }
             }
 
+            Profiler.start('Render.Bloom');
             // --- 4. RENDER DYNAMIC ELEMENTS ON TOP ---
             renderBloom(); 
+            Profiler.stop('Render.Bloom');
+            Profiler.start('Render.RBs');
             renderRigidBodies(startX, startY);
+            Profiler.stop('Render.RBs');
 
             let wandScreenX, wandScreenY; // Define here
             if (player.isSpawning) {
@@ -11972,7 +11984,7 @@
                 renderNpcs(anim);
             }
 
-
+            Profiler.start('Render.Particles');
             for (const p of pouredParticles) { const [r, g, b] = COLORS[p.type]; ctx.fillStyle = `rgb(${r},${g},${b})`; ctx.fillRect(Math.round(p.x - camera.x), Math.round(p.y - camera.y), 1, 1); }
             
             for (let i = 0; i < MAX_MAGIC_PARTICLES; i++) {
@@ -12022,6 +12034,7 @@
                     ctx.fillRect(Math.round(p.x - camera.x), Math.round(p.y - camera.y), 1, 1);
                 }
             }
+            Profiler.stop('Render.Particles');
 
             renderFloatingArrow();
 
@@ -12047,6 +12060,7 @@
                 ctx.strokeStyle = 'rgba(255,255,255,0.2)'; ctx.lineWidth = 0.5; ctx.beginPath(); ctx.moveTo(wandScreenX, wandScreenY); ctx.lineTo(mouse.x / scale, mouse.y / scale); ctx.stroke();
             }
             
+            Profiler.start('Render.Etc');
             renderDamageFlash();
             renderToolbar();
             renderBuffsUI();
@@ -12058,11 +12072,14 @@
             renderGrimoire();
             renderMessageUI();
             renderZoneMessage();
+            Profiler.stop('Render.Etc');
 
             if (debugMode)
             {
+                Profiler.start('Render.Debug');
                 drawActiveChunkOutlines();
                 renderStationGeometryDebug();
+                Profiler.stop('Render.Debug');
             } 
 
             lastCameraX = startX;
