@@ -453,6 +453,16 @@
         canvas.width = viewWidth;
         canvas.height = viewHeight;
 
+        let dirtyRectCount = 0;
+
+        let currentFrameImageData = null;
+        let currentFramePixels = null;
+
+        let cacheFrameImageData = null;
+        let cacheFramePixels = null;
+
+        initRenderBuffers();
+
         canvas.style.width = viewWidth * scale + "px";
         canvas.style.height = viewHeight * scale + "px";
 
@@ -2753,7 +2763,7 @@
         let hoveredBody = null;
 
         const MAX_LIGHT_LEVEL = 30;
-        const VISIBLE_LIQUID_SCAN_INTERVAL = 30; // Update lighting every 30 frames
+        const VISIBLE_LIQUID_SCAN_INTERVAL = 5; // Update lighting every 30 frames
 
         // --- Magic Particle System ---
         const MAX_MAGIC_PARTICLES = 10000;
@@ -11692,7 +11702,36 @@
             return visibleBGs;
         }
         // --- END OF COMPLETE REPLACEMENT ---
+        
 
+        function initRenderBuffers() {
+            currentFrameImageData = ctx.createImageData(viewWidth, viewHeight);
+            currentFramePixels = currentFrameImageData.data;
+
+            cacheFrameImageData = ctx.createImageData(viewWidth, viewHeight);
+            cacheFramePixels = cacheFrameImageData.data;
+        }
+
+        function shiftPixels(src, dst, width, height, deltaX, deltaY) {
+            dst.fill(0);
+
+            const copyWidth = width - Math.abs(deltaX);
+            const copyHeight = height - Math.abs(deltaY);
+
+            if (copyWidth <= 0 || copyHeight <= 0) return;
+
+            const srcStartX = deltaX > 0 ? deltaX : 0;
+            const srcStartY = deltaY > 0 ? deltaY : 0;
+            const dstStartX = deltaX > 0 ? 0 : -deltaX;
+            const dstStartY = deltaY > 0 ? 0 : -deltaY;
+
+            for (let y = 0; y < copyHeight; y++) {
+                const srcRow = ((srcStartY + y) * width + srcStartX) * 4;
+                const dstRow = ((dstStartY + y) * width + dstStartX) * 4;
+                const rowBytes = copyWidth * 4;
+                dst.set(src.subarray(srcRow, srcRow + rowBytes), dstRow);
+            }
+        }
 
         function render() {
             // Reset per-frame data
@@ -11713,9 +11752,9 @@
             } else {
                 // The cache is valid. Start by drawing the entire (potentially outdated) cache
                 // to the main visible canvas. Then, shift it to match camera movement.
-                ctx.globalCompositeOperation = 'copy';
-                ctx.drawImage(cacheCanvas, -deltaX, -deltaY);
-                ctx.globalCompositeOperation = 'source-over';
+                // ctx.globalCompositeOperation = 'copy';
+                // ctx.drawImage(cacheCanvas, -deltaX, -deltaY);
+                // ctx.globalCompositeOperation = 'source-over';
             }
 
             // --- 2. IDENTIFY AND REDRAW DIRTY REGIONS ---
@@ -11772,12 +11811,23 @@
             Profiler.stop('Render.getVisibleSetPieceBackgrounds');
 
             // This is our main buffer for drawing new pixels for this frame
-            Profiler.start('Render.currentFrameImageData');
-            const currentFrameImageData = ctx.getImageData(0, 0, renderWidth, renderHeight);
-            const currentFramePixels = currentFrameImageData.data;
-            Profiler.stop('Render.currentFrameImageData');
+            Profiler.start('Render.prepareFrameBuffer');
+            if (isRenderCacheInvalid) {
+                currentFramePixels.fill(0);
+            } else {
+                shiftPixels(
+                    cacheFramePixels,
+                    currentFramePixels,
+                    renderWidth,
+                    renderHeight,
+                    deltaX,
+                    deltaY
+                );
+            }
+            Profiler.stop('Render.prepareFrameBuffer');
             
             Profiler.start('Render.dirtyRects');
+            dirtyRectCount = dirtyRects.length;
             for (const rect of dirtyRects) {
                 const rStartX = Math.max(0, Math.floor(rect.x));
                 const rStartY = Math.max(0, Math.floor(rect.y));
@@ -11937,9 +11987,7 @@
             
             // --- 3. UPDATE THE CACHE FOR THE NEXT FRAME ---
             // The main canvas now holds the definitive image for this frame. Copy it to our cache canvas.
-            cacheCtx.globalCompositeOperation = 'copy';
-            cacheCtx.drawImage(canvas, 0, 0);
-            cacheCtx.globalCompositeOperation = 'source-over';
+            cacheFramePixels.set(currentFramePixels);
             Profiler.stop('Render.putImageData&drawImage');
 
             for (const p of magicParticlePool) {
@@ -14858,6 +14906,8 @@
 
             // --- 6. Display stats ---
             //drawHeader("== Chunks (Active/Pending) ==");
+            drawStat("Dirty Rects", dirtyRectCount);
+            startY += sectionSpacing;
             drawStat("Solids", `${activeSolidChunks.size}/${pendingSolidChunks.length}`);
             drawStat("Liquids", `${activeLiquidChunks.size}/${pendingLiquidChunks.length}`);
             drawStat("Gases", `${activeGasChunks.size}/${pendingGasChunks.length}`);
