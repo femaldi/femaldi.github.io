@@ -2788,6 +2788,7 @@
         let hudMaterial = '--';
         let hudTimer = 0;
         let chunksWithLightingChanges = new Set();
+        let renderDirtyChunks = new Set();
 
         // ADD these new variables:
         let cacheCanvas = null;
@@ -8647,7 +8648,7 @@
                         // Mark this chunk as needing a redraw
                         const cx = Math.floor(worldX / CHUNK_SIZE);
                         const cy = Math.floor(worldY / CHUNK_SIZE);
-                        chunksWithLightingChanges.add(coordToKey(cx, cy));
+                        renderDirtyChunks.add(coordToKey(cx, cy));
                     }
                 }
             }
@@ -11776,7 +11777,7 @@
                     ...activeLiquidChunks, 
                     ...activeGasChunks,
                     ...persistentGlowingChunks,
-                    ...chunksWithLightingChanges // Add our static glowing chunks here
+                    ...renderDirtyChunks // Add our static glowing chunks here
                 ]);
 
                 // Add rects for active simulation chunks
@@ -11988,6 +11989,7 @@
             // --- 3. UPDATE THE CACHE FOR THE NEXT FRAME ---
             // The main canvas now holds the definitive image for this frame. Copy it to our cache canvas.
             cacheFramePixels.set(currentFramePixels);
+            renderDirtyChunks.clear();
             Profiler.stop('Render.putImageData&drawImage');
 
             for (const p of magicParticlePool) {
@@ -14494,28 +14496,20 @@
         // in index.html, replace the ENTIRE updateLighting function
 
         function updateLighting() {
-            // 1. Proactively mark chunks near the player as needing an update.
             if (frameCount % 5 === 0) {
                 proactivelyUpdateLightingNearPlayer();
             }
 
-            // 2. Only run if there's work to do.
             if (lightingDirtyChunks.size > 0) {
-                // Initialize the queue with all chunks dirtied this frame.
                 const queue = [...lightingDirtyChunks];
-                // Use a Set to prevent processing the same chunk multiple times in one frame.
                 const processed = new Set(lightingDirtyChunks);
                 lightingDirtyChunks.clear();
 
                 let head = 0;
-                // Process the queue until all light propagation for this frame is complete.
                 while (head < queue.length) {
                     const chunkKey = queue[head++];
-                    
-                    // 3. Process the current chunk and get its list of affected neighbors.
                     const newNeighbors = updateLightingForChunk(chunkKey);
-                    
-                    // 4. Add any new, unprocessed neighbors to the queue to continue the cascade.
+
                     for (const neighborKey of newNeighbors) {
                         if (!processed.has(neighborKey)) {
                             processed.add(neighborKey);
@@ -14524,7 +14518,9 @@
                     }
                 }
 
-                chunksWithLightingChanges = processed;
+                for (const key of processed) {
+                    renderDirtyChunks.add(key);
+                }
             }
         }
 
