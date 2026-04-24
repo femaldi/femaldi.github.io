@@ -9412,9 +9412,12 @@
             const buffer = 1;
             for (const body of rigidBodies) {
                 if (body.pendingReactivation) {
+                    const ready = ensureStaticBodiesAroundRigidBody(body, 2);
+                    if (!ready) continue;
                     body.reactivationDelayFrames--;
 
                     if (body.reactivationDelayFrames <= 0) {
+                        body.body.setActive(true);
                         body.body.setLinearVelocity(body.pendingWakeVelocity || pl.Vec2(0, 0));
                         body.body.setAngularVelocity(body.pendingWakeAngularVelocity || 0);
                         body.body.setAwake(true);
@@ -9973,7 +9976,7 @@
                             x:finalSpawnX, y:finalSpawnY,
                             vx:Math.cos(finalAngle)*finalVelocity, vy:Math.sin(finalAngle)*finalVelocity,
                             type:type,
-                            lifespan: 60
+                            lifespan: 3600
                         });
                         
                         pouredCount++;
@@ -10267,7 +10270,7 @@
 
             // Schedule wake-up a few frames later to avoid race conditions.
             for (const rb of bodiesToReactivate) {
-                rb.body.setActive(true);
+                rb.body.setActive(false);
                 rb.body.setLinearVelocity(pl.Vec2(0, 0));
                 rb.body.setAngularVelocity(0);
                 rb.body.setAwake(false);
@@ -10275,15 +10278,15 @@
                 rb.pendingWakeVelocity = rb.savedLinearVelocity || pl.Vec2(0, 0);
                 rb.pendingWakeAngularVelocity = rb.savedAngularVelocity || 0;
                 rb.pendingReactivation = true;
-                rb.reactivationDelayFrames = 20; // try 3; increase to 5 if needed
+                rb.reactivationDelayFrames = 5;
 
                 rb.isStreamedOut = false;
                 rb.streamedOutBySectorKey = null;
             }
         }
 
-        function ensureStaticBodiesAroundRigidBody(rb, chunkRadius = 1) {
-            if (!rb || !rb.body || rb.isDestroyed) return;
+        function ensureStaticBodiesAroundRigidBody(rb, chunkRadius = 2) {
+            if (!rb || !rb.body || rb.isDestroyed) return false;
 
             const pos = rb.body.getPosition();
             const centerX = pos.x * B2_SCALE;
@@ -10297,21 +10300,37 @@
             const minChunkY = Math.floor((centerY - halfH) / CHUNK_SIZE) - chunkRadius;
             const maxChunkY = Math.floor((centerY + halfH) / CHUNK_SIZE) + chunkRadius;
 
+            let allRequiredChunksExist = true;
+
             for (let cy = minChunkY; cy <= maxChunkY; cy++) {
                 for (let cx = minChunkX; cx <= maxChunkX; cx++) {
                     const key = coordToKey(cx, cy);
                     const chunk = chunkMap.get(key);
-                    if (!chunk) continue;
 
-                    if (chunk.staticBody) {
+                    if (!chunk) {
+                        allRequiredChunksExist = false;
+                        continue;
+                    }
+
+                    if (chunk.dirty && chunk.staticBody) {
                         world.destroyBody(chunk.staticBody);
                         chunk.staticBody = null;
                     }
 
-                    activeStaticChunks.delete(key);
-                    generateStaticBodyForChunk(chunk);
+                    if (!chunk.staticBody) {
+                        chunk.staticBody = generateStaticBodyForChunk(chunk);
+                        chunk.dirty = false;
+                        chunk.lastRegenTime = frameCount;
+                    }
+
+                    if (chunk.staticBody) {
+                        chunk.staticBody.setActive(true);
+                        activeStaticChunks.add(key);
+                    }
                 }
             }
+
+            return allRequiredChunksExist;
         }
 
         // in index.html
@@ -10960,6 +10979,35 @@
         }
         // --- END OF COMPLETE REPLACEMENT ---
 
+        function tryDisplaceLiquidSideways(x, y, liquidType) {
+            const dir = Math.random() < 0.5 ? -1 : 1;
+
+            for (const dx of [dir, -dir]) {
+                const tx = x + dx;
+                const ty = y;
+
+                if (!isSectorLoaded(tx, ty)) continue;
+                if (getAuxData(etcChunkMap, tx, ty) === 1) continue;
+
+                const targetType = getGrid(tx, ty);
+
+                if (targetType === MAT.EMPTY || GASES.has(targetType)) {
+                    const liquidAux = getAuxData(etcChunkMap, x, y);
+                    const targetAux = getAuxData(etcChunkMap, tx, ty);
+
+                    setGrid(tx, ty, liquidType, false);
+                    setAuxData(etcChunkMap, tx, ty, liquidAux);
+
+                    setGrid(x, y, targetType, false);
+                    setAuxData(etcChunkMap, x, y, targetAux);
+
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         // --- START OF COMPLETE REPLACEMENT ---
         function updateSolid(x, y, type, idx, moved, grid, w, h, getIdx, setter) {
             const isWorldSim = !grid;
@@ -10988,7 +11036,7 @@
                 }
 
                 // 2. Check for interactions with Rigid Body containers below.
-                const bodyBelow = getRigidBodyAt(x, y + 1);
+                /*const bodyBelow = getRigidBodyAt(x, y + 1);
                 if (bodyBelow && bodyBelow.isFillable) {
                     if (bodyBelow.addPixelAtWorldCoord(x, y + 1, type)) {
                         setGrid(x, y, MAT.EMPTY, true);
@@ -11007,13 +11055,19 @@
                             }
                         }
                     }
-                }
+                }*/
 
                 // 3. Check for ignition.
                 if (getGrid(x, y + 1) === MAT.FIRE && type === MAT.COAL) {
                     setGrid(x, y, MAT.COAL_BURNING, true);
                     return;
                 }
+
+                const wakeNeighbors =
+                    (x & (CHUNK_SIZE - 1)) === 0 ||
+                    (x & (CHUNK_SIZE - 1)) === CHUNK_SIZE - 1 ||
+                    (y & (CHUNK_SIZE - 1)) === 0 ||
+                    (y & (CHUNK_SIZE - 1)) === CHUNK_SIZE - 1;
                 
                 // 4. Movement Logic (Fall down or diagonally).
                 const myAux = getAuxData(etcChunkMap, x, y);
@@ -11021,14 +11075,40 @@
                 // Try to fall straight down
                 if (getAuxData(etcChunkMap, x, y + 1) !== 1) {
                     const belowType = getGrid(x, y + 1);
-                    if ([MAT.EMPTY, ...GASES].includes(belowType) || isLiquid(belowType)) {
-                        // THIS IS THE FIX: Check if destination is loaded before moving.
+                    
+                    if ([MAT.EMPTY, ...GASES].includes(belowType)) {
                         if (isSectorLoaded(x, y + 1)) {
                             const belowAux = getAuxData(etcChunkMap, x, y + 1);
-                            setGrid(x, y, belowType, true); 
+
+                            setGrid(x, y, belowType, false);
                             setAuxData(etcChunkMap, x, y, belowAux);
-                            setGrid(x, y + 1, type, true); 
+
+                            setGrid(x, y + 1, type, false);
                             setAuxData(etcChunkMap, x, y + 1, myAux);
+                        }
+                        return;
+                    }
+
+                    if (isLiquid(belowType)) {
+                        if (isSectorLoaded(x, y + 1)) {
+                            const displaced = tryDisplaceLiquidSideways(x, y + 1, belowType);
+
+                            if (displaced) {
+                                setGrid(x, y, MAT.EMPTY, false);
+                                setAuxData(etcChunkMap, x, y, 0);
+
+                                setGrid(x, y + 1, type, false);
+                                setAuxData(etcChunkMap, x, y + 1, myAux);
+                            } else {
+                                // fallback: old behavior if liquid is trapped
+                                const belowAux = getAuxData(etcChunkMap, x, y + 1);
+
+                                setGrid(x, y, belowType, false);
+                                setAuxData(etcChunkMap, x, y, belowAux);
+
+                                setGrid(x, y + 1, type, false);
+                                setAuxData(etcChunkMap, x, y + 1, myAux);
+                            }
                         }
                         return;
                     }
@@ -11245,7 +11325,8 @@
                     }
                     return;
                 }
-                if (LIQUID_DENSITY[type] > LIQUID_DENSITY[belowType]) {
+
+                if (LIQUIDS.has(belowType) && LIQUID_DENSITY[type] > LIQUID_DENSITY[belowType]) {
                     if (isSectorLoaded(x, y + 1)) {
                         setGrid(x, y, belowType, false); setAuxData(etcChunkMap, x, y, belowAux);
                         setGrid(x, y + 1, type, false); setAuxData(etcChunkMap, x, y + 1, myAux);
@@ -15478,44 +15559,98 @@
         }
 
         function updateWorldColliders(now) {
-            const neededChunks = new Set(),
-                lookahead = 1,
-                allDynBodies = [...rigidBodies, player];
+            const neededChunks = new Set();
+            const lookahead = 1;
+            const allDynBodies = [...rigidBodies, player];
+
             for (const bodyObj of allDynBodies) {
-                if (!bodyObj.body) continue;
-                const body = bodyObj.body;
+                if (!bodyObj || !bodyObj.body) continue;
+                if (bodyObj.isDestroyed) continue;
+                if (bodyObj.isStreamedOut) continue;
+                if (bodyObj.pendingReactivation) continue;
+                if (!bodyObj.body.isActive()) continue;
+                if (bodyObj.body.getType() !== 'dynamic') continue;
+
+                const pos = bodyObj.body.getPosition();
+                const worldX = pos.x * B2_SCALE;
+                const worldY = pos.y * B2_SCALE;
+
+                // Do not create colliders around bodies in unloaded sectors.
+                if (!isSectorLoaded(worldX, worldY)) continue;
+
                 let aabb = null;
-                for (let f = body.getFixtureList(); f; f = f.getNext()) {
+                for (let f = bodyObj.body.getFixtureList(); f; f = f.getNext()) {
                     const f_aabb = f.getAABB(0);
-                    if (!aabb) aabb = { lX: f_aabb.lowerBound.x, lY: f_aabb.lowerBound.y, uX: f_aabb.upperBound.x, uY: f_aabb.upperBound.y };
-                    else { aabb.lX = Math.min(aabb.lX, f_aabb.lowerBound.x); aabb.lY = Math.min(aabb.lY, f_aabb.lowerBound.y); aabb.uX = Math.max(aabb.uX, f_aabb.upperBound.x); aabb.uY = Math.max(aabb.uY, f_aabb.upperBound.y); }
-                }
-                if (!aabb) continue;
-                const minCX = Math.floor(aabb.lX * B2_SCALE / CHUNK_SIZE) - lookahead,
-                    maxCX = Math.ceil(aabb.uX * B2_SCALE / CHUNK_SIZE) + lookahead;
-                const minCY = Math.floor(aabb.lY * B2_SCALE / CHUNK_SIZE) - lookahead,
-                    maxCY = Math.ceil(aabb.uY * B2_SCALE / CHUNK_SIZE) + lookahead;
-                for (let cy = minCY; cy <= maxCY; cy++)
-                    for (let cx = minCX; cx <= maxCX; cx++) {
-                        // --- THIS IS THE FIX ---
-                        neededChunks.add(coordToKey(cx, cy)); // Use numeric key
+                    if (!aabb) {
+                        aabb = {
+                            lX: f_aabb.lowerBound.x,
+                            lY: f_aabb.lowerBound.y,
+                            uX: f_aabb.upperBound.x,
+                            uY: f_aabb.upperBound.y
+                        };
+                    } else {
+                        aabb.lX = Math.min(aabb.lX, f_aabb.lowerBound.x);
+                        aabb.lY = Math.min(aabb.lY, f_aabb.lowerBound.y);
+                        aabb.uX = Math.max(aabb.uX, f_aabb.upperBound.x);
+                        aabb.uY = Math.max(aabb.uY, f_aabb.upperBound.y);
                     }
+                }
+
+                if (!aabb) continue;
+
+                const minCX = Math.floor(aabb.lX * B2_SCALE / CHUNK_SIZE) - lookahead;
+                const maxCX = Math.ceil(aabb.uX * B2_SCALE / CHUNK_SIZE) + lookahead;
+                const minCY = Math.floor(aabb.lY * B2_SCALE / CHUNK_SIZE) - lookahead;
+                const maxCY = Math.ceil(aabb.uY * B2_SCALE / CHUNK_SIZE) + lookahead;
+
+                for (let cy = minCY; cy <= maxCY; cy++) {
+                    for (let cx = minCX; cx <= maxCX; cx++) {
+                        const chunkWorldX = cx * CHUNK_SIZE;
+                        const chunkWorldY = cy * CHUNK_SIZE;
+
+                        if (!isSectorLoaded(chunkWorldX, chunkWorldY)) continue;
+
+                        const key = coordToKey(cx, cy);
+
+                        // Important: do NOT create missing chunks here.
+                        if (!chunkMap.has(key)) continue;
+
+                        neededChunks.add(key);
+                    }
+                }
             }
+
             for (const key of activeStaticChunks) {
                 if (!neededChunks.has(key)) {
                     const chunk = chunkMap.get(key);
-                    if (chunk && chunk.staticBody) chunk.staticBody.setActive(false);
+                    if (chunk && chunk.staticBody) {
+                        chunk.staticBody.setActive(false);
+                    }
                 }
             }
+
             Profiler.start('StaticBodiesForChunks');
+
             for (const key of neededChunks) {
-                const chunk = getChunk(chunkMap, key);
+                const chunk = chunkMap.get(key);
+                if (!chunk) continue;
+
                 if (chunk.dirty && chunk.staticBody) {
-                    if (frameCount - chunk.lastRegenTime > REGEN_COOLDOWN) { world.destroyBody(chunk.staticBody); chunk.staticBody = null; }
+                    if (frameCount - chunk.lastRegenTime > REGEN_COOLDOWN) {
+                        world.destroyBody(chunk.staticBody);
+                        chunk.staticBody = null;
+                    }
                 }
-                if (!chunk.staticBody) { chunk.staticBody = generateStaticBodyForChunk(chunk); chunk.dirty = false; chunk.lastRegenTime = frameCount; }
+
+                if (!chunk.staticBody) {
+                    chunk.staticBody = generateStaticBodyForChunk(chunk);
+                    chunk.dirty = false;
+                    chunk.lastRegenTime = frameCount;
+                }
+
                 chunk.staticBody.setActive(true);
             }
+
             Profiler.stop('StaticBodiesForChunks');
             activeStaticChunks = neededChunks;
         }
