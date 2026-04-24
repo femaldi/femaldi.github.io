@@ -4100,7 +4100,7 @@
                     // The first 15 vertical sectors (0-14) below spawn will be caves.
                     // This covers layers 0, 1, and 2.
                     getBounds: (spawnSX, spawnSY) => ({ 
-                        x1: spawnSX - 5, y1: spawnSY, 
+                        x1: spawnSX - 5, y1: spawnSY - 1, 
                         x2: spawnSX + 4, y2: spawnSY + 14 
                     }),
                     getGenerationParams: function(sx, sy, bounds) {
@@ -4135,8 +4135,8 @@
                 {
                     name: "GroundStrata",
                     getBounds: (spawnSX, spawnSY) => ({ 
-                        x1: spawnSX - 5, y1: spawnSY - 2, 
-                        x2: spawnSX + 4, y2: spawnSY - 1 
+                        x1: spawnSX - 5, y1: spawnSY - 3, 
+                        x2: spawnSX + 4, y2: spawnSY - 2 
                     }),
                      getGenerationParams: function(sx, sy, bounds) {
                         return { bounds: bounds };
