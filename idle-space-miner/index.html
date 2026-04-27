@@ -45,6 +45,8 @@
         let mouseDown = false;
         let heldAsteroidTarget = null;
         let frameCount = 0;
+        let menuCloseTimer = 0;
+        const MENU_CLOSE_DELAY = 15;
 
         const station = {
             x: W / 2,
@@ -137,10 +139,12 @@
             gravityPulse: {
                 id: "gravityPulse",
                 codename: "GRAV-PULSE",
-                type: "action",
+                type: "menu",
                 xOffset: -92,
                 yOffset: 0,
                 radius: 28,
+                menuTitle: "GRAVITY PULSE CONTROL",
+                menuSide: "left",
                 action: () => {
                     const cd = CLICK_COOLDOWNS.gravity;
 
@@ -148,7 +152,29 @@
                         triggerGravityField();
                         cd.current = cd.max;
                     }
-                }
+                },
+                items: [
+                    {
+                        label: "Automatic Pulse",
+                        type: "upgrade",
+                        getLevel: () => upgrades.automaticPulse.level,
+                        getCap: () => upgrades.automaticPulse.cap,
+                        getCost: () => getAutomaticPulseCost(),
+                        isVisible: () => upgrades.automaticPulse.level < upgrades.automaticPulse.cap,
+                        canBuy: () => true,
+                        buy: () => {
+                            const upg = upgrades.automaticPulse;
+                            const cost = getAutomaticPulseCost();
+
+                            if (upg.level >= upg.cap) return;
+                            if (station.storedOre < cost) return;
+
+                            station.storedOre -= cost;
+                            upg.level++;
+                            automaticPulseTimer = 0;
+                        }
+                    }
+                ]
             },
 
             smallShipyard: {
@@ -302,6 +328,10 @@
             laserSpeed: {
                 level: 0,
                 cap: 3
+            },
+            automaticPulse: {
+                level: 0,
+                cap: 3
             }
         };
 
@@ -312,6 +342,37 @@
             ];
 
             return romans[n] || String(n);
+        }
+
+        let automaticPulseTimer = 0;
+
+        function getAutomaticPulseCost() {
+            return Math.floor(Math.pow(2, upgrades.automaticPulse.level) * 50);
+        }
+
+        function getAutomaticPulseInterval() {
+            const intervals = [
+                Infinity, // level 0 = disabled
+                600,      // level I   = 10s
+                360,      // level II  = 6s
+                180       // level III = 3s
+            ];
+
+            return intervals[upgrades.automaticPulse.level];
+        }
+
+        function updateAutomaticPulse() {
+            if (upgrades.automaticPulse.level <= 0) return;
+            if (floatingOre.length <= 0) return;
+
+            automaticPulseTimer++;
+
+            const interval = getAutomaticPulseInterval();
+
+            if (automaticPulseTimer >= interval) {
+                triggerGravityField();
+                automaticPulseTimer = 0;
+            }
         }
 
         function getLaserOreChunks() {
@@ -451,16 +512,16 @@
             // detect asteroid under cursor at press time
             for (const asteroid of asteroids) {
                 if (asteroid.ore > 0 && pointInAsteroid(mx, my, asteroid)) {
-                heldAsteroidTarget = asteroid;
+                    heldAsteroidTarget = asteroid;
 
-                // fire immediately if off cooldown (feels responsive)
-                const cd = CLICK_COOLDOWNS.laser;
-                if (cd.current <= 0) {
-                    firePulseLaser(asteroid);
-                    cd.current = cd.getMax();
-                }
+                    // fire immediately if off cooldown (feels responsive)
+                    const cd = CLICK_COOLDOWNS.laser;
+                    if (cd.current <= 0) {
+                        firePulseLaser(asteroid);
+                        cd.current = cd.getMax();
+                    }
 
-                return;
+                    return;
                 }
             }
 
@@ -519,12 +580,8 @@
                 const module = stationModules[i];
 
                 if (pointInModule(mx, my, module)) {
-                    if (module.type === "action") {
+                    if (module.action) {
                         module.action();
-                    }
-
-                    if (module.type === "menu") {
-                        activeMenu = module;
                     }
 
                     return;
@@ -545,6 +602,43 @@
                 }
             }
         });
+
+        function updateActiveMenu() {
+            const hoveredModule = getHoveredModule();
+
+            // Hovering a module with menu → open + reset timer
+            if (hoveredModule && hoveredModule.type === "menu") {
+                activeMenu = hoveredModule;
+                menuCloseTimer = 0; // 👈 RESET HERE
+                return;
+            }
+
+            // If menu is open, check if mouse is inside it
+            if (activeMenu && activeMenu.menuBounds) {
+                const b = activeMenu.menuBounds;
+
+                const inside =
+                    mouseX >= b.x &&
+                    mouseX <= b.x + b.w &&
+                    mouseY >= b.y &&
+                    mouseY <= b.y + b.h;
+
+                if (inside) {
+                    menuCloseTimer = 0; // 👈 RESET HERE TOO
+                    return;
+                }
+            }
+
+            // Not hovering anything → start closing timer
+            if (activeMenu) {
+                menuCloseTimer++;
+
+                if (menuCloseTimer > MENU_CLOSE_DELAY) {
+                    activeMenu = null;
+                    menuCloseTimer = 0; // 👈 CLEAN RESET
+                }
+            }
+        }
 
         function updateHeldLaserFire() {
             if (!mouseDown || !heldAsteroidTarget) return;
@@ -1021,13 +1115,31 @@
 
             const h = 44 + visibleItems.length * rowH;
 
-            let x = activeMenu.x + activeMenu.radius + 18;
+            let x;
             let y = activeMenu.y - h / 2;
 
-            // keep menu on screen
-            if (x + w > W - 12) x = activeMenu.x - activeMenu.radius - w - 18;
+            // GRAV-PULSE → force left side
+            if (activeMenu.menuSide === "left") {
+                x = activeMenu.x - activeMenu.radius - w - 18;
+
+                // fallback if offscreen
+                if (x < 12) {
+                    x = activeMenu.x + activeMenu.radius + 18;
+                }
+            } else {
+                // default → right side
+                x = activeMenu.x + activeMenu.radius + 18;
+
+                // fallback if offscreen
+                if (x + w > W - 12) {
+                    x = activeMenu.x - activeMenu.radius - w - 18;
+                }
+            }
+
             if (y < 12) y = 12;
             if (y + h > H - 12) y = H - h - 12;
+
+            activeMenu.menuBounds = { x, y, w, h };
 
             ctx.save();
 
@@ -1040,10 +1152,25 @@
             ctx.fillRect(x, y, w, h);
             ctx.strokeRect(x, y, w, h);
 
-            // connector line from module to menu
+            // determine which side the menu is on
+            const menuCenterX = x + w / 2;
+            const isMenuOnRight = menuCenterX > activeMenu.x;
+
+            // connection points
+            const fromX = activeMenu.x;
+            const fromY = activeMenu.y;
+
+            const toX = isMenuOnRight ? x : x + w;
+            const toY = y + h / 2;
+
+            // draw connector
+            const midX = (fromX + toX) / 2;
+
             ctx.beginPath();
-            ctx.moveTo(activeMenu.x, activeMenu.y);
-            ctx.lineTo(x, y + h / 2);
+            ctx.moveTo(fromX, fromY);
+            ctx.lineTo(midX, fromY);
+            ctx.lineTo(midX, toY);
+            ctx.lineTo(toX, toY);
             ctx.stroke();
 
             ctx.fillStyle = GREEN;
@@ -1203,6 +1330,8 @@
 
             updateCooldowns();
             updateHeldLaserFire();
+            updateAutomaticPulse();
+            updateActiveMenu();
             updateLaserBeams();
             updateFloatingOre();
             updateGravityPulses();
