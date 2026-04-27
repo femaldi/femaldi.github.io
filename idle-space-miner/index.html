@@ -54,6 +54,51 @@
         let cameraStartX = 0;
         let cameraStartY = 0;
 
+        let oreGatherCombo = 0;
+        let oreGatherComboTimer = 0;
+        const ORE_GATHER_COMBO_WINDOW = 12; // frames
+        let oreGatherChunks = 0;
+        const CHUNKS_PER_COMBO = 10;
+
+        const soundEnabled = true;
+
+        const sounds = {
+            laser: new Audio("sounds/laser.wav"),
+            oreGather: new Audio("sounds/ore-gather.wav"),
+            menu: new Audio("sounds/menu.wav")
+        };
+
+        for (const sound of Object.values(sounds)) {
+            sound.preload = "auto";
+            sound.volume = 0.45;
+        }
+
+        function playSound(name, options = {}) {
+            if (!soundEnabled) return;
+
+            const base = sounds[name];
+            if (!base) return;
+
+            const {
+                volume = 0.45,
+                volumeVar = 0,
+                pitch = 1,
+                pitchVar = 0
+            } = options;
+
+            const s = base.cloneNode();
+
+            // volume variance
+            const finalVolume = volume + (Math.random() * 2 - 1) * volumeVar;
+            s.volume = Math.max(0, Math.min(1, finalVolume));
+
+            // pitch variance (playbackRate)
+            const finalPitch = pitch + (Math.random() * 2 - 1) * pitchVar;
+            s.playbackRate = Math.max(0.5, Math.min(2.0, finalPitch));
+
+            s.play().catch(() => {});
+        }
+
         const keys = {};
 
         const GREEN = "#66ff99";
@@ -604,6 +649,40 @@
             array.assignedAt = ++arrayAssignSerial;
         }
 
+        function updateSoundCombos() {
+            if (oreGatherComboTimer > 0) {
+                oreGatherComboTimer--;
+            } else {
+                oreGatherCombo = 0;
+                oreGatherChunks = 0; // 👈 important
+            }
+        }
+
+        function playOreGatherSound() {
+            oreGatherChunks++;
+            oreGatherComboTimer = ORE_GATHER_COMBO_WINDOW;
+
+            // increase combo every N chunks
+            const newCombo = Math.floor(oreGatherChunks / CHUNKS_PER_COMBO);
+
+            if (newCombo !== oreGatherCombo) {
+                oreGatherCombo = newCombo;
+            }
+
+            const MAX_COMBO = 20;
+            const MAX_PITCH = 1.9;
+
+            const normalized = Math.min(1, oreGatherCombo / MAX_COMBO);
+            const pitch = 1 + normalized * (MAX_PITCH - 1);
+
+            playSound("oreGather", {
+                volume: 0.22,
+                volumeVar: 0.04,
+                pitch,
+                pitchVar: 0.15
+            });
+        }
+
         function updateScienceProduction() {
             scienceTickTimer++;
 
@@ -861,6 +940,13 @@
                 life: 12,
                 asteroid
             });
+
+            playSound("laser", {
+                volume: 0.35,
+                volumeVar: 0.08,
+                pitch: 1,
+                pitchVar: 0.5
+            });
         }
 
         function triggerGravityField() {
@@ -1105,6 +1191,8 @@
         });
 
         function updateActiveMenu() {
+            const prevMenu = activeMenu;
+
             // If menu is open, hovering the menu keeps it active
             // and blocks underlying modules from opening their own menus.
             if (activeMenu && activeMenu.menuBounds) {
@@ -1125,7 +1213,16 @@
             const hoveredModule = getHoveredModule();
 
             if (hoveredModule && hoveredModule.type === "menu") {
-                activeMenu = hoveredModule;
+                if (activeMenu !== hoveredModule) {
+                    activeMenu = hoveredModule;
+                    playSound("menu", {
+                        volume: 0.3,
+                        volumeVar: 0.05,
+                        pitch: 1,
+                        pitchVar: 0.08
+                    });
+                }
+
                 menuCloseTimer = 0;
                 return;
             }
@@ -1231,6 +1328,13 @@
 
                     if (d < 12) {
                         addResource("ore", 1);
+                        //playOreGatherSound();
+                        playSound("oreGather", {
+                            volume: 0.22,
+                            volumeVar: 0.04,
+                            pitch: 1,
+                            pitchVar: 0.025
+                        });
                         ore.pull = false;
                         ore.pullTarget = null;
                         floatingOre.splice(i, 1);
@@ -2176,6 +2280,7 @@
 
             updateCooldowns();
             updateHeldLaserFire();
+            updateSoundCombos();
             updateAutomaticPulse();
             updateActiveMenu();
             updateLaserBeams();
