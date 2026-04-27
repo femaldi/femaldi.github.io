@@ -35,10 +35,142 @@
 
         const W = 1920;
         const H = 1080;
+        const WORLD_W = W * 3;
+        const WORLD_H = H * 3;
+
+        const camera = {
+            x: WORLD_W / 2,
+            y: WORLD_H / 2,
+            zoom: 1,
+            minZoom: 0.45,
+            maxZoom: 2.5
+        };
+
+        let mouseScreenX = 0;
+        let mouseScreenY = 0;
+        let isCameraDragging = false;
+        let dragStartX = 0;
+        let dragStartY = 0;
+        let cameraStartX = 0;
+        let cameraStartY = 0;
+
+        const keys = {};
 
         const GREEN = "#66ff99";
         const DIM = "rgba(80,255,130,0.35)";
         const FAINT = "rgba(80,255,130,0.15)";
+
+        const DEBT_TARGET_ORE = 6587651565;
+
+        const incomingMessages = [];
+        let activeIncomingMessage = null;
+        let messageInputLock = 0;
+
+        let gameState = "start";
+        const startButton = {
+            x: W / 2 - 110,
+            y: H / 2 + 90,
+            w: 220,
+            h: 54
+        };
+
+        function queueIncomingMessage(message) {
+            incomingMessages.push(message);
+
+            if (!activeIncomingMessage) {
+                showNextIncomingMessage();
+            }
+        }
+
+        function showNextIncomingMessage() {
+            activeIncomingMessage = incomingMessages.shift() || null;
+            messageInputLock = 8;
+        }
+
+        function advanceIncomingMessage() {
+            if (!activeIncomingMessage) return;
+            if (messageInputLock > 0) return;
+
+            showNextIncomingMessage();
+        }
+
+        function isMessageActive() {
+            return !!activeIncomingMessage;
+        }
+
+        function queueStartingMessages() {
+            queueIncomingMessage({
+                title: "INCOMING MESSAGE // ESTATE TRANSFER",
+                from: "DEBT-CLAIM AUTHORITY",
+                body: [
+                    "Administrator, welcome to your inherited command post.",
+                    "",
+                    "By validated succession protocol, this extraction station, its liabilities, and its outstanding mineral obligations are now yours.",
+                    "",
+                    `Current inherited debt: ${DEBT_TARGET_ORE.toLocaleString("de-DE")} ORE UNITS.`,
+                    "",
+                    "Grow the station. Keep the ore flowing. Reach the owed amount, and your contract will be considered fulfilled."
+                ]
+            });
+
+            queueIncomingMessage({
+                title: "INCOMING MESSAGE // FIELD INSTRUCTION",
+                from: "STATION OPERATIONS",
+                body: [
+                    "Initial procedure:",
+                    "",
+                    "Use the Old War Laser to mine one asteroid.",
+                    "Then activate the Grav Pull module to retrieve the released ore chunks.",
+                    "Use the Station to requisiton new modules spending the acquired ore.",
+                    "",
+                    "Laser: click and hold an asteroid within range.",
+                    "Grav Pull: click the GRAV-PULSE module.",
+                    "",
+                    "May the ore flow forevermore."
+                ]
+            });
+        }
+
+        function pointInRect(px, py, r) {
+            return px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h;
+        }
+
+        function clampCamera() {
+            const halfW = W / 2 / camera.zoom;
+            const halfH = H / 2 / camera.zoom;
+
+            camera.x = Math.max(halfW, Math.min(WORLD_W - halfW, camera.x));
+            camera.y = Math.max(halfH, Math.min(WORLD_H - halfH, camera.y));
+        }
+
+        function screenToWorld(sx, sy) {
+            return {
+                x: camera.x + (sx - W / 2) / camera.zoom,
+                y: camera.y + (sy - H / 2) / camera.zoom
+            };
+        }
+
+        function applyCameraTransform() {
+            ctx.translate(W / 2, H / 2);
+            ctx.scale(camera.zoom, camera.zoom);
+            ctx.translate(-camera.x, -camera.y);
+        }
+
+        function zoomCamera(delta, sx = mouseScreenX, sy = mouseScreenY) {
+            const before = screenToWorld(sx, sy);
+
+            camera.zoom = Math.max(
+                camera.minZoom,
+                Math.min(camera.maxZoom, camera.zoom * delta)
+            );
+
+            const after = screenToWorld(sx, sy);
+
+            camera.x += before.x - after.x;
+            camera.y += before.y - after.y;
+
+            clampCamera();
+        }
 
         let mouseX = 0;
         let mouseY = 0;
@@ -49,14 +181,117 @@
         const MENU_CLOSE_DELAY = 15;
 
         const station = {
-            x: W / 2,
-            y: H / 2,
+            x: WORLD_W / 2,
+            y: WORLD_H / 2,
             r: 46,
-            codename: "CITADEL-01",
-            storedOre: 0
+            codename: "CITADEL-01"
         };
 
         let activeMenu = null;
+
+        const resources = {
+            ore: 0,
+            science: 0
+        };
+
+        function getResourceAmount(type) {
+            return resources[type] ?? 0;
+        }
+
+        function addResource(type, amount) {
+            resources[type] = (resources[type] ?? 0) + amount;
+        }
+
+        function spendResource(type, amount) {
+            if ((resources[type] ?? 0) < amount) return false;
+            resources[type] -= amount;
+            return true;
+        }
+
+        function canAffordCost(cost) {
+            return Object.entries(cost).every(([type, amount]) =>
+                getResourceAmount(type) >= amount
+            );
+        }
+
+        function spendCost(cost) {
+            if (!canAffordCost(cost)) return false;
+
+            for (const [type, amount] of Object.entries(cost)) {
+                spendResource(type, amount);
+            }
+
+            return true;
+        }
+
+        function formatCost(cost) {
+            return Object.entries(cost)
+                .map(([type, amount]) => `${amount} ${type.toUpperCase()}`)
+                .join(" + ");
+        }
+
+        let scienceTickTimer = 0;
+        let scienceTickInterval = 60; // frames; 60 = once per second
+
+        const celestialBodies = [
+            {
+                x: station.x - 1200,
+                y: station.y - 850,
+                radius: 42,
+                type: "STAR",
+                codename: "HELION-A",
+                sciencePerSecond: 15
+            },
+            {
+                x: station.x + 1350,
+                y: station.y + 760,
+                radius: 55,
+                type: "STAR",
+                codename: "VESTA-B",
+                sciencePerSecond: 20
+            },
+            {
+                x: station.x + 900,
+                y: station.y - 260,
+                radius: 28,
+                type: "PLANET",
+                codename: "BOREAL-3",
+                sciencePerSecond: 1
+            }
+        ];
+
+        let observatoryArrays = [];
+        let arrayAssignSerial = 0;
+
+        function getRangeUpgradeCost(module) {
+            const level = module.rangeUpgradeLevel ?? 0;
+            return { science: Math.floor(50 * Math.pow(2, level)) };
+        }
+
+        function getRangeUpgradeAmount(module) {
+            return module.id === "observatory" ? 1000 : 500;
+        }
+
+        function addRangeUpgradeItem(module) {
+            if (!module.range) return;
+
+            module.rangeUpgradeLevel = module.rangeUpgradeLevel ?? 0;
+            module.rangeUpgradeCap = module.rangeUpgradeCap ?? 5;
+
+            module.items.push({
+                label: "Module Range",
+                type: "upgrade",
+                getLevel: () => module.rangeUpgradeLevel,
+                getCap: () => module.rangeUpgradeCap,
+                getCost: () => getRangeUpgradeCost(module),
+                isVisible: () => module.rangeUpgradeLevel < module.rangeUpgradeCap,
+                canBuy: () => true,
+                buy: () => {
+                    module.rangeUpgradeLevel++;
+                    module.range += getRangeUpgradeAmount(module);
+                }
+            });
+        }
 
         const stationModules = [];
 
@@ -72,11 +307,26 @@
                 items: [
                     {
                         label: "Small Shipyard",
-                        cost: 10,
+                        cost: { ore: 10 },
                         canBuy: () => !stationModules.some(m => m.id === "smallShipyard"),
                         buy: () => {
-                            station.storedOre -= 10;
                             stationModules.push(createModule("smallShipyard"));
+                            activeMenu = null;
+                        }
+                    },
+                    {
+                        label: "Observatory",
+                        cost: { ore: 25 },
+                        canBuy: () => !stationModules.some(m => m.id === "observatory"),
+                        buy: () => {
+                            stationModules.push(createModule("observatory"));
+
+                            observatoryArrays.push({
+                                id: "ARRAY-01",
+                                target: null,
+                                assignedAt: 0
+                            });
+
                             activeMenu = null;
                         }
                     }
@@ -90,6 +340,7 @@
                 xOffset: 0,
                 yOffset: -96,
                 radius: 30,
+                range: 500,
                 menuTitle: "MINING LASER CONTROL",
                 items: [
                     {
@@ -97,17 +348,11 @@
                         type: "upgrade",
                         getLevel: () => upgrades.laserStrength.level,
                         getCap: () => upgrades.laserStrength.cap,
-                        getCost: () => getLaserStrengthCost(),
+                        getCost: () => ({ science: getLaserStrengthCost() }),
                         isVisible: () => upgrades.laserStrength.level < upgrades.laserStrength.cap,
                         canBuy: () => true,
                         buy: () => {
                             const upg = upgrades.laserStrength;
-                            const cost = getLaserStrengthCost();
-
-                            if (upg.level >= upg.cap) return;
-                            if (station.storedOre < cost) return;
-
-                            station.storedOre -= cost;
                             upg.level++;
                         }
                     },
@@ -117,19 +362,13 @@
                         type: "upgrade",
                         getLevel: () => upgrades.laserSpeed.level,
                         getCap: () => upgrades.laserSpeed.cap,
-                        getCost: () => getLaserSpeedCost(),
+                        getCost: () => ({ science: getLaserSpeedCost() }),
                         isVisible: () =>
                             upgrades.laserStrength.level >= upgrades.laserStrength.cap &&
                             upgrades.laserSpeed.level < upgrades.laserSpeed.cap,
                         canBuy: () => true,
                         buy: () => {
                             const upg = upgrades.laserSpeed;
-                            const cost = getLaserSpeedCost();
-
-                            if (upg.level >= upg.cap) return;
-                            if (station.storedOre < cost) return;
-
-                            station.storedOre -= cost;
                             upg.level++;
                         }
                     }
@@ -142,7 +381,8 @@
                 type: "menu",
                 xOffset: -92,
                 yOffset: 0,
-                radius: 28,
+                radius: 36,
+                range: 500,
                 menuTitle: "GRAVITY PULSE CONTROL",
                 menuSide: "left",
                 action: () => {
@@ -159,17 +399,11 @@
                         type: "upgrade",
                         getLevel: () => upgrades.automaticPulse.level,
                         getCap: () => upgrades.automaticPulse.cap,
-                        getCost: () => getAutomaticPulseCost(),
+                        getCost: () =>  ({ ore: getAutomaticPulseCost() }),
                         isVisible: () => upgrades.automaticPulse.level < upgrades.automaticPulse.cap,
                         canBuy: () => true,
                         buy: () => {
                             const upg = upgrades.automaticPulse;
-                            const cost = getAutomaticPulseCost();
-
-                            if (upg.level >= upg.cap) return;
-                            if (station.storedOre < cost) return;
-
-                            station.storedOre -= cost;
                             upg.level++;
                             automaticPulseTimer = 0;
                         }
@@ -181,21 +415,91 @@
                 id: "smallShipyard",
                 codename: "YARD-ALPHA",
                 type: "menu",
-                xOffset: 92,
+                xOffset: 110,
                 yOffset: 0,
-                radius: 32,
+                radius: 40,
+                range: 500,
                 menuTitle: "SHIPYARD REQUISITIONS",
                 items: [
                     {
                         label: "Basic Miner",
-                        getCost: () => Math.floor(Math.pow(2, ships.length) * 10),
+                        getCost: () => ({ ore: Math.floor(Math.pow(2, ships.length) * 10) }),
                         canBuy: () => true,
                         buy: () => {
-                            const cost = Math.floor(Math.pow(2, ships.length) * 10);
-                            if (station.storedOre < cost) return;
-
-                            station.storedOre -= cost;
                             ships.push(makeShip(ships.length));
+                        }
+                    },
+                    {
+                        label: "Ship Speed",
+                        type: "upgrade",
+                        getLevel: () => upgrades.shipSpeed.level,
+                        getCap: () => upgrades.shipSpeed.cap,
+                        getCost: () => ({ science: Math.floor(75 * Math.pow(2, upgrades.shipSpeed.level)) }),
+                        isVisible: () => upgrades.shipSpeed.level < upgrades.shipSpeed.cap,
+                        canBuy: () => true,
+                        buy: () => {
+                            upgrades.shipSpeed.level++;
+
+                            for (const ship of ships) {
+                                ship.speed *= (1 + SHIP_SPEED_MULTIPLIER);
+                            }
+                        }
+                    },
+                    {
+                        label: "Mining Speed",
+                        type: "upgrade",
+                        getLevel: () => upgrades.miningSpeed.level,
+                        getCap: () => upgrades.miningSpeed.cap,
+                        getCost: () => ({ science: Math.floor(90 * Math.pow(2, upgrades.miningSpeed.level)) }),
+                        isVisible: () => upgrades.miningSpeed.level < upgrades.miningSpeed.cap,
+                        canBuy: () => true,
+                        buy: () => {
+                            upgrades.miningSpeed.level++;
+                        }
+                    },
+                    {
+                        label: "Cargo Capacity",
+                        type: "upgrade",
+                        getLevel: () => upgrades.cargoCapacity.level,
+                        getCap: () => upgrades.cargoCapacity.cap,
+                        getCost: () => ({ science: Math.floor(80 * Math.pow(2, upgrades.cargoCapacity.level)) }),
+                        isVisible: () => upgrades.cargoCapacity.level < upgrades.cargoCapacity.cap,
+                        canBuy: () => true,
+                        buy: () => {
+                            upgrades.cargoCapacity.level++;
+
+                            for (const ship of ships) {
+                                ship.cargoMax = Math.floor(ship.cargoMax * (1 + SHIP_CARGO_MULTIPLIER));
+                            }
+                        }
+                    }
+                ]
+            },
+
+            observatory: {
+                id: "observatory",
+                codename: "OBSERVATORY",
+                type: "menu",
+                xOffset: 0,
+                yOffset: 112,
+                radius: 34,
+                range: 1000,
+                menuTitle: "OBSERVATORY CONTROL",
+                items: [
+                    {
+                        label: "Telescopic Array",
+                        type: "upgrade",
+                        getLevel: () => observatoryArrays.length,
+                        getCap: () => 3,
+                        getCost: () => ({ ore: Math.floor(Math.pow(2, observatoryArrays.length) * 75) }),
+                        isVisible: () => observatoryArrays.length < 3,
+                        canBuy: () => true,
+                        buy: () => {
+                            observatoryArrays.push({
+                                id: `ARRAY-${String(observatoryArrays.length + 1).padStart(2, "0")}`,
+                                target: null,
+                                assignedAt: 0
+                            });
                         }
                     }
                 ]
@@ -205,11 +509,16 @@
         function createModule(id) {
             const def = MODULE_DEFS[id];
 
-            return {
+            const module = {
                 ...def,
+                items: def.items ? [...def.items] : [],
                 x: station.x + def.xOffset,
                 y: station.y + def.yOffset
             };
+
+            addRangeUpgradeItem(module);
+
+            return module;
         }
 
         stationModules.push(createModule("stationCore"));
@@ -238,11 +547,28 @@
             return stationModules.find(m => m.id === id);
         }
 
+        function distSq(a, b) {
+            const dx = a.x - b.x;
+            const dy = a.y - b.y;
+            return dx * dx + dy * dy;
+        }
+
+        function isInModuleRange(module, target) {
+            if (!module.range) return true;
+            return distSq(module, target) <= module.range * module.range;
+        }
+
         function getHoveredTarget() {
             const module = getHoveredModule();
 
             if (module) {
                 return { type: "module", object: module };
+            }
+
+            for (const body of celestialBodies) {
+                if (pointInCelestialBody(mouseX, mouseY, body)) {
+                    return { type: "celestial", object: body };
+                }
             }
 
             for (const asteroid of asteroids) {
@@ -252,6 +578,44 @@
             }
 
             return null;
+        }
+
+        function pointInCelestialBody(mx, my, body) {
+            const dx = mx - body.x;
+            const dy = my - body.y;
+            return dx * dx + dy * dy <= body.radius * body.radius;
+        }
+
+        function assignArrayToCelestialBody(body) {
+            const observatory = getModuleById("observatory");
+            if (!observatory) return;
+            if (!isInModuleRange(observatory, body)) return;
+            if (observatoryArrays.length <= 0) return;
+
+            let array = observatoryArrays.find(a => !a.target);
+
+            if (!array) {
+                array = observatoryArrays.reduce((oldest, current) =>
+                    current.assignedAt < oldest.assignedAt ? current : oldest
+                );
+            }
+
+            array.target = body;
+            array.assignedAt = ++arrayAssignSerial;
+        }
+
+        function updateScienceProduction() {
+            scienceTickTimer++;
+
+            if (scienceTickTimer < scienceTickInterval) return;
+
+            scienceTickTimer = 0;
+
+            for (const array of observatoryArrays) {
+                if (!array.target) continue;
+
+                addResource("science", Math.floor(array.target.sciencePerSecond));
+            }
         }
 
         function makeAsteroid(i, existingAsteroids) {
@@ -306,13 +670,25 @@
             asteroids.push(makeAsteroid(i, asteroids));
         }
 
+        function getShipSpeedMultiplier() {
+            return 1 + upgrades.shipSpeed.level * SHIP_SPEED_MULTIPLIER;
+        }
+
+        function getCargoCapacityMultiplier() {
+            return 1 + upgrades.cargoCapacity.level * SHIP_CARGO_MULTIPLIER;
+        }
+
+        function getMiningInterval() {
+            return Math.max(4, 14 - upgrades.miningSpeed.level * SHIP_MINING_MULTIPLIER);
+        }
+
         function makeShip(i) {
             return {
                 x: station.x + rand(-30, 30),
                 y: station.y + rand(-30, 30),
-                speed: rand(0.8, 1.4),
+                speed: getShipSpeedMultiplier(),
                 cargo: 0,
-                cargoMax: Math.floor(rand(15, 28)),
+                cargoMax: 25 * getCargoCapacityMultiplier(),
                 miningTimer: 0,
                 target: null,
                 state: "seeking",
@@ -332,8 +708,24 @@
             automaticPulse: {
                 level: 0,
                 cap: 3
+            },
+            shipSpeed: {
+                level: 0,
+                cap: 5
+            },
+            miningSpeed: {
+                level: 0,
+                cap: 5
+            },
+            cargoCapacity: {
+                level: 0,
+                cap: 5
             }
         };
+
+        const SHIP_SPEED_MULTIPLIER = 0.5;
+        const SHIP_CARGO_MULTIPLIER = 0.5;
+        const SHIP_MINING_MULTIPLIER = 3.0;
 
         function toRoman(n) {
             const romans = [
@@ -406,8 +798,6 @@
         const laserBeams = [];
         const gravityPulses = [];
 
-        const ORE_PULL_RADIUS = 1000;
-
         const CLICK_COOLDOWNS = {
             laser: {
                 current: 0,
@@ -459,7 +849,9 @@
         }
 
         function firePulseLaser(asteroid) {
-            const laserModule = getModuleById("stationMiningLaser") || station;
+            const laserModule = getModuleById("stationMiningLaser");
+            if (!laserModule) return;
+            if (!isInModuleRange(laserModule, asteroid)) return;
 
             laserBeams.push({
                 x1: laserModule.x,
@@ -485,7 +877,7 @@
                 const dx = ore.x - gravModule.x;
                 const dy = ore.y - gravModule.y;
 
-                if (dx * dx + dy * dy <= ORE_PULL_RADIUS * ORE_PULL_RADIUS) {
+                if (dx * dx + dy * dy <= gravModule.range * gravModule.range) {
                     ore.pull = true;
 
                     // optional: store target so it pulls toward module instead of center
@@ -494,20 +886,107 @@
             }
         }
 
+        function centerCameraOnStation() {
+            camera.x = station.x;
+            camera.y = station.y;
+            clampCamera();
+        }
+
         canvas.addEventListener("mousemove", e => {
             const rect = canvas.getBoundingClientRect();
 
-            mouseX = (e.clientX - rect.left) * (canvas.width / rect.width);
-            mouseY = (e.clientY - rect.top) * (canvas.height / rect.height);
+            mouseScreenX = (e.clientX - rect.left) * (canvas.width / rect.width);
+            mouseScreenY = (e.clientY - rect.top) * (canvas.height / rect.height);
+
+            if (isCameraDragging) {
+                camera.x = cameraStartX - (mouseScreenX - dragStartX) / camera.zoom;
+                camera.y = cameraStartY - (mouseScreenY - dragStartY) / camera.zoom;
+                clampCamera();
+            }
+
+            const worldMouse = screenToWorld(mouseScreenX, mouseScreenY);
+            mouseX = worldMouse.x;
+            mouseY = worldMouse.y;
         });
 
+        canvas.addEventListener("wheel", e => {
+            e.preventDefault();
+            zoomCamera(e.deltaY < 0 ? 1.12 : 1 / 1.12);
+        });
+
+        window.addEventListener("keydown", e => {
+            keys[e.code] = true;
+
+            if (isMessageActive()) {
+                e.preventDefault();
+                advanceIncomingMessage();
+                return;
+            }
+
+            if (e.code === "Space") {
+                e.preventDefault(); // avoid page scroll
+                centerCameraOnStation();
+            }
+
+            if (e.code === "NumpadAdd" || e.code === "Equal") {
+                zoomCamera(1.12, W / 2, H / 2);
+            }
+
+            if (e.code === "NumpadSubtract" || e.code === "Minus") {
+                zoomCamera(1 / 1.12, W / 2, H / 2);
+            }
+        });
+
+        window.addEventListener("keyup", e => {
+            keys[e.code] = false;
+        });
+
+        function updateCameraKeyboard() {
+            const speed = 14 / camera.zoom;
+
+            if (keys.KeyW) camera.y -= speed;
+            if (keys.KeyS) camera.y += speed;
+            if (keys.KeyA) camera.x -= speed;
+            if (keys.KeyD) camera.x += speed;
+
+            clampCamera();
+        }
+
         canvas.addEventListener("mousedown", e => {
+            if (isMessageActive()) {
+                advanceIncomingMessage();
+                return;
+            }
+
+            if (gameState === "start") {
+                const rect = canvas.getBoundingClientRect();
+                const mx = (e.clientX - rect.left) * (canvas.width / rect.width);
+                const my = (e.clientY - rect.top) * (canvas.height / rect.height);
+
+                if (pointInRect(mx, my, startButton)) {
+                    gameState = "playing";
+                    queueStartingMessages();
+                }
+
+                return;
+            }
+
             mouseDown = true;
+
+            if (e.button === 2) { // RIGHT CLICK
+                isCameraDragging = true;
+                dragStartX = mouseScreenX;
+                dragStartY = mouseScreenY;
+                cameraStartX = camera.x;
+                cameraStartY = camera.y;
+                return;
+            }
 
             const rect = canvas.getBoundingClientRect();
 
-            const mx = (e.clientX - rect.left) * (canvas.width / rect.width);
-            const my = (e.clientY - rect.top) * (canvas.height / rect.height);
+            const sx = (e.clientX - rect.left) * (canvas.width / rect.width);
+            const sy = (e.clientY - rect.top) * (canvas.height / rect.height);
+            const { x: mx, y: my } = screenToWorld(sx, sy);
 
             // detect asteroid under cursor at press time
             for (const asteroid of asteroids) {
@@ -529,21 +1008,33 @@
             heldAsteroidTarget = null;
         });
 
+        canvas.addEventListener("contextmenu", e => e.preventDefault());
+
         canvas.addEventListener("mouseup", e => {
             mouseDown = false;
             heldAsteroidTarget = null;
+            isCameraDragging = false;
         });
 
         canvas.addEventListener("mouseleave", e => {
             mouseDown = false;
             heldAsteroidTarget = null;
+            isCameraDragging = false;
         });
 
         canvas.addEventListener("click", e => {
+            if (gameState !== "playing") return;
+
+            if (isMessageActive()) {
+                advanceIncomingMessage();
+                return;
+            }
+
             const rect = canvas.getBoundingClientRect();
 
-            const mx = (e.clientX - rect.left) * (canvas.width / rect.width);
-            const my = (e.clientY - rect.top) * (canvas.height / rect.height);
+            const sx = (e.clientX - rect.left) * (canvas.width / rect.width);
+            const sy = (e.clientY - rect.top) * (canvas.height / rect.height);
+            const { x: mx, y: my } = screenToWorld(sx, sy);
 
             // Menu clicks first
             if (activeMenu) {
@@ -564,8 +1055,10 @@
                         const cost = item.getCost ? item.getCost() : item.cost;
                         const canBuy = item.canBuy ? item.canBuy() : true;
 
-                        if (canBuy && station.storedOre >= cost) {
-                            item.buy();
+                        if (canBuy && canAffordCost(cost)) {
+                            if (spendCost(cost)) {
+                                item.buy();
+                            }
                         }
 
                         return;
@@ -588,6 +1081,14 @@
                 }
             }
 
+            //Celestial bodies
+            for (const body of celestialBodies) {
+                if (pointInCelestialBody(mx, my, body)) {
+                    assignArrayToCelestialBody(body);
+                    return;
+                }
+            }
+
             // Asteroid click: pulse laser
             for (const asteroid of asteroids) {
                 if (asteroid.ore > 0 && pointInAsteroid(mx, my, asteroid)) {
@@ -604,38 +1105,37 @@
         });
 
         function updateActiveMenu() {
-            const hoveredModule = getHoveredModule();
-
-            // Hovering a module with menu → open + reset timer
-            if (hoveredModule && hoveredModule.type === "menu") {
-                activeMenu = hoveredModule;
-                menuCloseTimer = 0; // 👈 RESET HERE
-                return;
-            }
-
-            // If menu is open, check if mouse is inside it
+            // If menu is open, hovering the menu keeps it active
+            // and blocks underlying modules from opening their own menus.
             if (activeMenu && activeMenu.menuBounds) {
                 const b = activeMenu.menuBounds;
 
-                const inside =
+                const insideMenu =
                     mouseX >= b.x &&
                     mouseX <= b.x + b.w &&
                     mouseY >= b.y &&
                     mouseY <= b.y + b.h;
 
-                if (inside) {
-                    menuCloseTimer = 0; // 👈 RESET HERE TOO
+                if (insideMenu) {
+                    menuCloseTimer = 0;
                     return;
                 }
             }
 
-            // Not hovering anything → start closing timer
+            const hoveredModule = getHoveredModule();
+
+            if (hoveredModule && hoveredModule.type === "menu") {
+                activeMenu = hoveredModule;
+                menuCloseTimer = 0;
+                return;
+            }
+
             if (activeMenu) {
                 menuCloseTimer++;
 
                 if (menuCloseTimer > MENU_CLOSE_DELAY) {
                     activeMenu = null;
-                    menuCloseTimer = 0; // 👈 CLEAN RESET
+                    menuCloseTimer = 0;
                 }
             }
         }
@@ -663,8 +1163,15 @@
             }
         }
 
-        function chooseAsteroid() {
-            const available = asteroids.filter(a => a.ore > 0);
+        function chooseAsteroid(ship) {
+            const shipyard = getModuleById("smallShipyard");
+
+            const available = asteroids.filter(a => {
+                if (a.ore <= 0) return false;
+                if (!shipyard) return false;
+                return isInModuleRange(shipyard, a);
+            });
+
             if (!available.length) return null;
             return pick(available);
         }
@@ -723,7 +1230,7 @@
                     const d = Math.hypot(dx, dy);
 
                     if (d < 12) {
-                        station.storedOre++;
+                        addResource("ore", 1);
                         ore.pull = false;
                         ore.pullTarget = null;
                         floatingOre.splice(i, 1);
@@ -757,13 +1264,21 @@
 
         function updateShip(ship) {
             if (ship.state === "seeking") {
-                ship.target = chooseAsteroid();
+                ship.target = chooseAsteroid(ship);
                 ship.state = ship.target ? "outbound" : "idle";
             }
 
             if (ship.state === "outbound") {
                 if (!ship.target || ship.target.ore <= 0) {
                     ship.state = "seeking";
+                    ship.target = null;
+                    return;
+                }
+
+                const shipyard = getModuleById("smallShipyard");
+                if (!shipyard || !isInModuleRange(shipyard, ship.target)) {
+                    ship.state = "seeking";
+                    ship.target = null;
                     return;
                 }
 
@@ -776,7 +1291,7 @@
             if (ship.state === "mining") {
                 ship.miningTimer++;
 
-                if (ship.miningTimer % 14 === 0 && ship.target && ship.target.ore > 0) {
+                if (ship.miningTimer % getMiningInterval() === 0 && ship.target && ship.target.ore > 0) {
                     ship.target.ore--;
                     ship.cargo++;
                 }
@@ -788,11 +1303,155 @@
 
             if (ship.state === "returning") {
                 if (moveToward(ship, station.x, station.y, ship.speed * 1.15)) {
-                    station.storedOre += ship.cargo;
+                    addResource("ore", ship.cargo);
                     ship.cargo = 0;
                     ship.state = "seeking";
                 }
             }
+        }
+
+        function wrapTextLines(text, maxWidth) {
+            const words = text.split(" ");
+            const lines = [];
+            let line = "";
+
+            for (const word of words) {
+                const testLine = line ? `${line} ${word}` : word;
+
+                if (ctx.measureText(testLine).width > maxWidth && line) {
+                    lines.push(line);
+                    line = word;
+                } else {
+                    line = testLine;
+                }
+            }
+
+            if (line) lines.push(line);
+            return lines;
+        }
+
+        function drawIncomingMessage() {
+            if (!activeIncomingMessage) return;
+
+            const boxW = 760;
+            const boxH = 420;
+            const x = W / 2 - boxW / 2;
+            const y = H / 2 - boxH / 2;
+
+            ctx.save();
+
+            ctx.fillStyle = "rgba(0,0,0,0.62)";
+            ctx.fillRect(0, 0, W, H);
+
+            ctx.strokeStyle = GREEN;
+            ctx.fillStyle = "rgba(0,20,0,0.94)";
+            ctx.lineWidth = 2;
+            ctx.shadowColor = GREEN;
+            ctx.shadowBlur = 18;
+
+            ctx.fillRect(x, y, boxW, boxH);
+            ctx.strokeRect(x, y, boxW, boxH);
+
+            ctx.strokeStyle = "rgba(80,255,130,0.35)";
+            ctx.strokeRect(x + 12, y + 12, boxW - 24, boxH - 24);
+
+            ctx.fillStyle = GREEN;
+            ctx.font = "16px monospace";
+            ctx.fillText(activeIncomingMessage.title, x + 34, y + 44);
+
+            ctx.globalAlpha = 0.7;
+            ctx.font = "12px monospace";
+            ctx.fillText(`FROM: ${activeIncomingMessage.from}`, x + 34, y + 70);
+            ctx.globalAlpha = 1;
+
+            ctx.beginPath();
+            ctx.moveTo(x + 34, y + 92);
+            ctx.lineTo(x + boxW - 34, y + 92);
+            ctx.stroke();
+
+            ctx.font = "15px monospace";
+
+            let lineY = y + 128;
+
+            const textMaxWidth = boxW - 84;
+
+            for (const paragraph of activeIncomingMessage.body) {
+                if (paragraph === "") {
+                    lineY += 18;
+                    continue;
+                }
+
+                const wrappedLines = wrapTextLines(paragraph, textMaxWidth);
+
+                for (const line of wrappedLines) {
+                    ctx.fillText(line, x + 42, lineY);
+                    lineY += 24;
+                }
+            }
+
+            const blink = Math.floor(frameCount / 24) % 2 === 0;
+
+            if (blink) {
+                ctx.font = "13px monospace";
+                ctx.fillText("CLICK OR PRESS ANY KEY TO CONTINUE", x + boxW / 2 - 132, y + boxH - 34);
+            }
+
+            ctx.restore();
+        }
+
+        function drawStartScreen() {
+            ctx.fillStyle = "rgba(0,12,0,0.35)";
+            ctx.fillRect(0, 0, W, H);
+
+            drawGrid();
+
+            ctx.save();
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.shadowColor = GREEN;
+            ctx.shadowBlur = 18;
+
+            ctx.strokeStyle = GREEN;
+            ctx.fillStyle = "rgba(0,255,90,0.08)";
+            ctx.lineWidth = 2;
+
+            ctx.strokeRect(W / 2 - 420, H / 2 - 190, 840, 360);
+
+            ctx.font = "46px monospace";
+            ctx.fillStyle = GREEN;
+            ctx.fillText("IDLE SPACE MINER", W / 2, H / 2 - 95);
+
+            ctx.font = "16px monospace";
+            ctx.globalAlpha = 0.75;
+            ctx.fillText("DEEP SPACE EXTRACTION COMMAND", W / 2, H / 2 - 46);
+            ctx.fillText("SECTOR KAPPA-9 // MINING AUTHORIZATION REQUIRED", W / 2, H / 2 - 18);
+            ctx.globalAlpha = 1;
+
+            const hovered = pointInRect(mouseX, mouseY, startButton);
+
+            ctx.strokeStyle = hovered ? "rgba(120,255,160,0.95)" : GREEN;
+            ctx.fillStyle = hovered ? "rgba(0,255,90,0.18)" : "rgba(0,255,90,0.08)";
+            ctx.lineWidth = hovered ? 3 : 2;
+            ctx.shadowBlur = hovered ? 24 : 12;
+
+            ctx.fillRect(startButton.x, startButton.y, startButton.w, startButton.h);
+            ctx.strokeRect(startButton.x, startButton.y, startButton.w, startButton.h);
+
+            ctx.font = "22px monospace";
+            ctx.fillStyle = GREEN;
+            ctx.fillText("START", W / 2, startButton.y + startButton.h / 2);
+
+            if (hovered) {
+                ctx.font = "16px monospace";
+                ctx.fillText(">>", startButton.x - 28, startButton.y + startButton.h / 2);
+                ctx.fillText("<<", startButton.x + startButton.w + 28, startButton.y + startButton.h / 2);
+            }
+
+            ctx.restore();
+
+            drawScanlines();
+            drawVignette();
+            drawCrosshair();
         }
 
         function drawCrosshair() {
@@ -808,31 +1467,31 @@
 
             // horizontal left
             ctx.beginPath();
-            ctx.moveTo(mouseX - size, mouseY);
-            ctx.lineTo(mouseX - gap, mouseY);
+            ctx.moveTo(mouseScreenX - size, mouseScreenY);
+            ctx.lineTo(mouseScreenX - gap, mouseScreenY);
             ctx.stroke();
 
             // horizontal right
             ctx.beginPath();
-            ctx.moveTo(mouseX + gap, mouseY);
-            ctx.lineTo(mouseX + size, mouseY);
+            ctx.moveTo(mouseScreenX + gap, mouseScreenY);
+            ctx.lineTo(mouseScreenX + size, mouseScreenY);
             ctx.stroke();
 
             // vertical top
             ctx.beginPath();
-            ctx.moveTo(mouseX, mouseY - size);
-            ctx.lineTo(mouseX, mouseY - gap);
+            ctx.moveTo(mouseScreenX, mouseScreenY - size);
+            ctx.lineTo(mouseScreenX, mouseScreenY - gap);
             ctx.stroke();
 
             // vertical bottom
             ctx.beginPath();
-            ctx.moveTo(mouseX, mouseY + gap);
-            ctx.lineTo(mouseX, mouseY + size);
+            ctx.moveTo(mouseScreenX, mouseScreenY + gap);
+            ctx.lineTo(mouseScreenX, mouseScreenY + size);
             ctx.stroke();
 
             // center dot
             ctx.beginPath();
-            ctx.arc(mouseX, mouseY, 1.5, 0, Math.PI * 2);
+            ctx.arc(mouseScreenX, mouseScreenY, 1.5, 0, Math.PI * 2);
             ctx.fillStyle = GREEN;
             ctx.fill();
 
@@ -913,17 +1572,17 @@
             ctx.strokeStyle = FAINT;
             ctx.lineWidth = 1;
 
-            for (let x = 0; x < W; x += 32) {
+            for (let x = 0; x < WORLD_W; x += 32) {
                 ctx.beginPath();
                 ctx.moveTo(x, 0);
-                ctx.lineTo(x, H);
+                ctx.lineTo(x, WORLD_H);
                 ctx.stroke();
             }
 
-            for (let y = 0; y < H; y += 32) {
+            for (let y = 0; y < WORLD_H; y += 32) {
                 ctx.beginPath();
                 ctx.moveTo(0, y);
-                ctx.lineTo(W, y);
+                ctx.lineTo(WORLD_W, y);
                 ctx.stroke();
             }
         }
@@ -979,11 +1638,58 @@
                 drawShipyardShape(module);
             } else if (module.id === "stationMiningLaser") {
                 drawMiningLaserShape(module);
+            } else if (module.id === "observatory") {
+                drawObservatoryShape(module);
             }
 
             ctx.restore();
 
+            if (hovered && module.range) {
+                drawModuleRange(module);
+            }
+
             drawText(module.codename, module.x - 42, module.y - module.radius - 14, hovered ? 1 : 0.75);
+        }
+
+        function drawModuleRange(module) {
+            ctx.save();
+
+            ctx.strokeStyle = "rgba(80,255,130,0.28)";
+            ctx.lineWidth = 2;
+            ctx.setLineDash([12, 10]);
+            ctx.shadowColor = GREEN;
+            ctx.shadowBlur = 8;
+
+            ctx.beginPath();
+            ctx.arc(module.x, module.y, module.range, 0, Math.PI * 2);
+            ctx.stroke();
+
+            ctx.restore();
+        }
+
+        function drawObservatoryShape(module) {
+            ctx.beginPath();
+            ctx.arc(0, 0, 30, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+
+            ctx.beginPath();
+            ctx.moveTo(-18, 10);
+            ctx.lineTo(0, -20);
+            ctx.lineTo(18, 10);
+            ctx.closePath();
+            ctx.stroke();
+
+            ctx.beginPath();
+            ctx.arc(0, -4, 8, 0, Math.PI * 2);
+            ctx.stroke();
+
+            ctx.beginPath();
+            ctx.moveTo(0, 30);
+            ctx.lineTo(0, 44);
+            ctx.moveTo(-14, 44);
+            ctx.lineTo(14, 44);
+            ctx.stroke();
         }
 
         function drawMiningLaserShape(module) {
@@ -1104,6 +1810,8 @@
             ctx.stroke();
         }
 
+        const MENU_OFFSET = 6; // was 18
+
         function drawActiveMenu() {
             if (!activeMenu) return;
 
@@ -1113,31 +1821,31 @@
                 item.isVisible ? item.isVisible() : true
             );
 
-            const h = 44 + visibleItems.length * rowH;
+            const h = 60 + visibleItems.length * rowH;
 
             let x;
             let y = activeMenu.y - h / 2;
 
             // GRAV-PULSE → force left side
             if (activeMenu.menuSide === "left") {
-                x = activeMenu.x - activeMenu.radius - w - 18;
+                x = activeMenu.x - activeMenu.radius - w - MENU_OFFSET;
 
                 // fallback if offscreen
                 if (x < 12) {
-                    x = activeMenu.x + activeMenu.radius + 18;
+                    x = activeMenu.x + activeMenu.radius + MENU_OFFSET;
                 }
             } else {
                 // default → right side
-                x = activeMenu.x + activeMenu.radius + 18;
+                x = activeMenu.x + activeMenu.radius + MENU_OFFSET;
 
                 // fallback if offscreen
-                if (x + w > W - 12) {
-                    x = activeMenu.x - activeMenu.radius - w - 18;
+                if (x + w > WORLD_W - 12) {
+                    x = activeMenu.x - activeMenu.radius - w - MENU_OFFSET;
                 }
             }
 
             if (y < 12) y = 12;
-            if (y + h > H - 12) y = H - h - 12;
+            if (y + h > WORLD_H - 12) y = WORLD_H - h - 12;
 
             activeMenu.menuBounds = { x, y, w, h };
 
@@ -1186,7 +1894,7 @@
 
                 const cost = item.getCost ? item.getCost() : item.cost;
                 const canBuy = item.canBuy ? item.canBuy() : true;
-                const affordable = canBuy && station.storedOre >= cost;
+                const affordable = canBuy && canAffordCost(cost);
 
                 ctx.strokeStyle = affordable ? GREEN : "rgba(80,255,130,0.25)";
                 ctx.fillStyle = affordable
@@ -1204,7 +1912,7 @@
                     label = `${item.label} ${toRoman(nextLevel)}`;
                 }
 
-                ctx.fillText(`${label} (${cost})`, bx + 8, by + 14);
+                ctx.fillText(`${label} (${formatCost(cost)})`, bx + 8, by + 14);
 
                 if (affordable) {
                     const pulse = Math.floor(frameCount / 12) % 2;
@@ -1218,6 +1926,122 @@
             });
 
             ctx.restore();
+        }
+
+        function drawObservationLinks() {
+            const observatory = getModuleById("observatory");
+            if (!observatory) return;
+
+            for (const array of observatoryArrays) {
+                if (!array.target) continue;
+
+                ctx.save();
+                ctx.strokeStyle = "rgba(80,255,130,0.22)";
+                ctx.lineWidth = 1;
+                ctx.setLineDash([8, 8]);
+                ctx.shadowColor = GREEN;
+                ctx.shadowBlur = 8;
+
+                ctx.beginPath();
+                ctx.moveTo(observatory.x, observatory.y);
+                ctx.lineTo(array.target.x, array.target.y);
+                ctx.stroke();
+
+                ctx.restore();
+            }
+        }
+
+        function drawCelestialBody(body) {
+            const hovered = getHoveredTarget()?.object === body;
+            const observedBy = observatoryArrays.filter(a => a.target === body);
+
+            ctx.save();
+            ctx.translate(body.x, body.y);
+
+            if (body.type === "STAR") {
+                const pulse = 0.5 + Math.sin(frameCount * 0.05) * 0.5;
+
+                ctx.save();
+
+                // --- OUTER GLOW (big soft halo) ---
+                ctx.shadowColor = "#00ffaa";
+                ctx.shadowBlur = hovered ? 90 : 70;
+                ctx.globalAlpha = 0.35 + pulse * 0.25;
+
+                ctx.beginPath();
+                ctx.arc(0, 0, body.radius + 30, 0, Math.PI * 2);
+                ctx.fillStyle = "#00ff99";
+                ctx.fill();
+
+                // --- MID HALO ---
+                ctx.globalAlpha = 0.5 + pulse * 0.3;
+                ctx.shadowBlur = hovered ? 55 : 40;
+
+                ctx.beginPath();
+                ctx.arc(0, 0, body.radius + 14, 0, Math.PI * 2);
+                ctx.fill();
+
+                // --- CORE (very bright) ---
+                ctx.globalAlpha = 1;
+                ctx.shadowBlur = hovered ? 35 : 25;
+
+                ctx.fillStyle = "#66ffcc";
+                ctx.strokeStyle = "#aaffdd";
+                ctx.lineWidth = hovered ? 3 : 2;
+
+                ctx.beginPath();
+                ctx.arc(0, 0, body.radius, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.stroke();
+
+                // --- SHARP CROSS FLARE ---
+                ctx.shadowBlur = hovered ? 28 : 18;
+                ctx.strokeStyle = "#99ffcc";
+
+                ctx.beginPath();
+                ctx.moveTo(-body.radius - 28, 0);
+                ctx.lineTo(body.radius + 28, 0);
+                ctx.moveTo(0, -body.radius - 28);
+                ctx.lineTo(0, body.radius + 28);
+                ctx.stroke();
+
+                ctx.restore();
+            } else if (body.type === "PLANET") {
+                // --- PLANET STYLE (solid, subdued) ---
+                ctx.strokeStyle = hovered ? "rgba(120,255,160,0.9)" : "rgba(80,255,130,0.45)";
+                ctx.fillStyle = hovered ? "rgba(0,255,90,0.14)" : "rgba(0,255,90,0.05)";
+                ctx.lineWidth = hovered ? 3 : 2;
+                ctx.shadowColor = GREEN;
+                ctx.shadowBlur = hovered ? 18 : 6;
+
+                // body
+                ctx.beginPath();
+                ctx.arc(0, 0, body.radius, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.stroke();
+
+                // equatorial ring (thin tech-style)
+                ctx.beginPath();
+                ctx.ellipse(0, 0, body.radius + 10, body.radius * 0.35, 0, 0, Math.PI * 2);
+                ctx.stroke();
+
+                // small surface detail lines
+                ctx.beginPath();
+                ctx.arc(-6, -4, 6, 0, Math.PI * 2);
+                ctx.moveTo(8, 4);
+                ctx.arc(8, 4, 4, 0, Math.PI * 2);
+                ctx.stroke();
+            }
+
+            ctx.restore();
+
+            // labels (same for both)
+            drawText(`${body.type}: ${body.codename}`, body.x - 54, body.y - body.radius - 50, 0.9);
+            drawText(`SCI:${body.sciencePerSecond}/SEC`, body.x - 42, body.y + body.radius + 50, 0.65);
+
+            if (observedBy.length > 0) {
+                drawText(`OBSERVED x${observedBy.length}`, body.x - 42, body.y + body.radius + 75, 0.85);
+            }
         }
 
         function drawAsteroid(a) {
@@ -1306,25 +2130,47 @@
         }
 
         function drawHud() {
+            const RESOURCES_OFFSET_Y = 450;
+
             drawText("DEEP SPACE EXTRACTION COMMAND", 24, 28);
             drawText("SECTOR: KAPPA-9 / STATUS: ACTIVE", 24, 46, 0.75);
             drawText(`FLEET: ${ships.length} MINING UNITS`, 24, 64, 0.75);
-            drawText(`ORE: ${station.storedOre}`, 24, 82, 0.75);
+            if (resources.ore > 0) drawText(`ORE: ${resources.ore}`, 24, RESOURCES_OFFSET_Y + 82, 1.0);
+            if (resources.science > 0) drawText(`SCIENCE: ${resources.science}`, 24, RESOURCES_OFFSET_Y + 100, 1.0);
 
             const hovered = getHoveredTarget();
 
             if (hovered?.type === "asteroid") {
-                drawText(`TARGET LOCK: ${hovered.object.codename}`, 24, 112, 0.8);
+                const laser = getModuleById("stationMiningLaser");
+                
+                if (laser && !isInModuleRange(laser, hovered.object)) {
+                    drawText("TARGET OUT OF LASER RANGE", 24, 132, 0.8);
+                } else {
+                    drawText(`TARGET LOCK: ${hovered.object.codename}`, 24, 132, 0.8);
+                }
             }
 
             if (hovered?.type === "module") {
-                drawText(`MODULE LOCK: ${hovered.object.codename}`, 24, 112, 0.8);
+                drawText(`MODULE LOCK: ${hovered.object.codename}`, 24, 132, 0.8);
             }
 
         }
 
         function loop() {
             frameCount++;
+
+            if (gameState === "start") {
+                drawStartScreen();
+                requestAnimationFrame(loop);
+                return;
+            }
+
+            if (messageInputLock > 0) {
+                messageInputLock--;
+            }
+
+            updateCameraKeyboard();
+
             ctx.fillStyle = "rgba(0,12,0,0.35)";
             ctx.fillRect(0, 0, W, H);
 
@@ -1335,11 +2181,17 @@
             updateLaserBeams();
             updateFloatingOre();
             updateGravityPulses();
+            updateScienceProduction();
+
+            ctx.save();
+            applyCameraTransform();
 
             drawGrid();
 
             asteroids.forEach(drawAsteroid);
+            celestialBodies.forEach(drawCelestialBody);
 
+            drawObservationLinks();
             drawLaserBeams();
             drawFloatingOre();
             drawGravityPulses();
@@ -1348,13 +2200,16 @@
             ships.forEach(drawShip);
 
             drawStation();
+            drawActiveMenu();
+
+            ctx.restore();
 
             drawScanlines();
             drawVignette();
 
             drawHud();
-            drawActiveMenu();
             drawCrosshair();
+            drawIncomingMessage();
 
             requestAnimationFrame(loop);
         }
