@@ -42,6 +42,8 @@
 
         let mouseX = 0;
         let mouseY = 0;
+        let mouseDown = false;
+        let heldAsteroidTarget = null;
         let frameCount = 0;
 
         const station = {
@@ -74,6 +76,59 @@
                             station.storedOre -= 10;
                             stationModules.push(createModule("smallShipyard"));
                             activeMenu = null;
+                        }
+                    }
+                ]
+            },
+
+            stationMiningLaser: {
+                id: "stationMiningLaser",
+                codename: "LASER-LANCE",
+                type: "menu",
+                xOffset: 0,
+                yOffset: -96,
+                radius: 30,
+                menuTitle: "MINING LASER CONTROL",
+                items: [
+                    {
+                        label: "Laser Strength",
+                        type: "upgrade",
+                        getLevel: () => upgrades.laserStrength.level,
+                        getCap: () => upgrades.laserStrength.cap,
+                        getCost: () => getLaserStrengthCost(),
+                        isVisible: () => upgrades.laserStrength.level < upgrades.laserStrength.cap,
+                        canBuy: () => true,
+                        buy: () => {
+                            const upg = upgrades.laserStrength;
+                            const cost = getLaserStrengthCost();
+
+                            if (upg.level >= upg.cap) return;
+                            if (station.storedOre < cost) return;
+
+                            station.storedOre -= cost;
+                            upg.level++;
+                        }
+                    },
+
+                    {
+                        label: "Laser Speed",
+                        type: "upgrade",
+                        getLevel: () => upgrades.laserSpeed.level,
+                        getCap: () => upgrades.laserSpeed.cap,
+                        getCost: () => getLaserSpeedCost(),
+                        isVisible: () =>
+                            upgrades.laserStrength.level >= upgrades.laserStrength.cap &&
+                            upgrades.laserSpeed.level < upgrades.laserSpeed.cap,
+                        canBuy: () => true,
+                        buy: () => {
+                            const upg = upgrades.laserSpeed;
+                            const cost = getLaserSpeedCost();
+
+                            if (upg.level >= upg.cap) return;
+                            if (station.storedOre < cost) return;
+
+                            station.storedOre -= cost;
+                            upg.level++;
                         }
                     }
                 ]
@@ -133,6 +188,7 @@
 
         stationModules.push(createModule("stationCore"));
         stationModules.push(createModule("gravityPulse"));
+        stationModules.push(createModule("stationMiningLaser"));
 
         const codenamePrefixes = [
             "IRON", "GHOST", "VULTURE", "SABLE", "ORBIT",
@@ -150,6 +206,10 @@
 
         function pick(arr) {
             return arr[Math.floor(Math.random() * arr.length)];
+        }
+
+        function getModuleById(id) {
+            return stationModules.find(m => m.id === id);
         }
 
         function getHoveredTarget() {
@@ -174,7 +234,7 @@
 
             do {
                 const angle = Math.random() * Math.PI * 2;
-                const dist = rand(250, 500);
+                const dist = rand(300, 500);
 
                 x = station.x + Math.cos(angle) * dist;
                 y = station.y + Math.sin(angle) * dist;
@@ -208,8 +268,8 @@
                 y,
                 radius,
                 verts,
-                ore: Math.floor(rand(60, 180)),
-                maxOre: 180,
+                ore: Math.floor(rand(1000, 50000)),
+                maxOre: 50000,
                 codename: `${pick(codenamePrefixes)}-${String(i + 1).padStart(2, "0")}`
             };
         }
@@ -234,6 +294,51 @@
             };
         }
 
+        const upgrades = {
+            laserStrength: {
+                level: 0,
+                cap: 5
+            },
+            laserSpeed: {
+                level: 0,
+                cap: 3
+            }
+        };
+
+        function toRoman(n) {
+            const romans = [
+                "", "I", "II", "III", "IV", "V",
+                "VI", "VII", "VIII", "IX", "X"
+            ];
+
+            return romans[n] || String(n);
+        }
+
+        function getLaserOreChunks() {
+            return Math.pow(2, upgrades.laserStrength.level);
+        }
+
+        function getLaserStrengthCost() {
+            return Math.floor(Math.pow(2, upgrades.laserStrength.level) * 10);
+        }
+
+        function getLaserSpeedCost() {
+            return Math.floor(Math.pow(3, upgrades.laserSpeed.level) * 100);
+        }
+
+        function getLaserCooldownMax() {
+            const baseCooldown = 30; // 0.5s at 60fps
+
+            const cooldownByLevel = [
+                30, // no upgrade
+                20, // Laser Speed I
+                15, // Laser Speed II
+                10  // Laser Speed III
+            ];
+
+            return cooldownByLevel[upgrades.laserSpeed.level] ?? baseCooldown;
+        }
+
         const ships = []; //Array.from({ length: 6 }, (_, i) => makeShip(i));
 
         const floatingOre = [];
@@ -245,7 +350,7 @@
         const CLICK_COOLDOWNS = {
             laser: {
                 current: 0,
-                max: 30 // ~0.5s at 60fps
+                getMax: () => getLaserCooldownMax()
             },
             gravity: {
                 current: 0,
@@ -293,9 +398,11 @@
         }
 
         function firePulseLaser(asteroid) {
+            const laserModule = getModuleById("stationMiningLaser") || station;
+
             laserBeams.push({
-                x1: station.x,
-                y1: station.y,
+                x1: laserModule.x,
+                y1: laserModule.y,
                 x2: asteroid.x,
                 y2: asteroid.y,
                 life: 12,
@@ -304,19 +411,24 @@
         }
 
         function triggerGravityField() {
+            const gravModule = getModuleById("gravityPulse") || station;
+
             gravityPulses.push({
-                x: station.x,
-                y: station.y,
-                r: 100,
-                life: 60
+                x: gravModule.x,
+                y: gravModule.y,
+                r: 20,
+                life: 28
             });
 
             for (const ore of floatingOre) {
-                const dx = ore.x - station.x;
-                const dy = ore.y - station.y;
+                const dx = ore.x - gravModule.x;
+                const dy = ore.y - gravModule.y;
 
                 if (dx * dx + dy * dy <= ORE_PULL_RADIUS * ORE_PULL_RADIUS) {
                     ore.pull = true;
+
+                    // optional: store target so it pulls toward module instead of center
+                    ore.pullTarget = gravModule;
                 }
             }
         }
@@ -328,6 +440,44 @@
             mouseY = (e.clientY - rect.top) * (canvas.height / rect.height);
         });
 
+        canvas.addEventListener("mousedown", e => {
+            mouseDown = true;
+
+            const rect = canvas.getBoundingClientRect();
+
+            const mx = (e.clientX - rect.left) * (canvas.width / rect.width);
+            const my = (e.clientY - rect.top) * (canvas.height / rect.height);
+
+            // detect asteroid under cursor at press time
+            for (const asteroid of asteroids) {
+                if (asteroid.ore > 0 && pointInAsteroid(mx, my, asteroid)) {
+                heldAsteroidTarget = asteroid;
+
+                // fire immediately if off cooldown (feels responsive)
+                const cd = CLICK_COOLDOWNS.laser;
+                if (cd.current <= 0) {
+                    firePulseLaser(asteroid);
+                    cd.current = cd.getMax();
+                }
+
+                return;
+                }
+            }
+
+            // no asteroid → clear target
+            heldAsteroidTarget = null;
+        });
+
+        canvas.addEventListener("mouseup", e => {
+            mouseDown = false;
+            heldAsteroidTarget = null;
+        });
+
+        canvas.addEventListener("mouseleave", e => {
+            mouseDown = false;
+            heldAsteroidTarget = null;
+        });
+
         canvas.addEventListener("click", e => {
             const rect = canvas.getBoundingClientRect();
 
@@ -336,7 +486,11 @@
 
             // Menu clicks first
             if (activeMenu) {
-                for (const item of activeMenu.items) {
+                const visibleItems = activeMenu.items.filter(item =>
+                    item.isVisible ? item.isVisible() : true
+                );
+
+                for (const item of visibleItems) {
                     if (!item.bounds) continue;
 
                     const inside =
@@ -384,13 +538,36 @@
 
                     if (cd.current <= 0) {
                         firePulseLaser(asteroid);
-                        cd.current = cd.max;
+                        cd.current = cd.getMax();
                     }
 
                     return;
                 }
             }
         });
+
+        function updateHeldLaserFire() {
+            if (!mouseDown || !heldAsteroidTarget) return;
+
+            if (heldAsteroidTarget.ore <= 0) {
+                heldAsteroidTarget = null;
+                return;
+            }
+
+            const stillHovering = pointInAsteroid(mouseX, mouseY, heldAsteroidTarget);
+
+            if (!stillHovering) {
+                heldAsteroidTarget = null;
+                return;
+            }
+
+            const cd = CLICK_COOLDOWNS.laser;
+
+            if (cd.current <= 0) {
+                firePulseLaser(heldAsteroidTarget);
+                cd.current = cd.getMax();
+            }
+        }
 
         function chooseAsteroid() {
             const available = asteroids.filter(a => a.ore > 0);
@@ -428,7 +605,11 @@
                 beam.life--;
 
                 if (beam.life === 6) {
-                    spawnFloatingOre(beam.asteroid);
+                    const chunks = getLaserOreChunks();
+
+                    for (let n = 0; n < chunks; n++) {
+                        spawnFloatingOre(beam.asteroid);
+                    }
                 }
 
                 if (beam.life <= 0) {
@@ -442,12 +623,15 @@
                 const ore = floatingOre[i];
 
                 if (ore.pull) {
-                    const dx = station.x - ore.x;
-                    const dy = station.y - ore.y;
+                    const target = ore.pullTarget || station;
+                    const dx = target.x - ore.x;
+                    const dy = target.y - ore.y;
                     const d = Math.hypot(dx, dy);
 
                     if (d < 12) {
                         station.storedOre++;
+                        ore.pull = false;
+                        ore.pullTarget = null;
                         floatingOre.splice(i, 1);
                         continue;
                     }
@@ -598,7 +782,7 @@
 
                 ctx.restore();
 
-                drawText(ore.codename, ore.x + 8, ore.y - 6, 0.55);
+                //drawText(ore.codename, ore.x + 8, ore.y - 6, 0.55);
             }
         }
 
@@ -699,11 +883,36 @@
                 drawGravityModuleShape(module);
             } else if (module.id === "smallShipyard") {
                 drawShipyardShape(module);
+            } else if (module.id === "stationMiningLaser") {
+                drawMiningLaserShape(module);
             }
 
             ctx.restore();
 
             drawText(module.codename, module.x - 42, module.y - module.radius - 14, hovered ? 1 : 0.75);
+        }
+
+        function drawMiningLaserShape(module) {
+            ctx.save();
+
+            // lean triangle pointing outward (upward relative to module)
+            ctx.beginPath();
+            ctx.moveTo(0, -20);   // tip
+            ctx.lineTo(-10, 10);  // left base
+            ctx.lineTo(10, 10);   // right base
+            ctx.closePath();
+            ctx.fill();
+            ctx.stroke();
+
+            // inner cross (targeting / focusing element)
+            ctx.beginPath();
+            ctx.moveTo(-5, 0);
+            ctx.lineTo(5, 0);
+            ctx.moveTo(0, -5);
+            ctx.lineTo(0, 5);
+            ctx.stroke();
+
+            ctx.restore();
         }
 
         function drawCoreShape(module) {
@@ -804,10 +1013,21 @@
         function drawActiveMenu() {
             if (!activeMenu) return;
 
-            const x = W - 250;
-            const y = 110;
-            const w = 220;
             const rowH = 26;
+            const w = 220;
+            const visibleItems = activeMenu.items.filter(item =>
+                item.isVisible ? item.isVisible() : true
+            );
+
+            const h = 44 + visibleItems.length * rowH;
+
+            let x = activeMenu.x + activeMenu.radius + 18;
+            let y = activeMenu.y - h / 2;
+
+            // keep menu on screen
+            if (x + w > W - 12) x = activeMenu.x - activeMenu.radius - w - 18;
+            if (y < 12) y = 12;
+            if (y + h > H - 12) y = H - h - 12;
 
             ctx.save();
 
@@ -817,15 +1037,21 @@
             ctx.shadowColor = GREEN;
             ctx.shadowBlur = 10;
 
-            ctx.fillRect(x, y, w, 60 + activeMenu.items.length * rowH);
-            ctx.strokeRect(x, y, w, 60 + activeMenu.items.length * rowH);
+            ctx.fillRect(x, y, w, h);
+            ctx.strokeRect(x, y, w, h);
+
+            // connector line from module to menu
+            ctx.beginPath();
+            ctx.moveTo(activeMenu.x, activeMenu.y);
+            ctx.lineTo(x, y + h / 2);
+            ctx.stroke();
 
             ctx.fillStyle = GREEN;
             ctx.font = "12px monospace";
             ctx.fillText(activeMenu.menuTitle, x + 12, y + 20);
             ctx.fillText(activeMenu.codename, x + 12, y + 36);
 
-            activeMenu.items.forEach((item, i) => {
+            visibleItems.forEach((item, i) => {
                 const bx = x + 12;
                 const by = y + 50 + i * rowH;
                 const bw = w - 24;
@@ -837,21 +1063,28 @@
 
                 ctx.strokeStyle = affordable ? GREEN : "rgba(80,255,130,0.25)";
                 ctx.fillStyle = affordable
-                ? "rgba(0,255,90,0.08)"
-                : "rgba(0,255,90,0.03)";
+                    ? "rgba(0,255,90,0.08)"
+                    : "rgba(0,255,90,0.03)";
 
                 ctx.fillRect(bx, by, bw, bh);
                 ctx.strokeRect(bx, by, bw, bh);
 
                 ctx.fillStyle = affordable ? GREEN : "rgba(80,255,130,0.35)";
-                ctx.fillText(`${item.label} (${cost})`, bx + 8, by + 14);
+                let label = item.label;
+
+                if (item.type === "upgrade") {
+                    const nextLevel = item.getLevel() + 1;
+                    label = `${item.label} ${toRoman(nextLevel)}`;
+                }
+
+                ctx.fillText(`${label} (${cost})`, bx + 8, by + 14);
 
                 if (affordable) {
-                const pulse = Math.floor(frameCount / 12) % 2;
-                const offset = pulse ? 2 : 0;
+                    const pulse = Math.floor(frameCount / 12) % 2;
+                    const offset = pulse ? 2 : 0;
 
-                ctx.fillText(">>", bx - 24 - offset, by + 14);
-                ctx.fillText("<<", bx + bw + 8 + offset, by + 14);
+                    ctx.fillText(">>", bx - 24 - offset, by + 14);
+                    ctx.fillText("<<", bx + bw + 8 + offset, by + 14);
                 }
 
                 item.bounds = { x: bx, y: by, w: bw, h: bh };
@@ -969,6 +1202,7 @@
             ctx.fillRect(0, 0, W, H);
 
             updateCooldowns();
+            updateHeldLaserFire();
             updateLaserBeams();
             updateFloatingOre();
             updateGravityPulses();
