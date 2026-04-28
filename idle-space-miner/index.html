@@ -53,6 +53,7 @@
         let dragStartY = 0;
         let cameraStartX = 0;
         let cameraStartY = 0;
+        let musicAudio = null;
 
         let oreGatherCombo = 0;
         let oreGatherComboTimer = 0;
@@ -74,6 +75,17 @@
         for (const sound of Object.values(sounds)) {
             sound.preload = "auto";
             sound.volume = 0.45;
+        }
+
+        function startMusic() {
+            if (musicAudio) return; // prevent multiple starts
+
+            musicAudio = new Audio("sounds/music.wav");
+            musicAudio.loop = true;
+            musicAudio.volume = 0.1;
+            musicAudio.play().catch(() => {
+                // autoplay might fail, but since this is user-triggered it should work
+            });
         }
 
         function playSound(name, options = {}) {
@@ -1174,6 +1186,7 @@
                 if (pointInRect(mx, my, startButton)) {
                     gameState = "playing";
                     queueStartingMessages();
+                    startMusic();
                 }
 
                 return;
