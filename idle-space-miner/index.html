@@ -254,8 +254,91 @@
 
         const resources = {
             ore: 0,
-            science: 0
+            science: 0,
+            metal: 0
         };
+
+        let hasDiscoveredScience = false;
+
+        const oreQuotas = [
+            {
+                amount: 1000,
+                label: "SALVAGING RIGHTS",
+                unlocked: false,
+                onUnlock: () => {
+                    salvagingLicenseUnlocked = true;
+                },
+                message: {
+                    title: "INCOMING MESSAGE // LICENSE ISSUED",
+                    from: "DEBT-CLAIM AUTHORITY",
+                    body: [
+                        "Quota milestone reached: 1.000 total ore units acquired.",
+                        "",
+                        "Congratulations, Administrator.",
+                        "",
+                        "A provisional Salvaging Rights license has been issued to your station.",
+                        "",
+                        "You are now authorized to recover abandoned materials and derelict assets within your assigned sector."
+                    ]
+                }
+            },
+            {
+                amount: 10000,
+                label: "QUOTA II",
+                unlocked: false,
+                message: {
+                    title: "INCOMING MESSAGE // QUOTA VERIFIED",
+                    from: "DEBT-CLAIM AUTHORITY",
+                    body: [
+                        "Quota milestone reached: 10.000 total ore units acquired.",
+                        "",
+                        "Additional operational privileges have been marked for future issuance."
+                    ]
+                }
+            },
+            {
+                amount: 100000,
+                label: "QUOTA III",
+                unlocked: false,
+                message: {
+                    title: "INCOMING MESSAGE // QUOTA VERIFIED",
+                    from: "DEBT-CLAIM AUTHORITY",
+                    body: [
+                        "Quota milestone reached: 100.000 total ore units acquired.",
+                        "",
+                        "Your station remains under review for expanded extraction permissions."
+                    ]
+                }
+            },
+            {
+                amount: 1000000,
+                label: "QUOTA IV",
+                unlocked: false,
+                message: {
+                    title: "INCOMING MESSAGE // QUOTA VERIFIED",
+                    from: "DEBT-CLAIM AUTHORITY",
+                    body: [
+                        "Quota milestone reached: 1.000.000 total ore units acquired.",
+                        "",
+                        "Significant debt-service progress confirmed."
+                    ]
+                }
+            }
+        ];
+
+        function checkOreQuotas() {
+            for (const quota of oreQuotas) {
+                if (!quota.unlocked && totalOreAcquired >= quota.amount) {
+                    quota.unlocked = true;
+
+                    if (quota.onUnlock) {
+                        quota.onUnlock();
+                    }
+
+                    queueIncomingMessage(quota.message);
+                }
+            }
+        }
 
         function getResourceAmount(type) {
             return resources[type] ?? 0;
@@ -264,8 +347,13 @@
         function addResource(type, amount) {
             resources[type] = (resources[type] ?? 0) + amount;
 
+            if (type === "science" && amount > 0) {
+                hasDiscoveredScience = true;
+            }
+
             if (type === "ore") {
                 totalOreAcquired += amount;
+                checkOreQuotas();
             }
         }
 
@@ -326,7 +414,7 @@
                 getLevel: () => module.rangeUpgradeLevel,
                 getCap: () => module.rangeUpgradeCap,
                 getCost: () => getRangeUpgradeCost(module),
-                isVisible: () => module.rangeUpgradeLevel < module.rangeUpgradeCap,
+                isVisible: () => module.rangeUpgradeLevel < module.rangeUpgradeCap && hasDiscoveredScience,
                 canBuy: () => true,
                 buy: () => {
                     module.rangeUpgradeLevel++;
@@ -334,6 +422,13 @@
                 }
             });
         }
+
+        const SALVAGE_RIGHTS_MAX = 5;
+        const SALVAGE_WRECK_COOLDOWN = 60 * 60; // 1 minute at 60fps
+
+        const salvageSlots = [];
+
+        let salvagingLicenseUnlocked = false;
 
         const stationModules = [];
 
@@ -345,10 +440,10 @@
                 xOffset: 0,
                 yOffset: 0,
                 radius: 58,
-                menuTitle: "STATION MODULES",
+                menuTitle: "MAIN STATION",
                 items: [
                     {
-                        label: "Small Shipyard",
+                        label: "Shipyard",
                         cost: { ore: 10 },
                         canBuy: () => !stationModules.some(m => m.id === "smallShipyard"),
                         buy: () => {
@@ -371,6 +466,18 @@
 
                             activeMenu = null;
                         }
+                    },
+                    {
+                        label: "Salvaging Rights",
+                        type: "upgrade",
+                        getLevel: () => salvageSlots.length,
+                        getCap: () => SALVAGE_RIGHTS_MAX,
+                        getCost: () => ({ ore: Math.floor(1500 * Math.pow(2.2, salvageSlots.length)) }),
+                        isVisible: () => salvagingLicenseUnlocked && salvageSlots.length < SALVAGE_RIGHTS_MAX,
+                        canBuy: () => true,
+                        buy: () => {
+                            addSalvageSlot();
+                        }
                     }
                 ]
             },
@@ -391,7 +498,7 @@
                         getLevel: () => upgrades.laserStrength.level,
                         getCap: () => upgrades.laserStrength.cap,
                         getCost: () => ({ science: getLaserStrengthCost() }),
-                        isVisible: () => upgrades.laserStrength.level < upgrades.laserStrength.cap,
+                        isVisible: () => upgrades.laserStrength.level < upgrades.laserStrength.cap && hasDiscoveredScience,
                         canBuy: () => true,
                         buy: () => {
                             const upg = upgrades.laserStrength;
@@ -407,7 +514,8 @@
                         getCost: () => ({ science: getLaserSpeedCost() }),
                         isVisible: () =>
                             upgrades.laserStrength.level >= upgrades.laserStrength.cap &&
-                            upgrades.laserSpeed.level < upgrades.laserSpeed.cap,
+                            upgrades.laserSpeed.level < upgrades.laserSpeed.cap &&
+                            hasDiscoveredScience,
                         canBuy: () => true,
                         buy: () => {
                             const upg = upgrades.laserSpeed;
@@ -464,7 +572,7 @@
                 menuTitle: "SHIPYARD REQUISITIONS",
                 items: [
                     {
-                        label: "Basic Miner",
+                        label: "Mining Frigate",
                         getCost: () => ({ ore: Math.floor(Math.pow(2, ships.length) * 10) }),
                         canBuy: () => true,
                         buy: () => {
@@ -477,7 +585,7 @@
                         getLevel: () => upgrades.shipSpeed.level,
                         getCap: () => upgrades.shipSpeed.cap,
                         getCost: () => ({ science: Math.floor(75 * Math.pow(2, upgrades.shipSpeed.level)) }),
-                        isVisible: () => upgrades.shipSpeed.level < upgrades.shipSpeed.cap,
+                        isVisible: () => upgrades.shipSpeed.level < upgrades.shipSpeed.cap && hasDiscoveredScience,
                         canBuy: () => true,
                         buy: () => {
                             upgrades.shipSpeed.level++;
@@ -493,7 +601,7 @@
                         getLevel: () => upgrades.miningSpeed.level,
                         getCap: () => upgrades.miningSpeed.cap,
                         getCost: () => ({ science: Math.floor(90 * Math.pow(2, upgrades.miningSpeed.level)) }),
-                        isVisible: () => upgrades.miningSpeed.level < upgrades.miningSpeed.cap,
+                        isVisible: () => upgrades.miningSpeed.level < upgrades.miningSpeed.cap && hasDiscoveredScience,
                         canBuy: () => true,
                         buy: () => {
                             upgrades.miningSpeed.level++;
@@ -505,7 +613,7 @@
                         getLevel: () => upgrades.cargoCapacity.level,
                         getCap: () => upgrades.cargoCapacity.cap,
                         getCost: () => ({ science: Math.floor(80 * Math.pow(2, upgrades.cargoCapacity.level)) }),
-                        isVisible: () => upgrades.cargoCapacity.level < upgrades.cargoCapacity.cap,
+                        isVisible: () => upgrades.cargoCapacity.level < upgrades.cargoCapacity.cap && hasDiscoveredScience,
                         canBuy: () => true,
                         buy: () => {
                             upgrades.cargoCapacity.level++;
@@ -658,6 +766,208 @@
             };
         }
 
+        function addSalvageSlot() {
+            const slot = {
+                id: salvageSlots.length + 1,
+                state: "cooldown",
+                cooldown: 0,
+                hauler: null,
+                wreck: null
+            };
+
+            salvageSlots.push(slot);
+            startSalvageHauler(slot);
+        }
+
+        function findWreckParkingSpot() {
+            for (let attempt = 0; attempt < 500; attempt++) {
+                const angle = Math.random() * Math.PI * 2;
+                const dist = rand(500, 750);
+
+                const spot = {
+                    x: station.x + Math.cos(angle) * dist,
+                    y: station.y + Math.sin(angle) * dist
+                };
+
+                const tooCloseToAsteroid = asteroids.some(a => {
+                    const dx = spot.x - a.x;
+                    const dy = spot.y - a.y;
+                    return dx * dx + dy * dy < 180 * 180;
+                });
+
+                const tooCloseToCelestial = celestialBodies.some(b => {
+                    const dx = spot.x - b.x;
+                    const dy = spot.y - b.y;
+                    return dx * dx + dy * dy < 280 * 280;
+                });
+
+                const tooCloseToWreck = salvageSlots.some(s => {
+                    if (!s.wreck) return false;
+                    const dx = spot.x - s.wreck.x;
+                    const dy = spot.y - s.wreck.y;
+                    return dx * dx + dy * dy < 220 * 220;
+                });
+
+                if (!tooCloseToAsteroid && !tooCloseToCelestial && !tooCloseToWreck) {
+                    return spot;
+                }
+            }
+
+            return {
+                x: station.x + rand(-750, 750),
+                y: station.y + rand(-750, 750)
+            };
+        }
+
+        function makeWreck(slot, x, y) {
+            const radius = rand(42, 68);
+            const verts = [];
+            const sides = 10;
+
+            for (let i = 0; i < sides; i++) {
+                const t = (i / sides) * Math.PI * 2;
+                const r = radius * rand(0.55, 1.25);
+
+                verts.push({
+                    x: Math.cos(t) * r,
+                    y: Math.sin(t) * r
+                });
+            }
+
+            return {
+                x,
+                y,
+                radius,
+                verts,
+                metal: Math.floor(rand(450, 900)),
+                maxMetal: 900,
+                resourceType: "metal",
+                codename: `WRECK-${String(slot.id).padStart(2, "0")}`,
+                fading: false,
+                fade: 1
+            };
+        }
+
+        function startSalvageHauler(slot) {
+            const edge = Math.floor(rand(0, 4));
+            let x, y;
+
+            if (edge === 0) {
+                x = rand(0, WORLD_W);
+                y = -80;
+            } else if (edge === 1) {
+                x = WORLD_W + 80;
+                y = rand(0, WORLD_H);
+            } else if (edge === 2) {
+                x = rand(0, WORLD_W);
+                y = WORLD_H + 80;
+            } else {
+                x = -80;
+                y = rand(0, WORLD_H);
+            }
+
+            const parkingSpot = findWreckParkingSpot();
+
+            slot.state = "hauling";
+            slot.hauler = {
+                x,
+                y,
+                angle: 0,
+                speed: 2.0,
+                targetX: parkingSpot.x,
+                targetY: parkingSpot.y,
+                exitX: x,
+                exitY: y,
+                wreckOffsetX: -34,
+                wreckOffsetY: 0,
+                state: "inbound",
+                codename: `HAULER-${String(slot.id).padStart(2, "0")}`
+            };
+
+            slot.wreck = makeWreck(slot, x + slot.hauler.wreckOffsetX, y + slot.hauler.wreckOffsetY);
+        }
+
+        function updateSalvageSlot(slot) {
+            if (slot.state === "cooldown") {
+                slot.cooldown--;
+
+                if (slot.cooldown <= 0) {
+                    startSalvageHauler(slot);
+                }
+
+                return;
+            }
+
+            if (slot.state === "hauling") {
+                const h = slot.hauler;
+
+                if (h.state === "inbound") {
+                    const dx = h.targetX - h.x;
+                    const dy = h.targetY - h.y;
+                    h.angle = Math.atan2(dy, dx);
+
+                    const arrived = moveToward(h, h.targetX, h.targetY, h.speed);
+
+                    slot.wreck.x = h.x + h.wreckOffsetX;
+                    slot.wreck.y = h.y + h.wreckOffsetY;
+
+                    if (arrived) {
+                        h.state = "leaving";
+                        slot.wreck.x = h.targetX;
+                        slot.wreck.y = h.targetY;
+                    }
+                } else if (h.state === "leaving") {
+                    const dx = h.exitX - h.x;
+                    const dy = h.exitY - h.y;
+                    h.angle = Math.atan2(dy, dx);
+
+                    const left = moveToward(h, h.exitX, h.exitY, h.speed * 1.35);
+
+                    if (left) {
+                        slot.hauler = null;
+                        slot.state = "parked";
+                    }
+                }
+
+                return;
+            }
+
+            if (slot.state === "parked") {
+                if (slot.wreck && slot.wreck.metal <= 0 && !slot.wreck.fading) {
+                    slot.wreck.fading = true;
+                    slot.wreck.fade = 1;
+                }
+
+                if (slot.wreck && slot.wreck.fading) {
+                    slot.wreck.fade -= 0.025;
+
+                    if (slot.wreck.fade <= 0) {
+                        slot.wreck = null;
+                        slot.state = "cooldown";
+                        slot.cooldown = SALVAGE_WRECK_COOLDOWN;
+                    }
+                }
+            }
+        }
+
+        function updateSalvage() {
+            for (const slot of salvageSlots) {
+                updateSalvageSlot(slot);
+            }
+        }
+
+        function getActiveWrecks() {
+            return salvageSlots
+                .filter(s =>
+                    s.wreck &&
+                    (
+                        s.state === "parked" ||
+                        (s.state === "hauling" && s.hauler?.state === "leaving")
+                    )
+                )
+                .map(s => s.wreck);
+        }
+
         function getHoveredTarget() {
             const module = getHoveredModule();
 
@@ -668,6 +978,12 @@
             for (const body of celestialBodies) {
                 if (pointInCelestialBody(mouseX, mouseY, body)) {
                     return { type: "celestial", object: body };
+                }
+            }
+
+            for (const wreck of getActiveWrecks()) {
+                if (wreck.metal > 0 && pointInAsteroid(mouseX, mouseY, wreck)) {
+                    return { type: "wreck", object: wreck };
                 }
             }
 
@@ -998,7 +1314,11 @@
         }
 
         function getMiningInterval() {
-            return Math.max(4, 14 - upgrades.miningSpeed.level * SHIP_MINING_MULTIPLIER);
+            return 14;
+        }
+
+        function getMiningAmountPerTick() {
+            return 1 + upgrades.miningSpeed.level;
         }
 
         function makeShip(i) {
@@ -1044,7 +1364,6 @@
 
         const SHIP_SPEED_MULTIPLIER = 0.5;
         const SHIP_CARGO_MULTIPLIER = 0.5;
-        const SHIP_MINING_MULTIPLIER = 3.0;
 
         function toRoman(n) {
             const romans = [
@@ -1087,7 +1406,7 @@
         }
 
         function getLaserOreChunks() {
-            return Math.pow(2, upgrades.laserStrength.level);
+            return 1 + upgrades.laserStrength.level;
         }
 
         function getLaserStrengthCost() {
@@ -1152,17 +1471,36 @@
             return null;
         }
 
-        function spawnFloatingOre(asteroid) {
-            if (asteroid.ore <= 0) return;
+        function spawnFloatingChunk(target) {
+            if (target.resourceType === "metal") {
+                if (target.metal <= 0) return;
 
-            asteroid.ore--;
+                target.metal--;
+
+                floatingOre.push({
+                    x: target.x + rand(-target.radius * 0.35, target.radius * 0.35),
+                    y: target.y + rand(-target.radius * 0.35, target.radius * 0.35),
+                    vx: rand(-0.35, 0.35),
+                    vy: rand(-0.35, 0.35),
+                    pull: false,
+                    resourceType: "metal",
+                    codename: `METAL-${Math.floor(rand(100, 999))}`
+                });
+
+                return;
+            }
+
+            if (target.ore <= 0) return;
+
+            target.ore--;
 
             floatingOre.push({
-                x: asteroid.x + rand(-asteroid.radius * 0.35, asteroid.radius * 0.35),
-                y: asteroid.y + rand(-asteroid.radius * 0.35, asteroid.radius * 0.35),
+                x: target.x + rand(-target.radius * 0.35, target.radius * 0.35),
+                y: target.y + rand(-target.radius * 0.35, target.radius * 0.35),
                 vx: rand(-0.35, 0.35),
                 vy: rand(-0.35, 0.35),
                 pull: false,
+                resourceType: "ore",
                 codename: `ORE-${Math.floor(rand(100, 999))}`
             });
         }
@@ -1244,8 +1582,10 @@
             keys[e.code] = true;
 
             if (isMessageActive()) {
-                e.preventDefault();
-                advanceIncomingMessage();
+                if (e.code === "Space") {
+                    e.preventDefault();
+                    advanceIncomingMessage();
+                }
                 return;
             }
 
@@ -1280,7 +1620,6 @@
 
         canvas.addEventListener("mousedown", e => {
             if (isMessageActive()) {
-                advanceIncomingMessage();
                 return;
             }
 
@@ -1316,8 +1655,8 @@
             const { x: mx, y: my } = screenToWorld(sx, sy);
 
             // detect asteroid under cursor at press time
-            for (const asteroid of asteroids) {
-                if (asteroid.ore > 0 && pointInAsteroid(mx, my, asteroid)) {
+            for (const asteroid of getMineableTargets()) {
+                if (pointInAsteroid(mx, my, asteroid)) {
                     heldAsteroidTarget = asteroid;
 
                     // fire immediately if off cooldown (feels responsive)
@@ -1353,7 +1692,6 @@
             if (gameState !== "playing") return;
 
             if (isMessageActive()) {
-                advanceIncomingMessage();
                 return;
             }
 
@@ -1417,8 +1755,8 @@
             }
 
             // Asteroid click: pulse laser
-            for (const asteroid of asteroids) {
-                if (asteroid.ore > 0 && pointInAsteroid(mx, my, asteroid)) {
+            for (const asteroid of getMineableTargets()) {
+                if (pointInAsteroid(mx, my, asteroid)) {
                     const cd = CLICK_COOLDOWNS.laser;
 
                     if (cd.current <= 0) {
@@ -1481,7 +1819,7 @@
         function updateHeldLaserFire() {
             if (!mouseDown || !heldAsteroidTarget) return;
 
-            if (heldAsteroidTarget.ore <= 0) {
+            if (isMineableTargetDepleted(heldAsteroidTarget)) {
                 heldAsteroidTarget = null;
                 return;
             }
@@ -1547,7 +1885,7 @@
                     const chunks = getLaserOreChunks();
 
                     for (let n = 0; n < chunks; n++) {
-                        spawnFloatingOre(beam.asteroid);
+                        spawnFloatingChunk(beam.asteroid);
                     }
                 }
 
@@ -1555,6 +1893,18 @@
                     laserBeams.splice(i, 1);
                 }
             }
+        }
+
+        function isMineableTargetDepleted(target) {
+            if (target.resourceType === "metal") return target.metal <= 0;
+            return target.ore <= 0;
+        }
+
+        function getMineableTargets() {
+            return [
+                ...asteroids.filter(a => a.ore > 0),
+                ...getActiveWrecks().filter(w => w.metal > 0 && !w.fading)
+            ];
         }
 
         function updateFloatingOre() {
@@ -1568,7 +1918,7 @@
                     const d = Math.hypot(dx, dy);
 
                     if (d < 12) {
-                        addResource("ore", 1);
+                        addResource(ore.resourceType || "ore", 1);
                         queueOreGatherSound();
                         // playSound("oreGather", {
                         //     volume: 0.22,
@@ -1676,8 +2026,14 @@
                 ship.miningTimer++;
 
                 if (ship.miningTimer % getMiningInterval() === 0 && ship.target && ship.target.ore > 0) {
-                    ship.target.ore--;
-                    ship.cargo++;
+                    const mined = Math.min(
+                        getMiningAmountPerTick(),
+                        ship.target.ore,
+                        ship.cargoMax - ship.cargo
+                    );
+
+                    ship.target.ore -= mined;
+                    ship.cargo += mined;
                 }
 
                 if (!ship.target || ship.target.ore <= 0 || ship.cargo >= ship.cargoMax) {
@@ -1686,7 +2042,7 @@
             }
 
             if (ship.state === "returning") {
-                if (moveToward(ship, station.x, station.y, ship.speed * 1.15)) {
+                if (moveToward(ship, station.x, station.y, ship.speed * 0.85)) {
                     addResource("ore", ship.cargo);
                     queueOreGatherSound();
                     ship.cargo = 0;
@@ -1717,35 +2073,60 @@
 
         function drawDebtProgressBar() {
             const barW = 620;
-            const barH = 24;
+            const barH = 22;
+            const gap = 8;
             const x = W / 2 - barW / 2;
             const y = 24;
 
-            const progress = Math.min(1, totalOreAcquired / DEBT_TARGET_ORE);
+            const debtProgress = Math.min(1, totalOreAcquired / DEBT_TARGET_ORE);
+
+            const nextQuota = oreQuotas.find(q => !q.unlocked);
+            const prevQuota = (() => {
+                const unlocked = oreQuotas.filter(q => q.unlocked);
+                return unlocked.length ? unlocked[unlocked.length - 1].amount : 0;
+            })();
+
+            const quotaProgress = nextQuota
+                ? Math.min(1, (totalOreAcquired - prevQuota) / (nextQuota.amount - prevQuota))
+                : 1;
 
             ctx.save();
 
-            ctx.strokeStyle = GREEN;
-            ctx.fillStyle = "rgba(0,20,0,0.82)";
-            ctx.lineWidth = 2;
-            ctx.shadowColor = GREEN;
-            ctx.shadowBlur = 10;
+            function drawBar(label, valueText, progress, yPos) {
+                ctx.strokeStyle = GREEN;
+                ctx.fillStyle = "rgba(0,20,0,0.82)";
+                ctx.lineWidth = 2;
+                ctx.shadowColor = GREEN;
+                ctx.shadowBlur = 10;
 
-            ctx.fillRect(x, y, barW, barH);
-            ctx.strokeRect(x, y, barW, barH);
+                ctx.fillRect(x, yPos, barW, barH);
+                ctx.strokeRect(x, yPos, barW, barH);
 
-            ctx.fillStyle = "rgba(80,255,130,0.28)";
-            ctx.fillRect(x + 3, y + 3, (barW - 6) * progress, barH - 6);
+                ctx.fillStyle = "rgba(80,255,130,0.28)";
+                ctx.fillRect(x + 3, yPos + 3, (barW - 6) * progress, barH - 6);
 
-            ctx.fillStyle = GREEN;
-            ctx.font = "12px monospace";
-            ctx.textAlign = "center";
-            ctx.textBaseline = "middle";
+                ctx.fillStyle = GREEN;
+                ctx.font = "12px monospace";
+                ctx.textAlign = "center";
+                ctx.textBaseline = "middle";
 
-            ctx.fillText(
-                `${Math.floor(totalOreAcquired).toLocaleString("de-DE")} / ${DEBT_TARGET_ORE.toLocaleString("de-DE")} ORE DEBT`,
-                W / 2,
-                y + barH / 2
+                ctx.fillText(`${label}: ${valueText}`, W / 2, yPos + barH / 2);
+            }
+
+            drawBar(
+                "DEBT REPAYMENT",
+                `${Math.floor(totalOreAcquired).toLocaleString("de-DE")} / ${DEBT_TARGET_ORE.toLocaleString("de-DE")} ORE`,
+                debtProgress,
+                y
+            );
+
+            drawBar(
+                "NEXT LICENSE",
+                nextQuota
+                    ? `${nextQuota.label} ${Math.floor(totalOreAcquired).toLocaleString("de-DE")} / ${nextQuota.amount.toLocaleString("de-DE")} ORE`
+                    : "ALL LICENSES ISSUED",
+                quotaProgress,
+                y + barH + gap
             );
 
             ctx.restore();
@@ -1814,7 +2195,7 @@
 
             if (blink) {
                 ctx.font = "13px monospace";
-                ctx.fillText("CLICK OR PRESS ANY KEY TO CONTINUE", x + boxW / 2 - 132, y + boxH - 34);
+                ctx.fillText("PRESS SPACE TO CONTINUE", x + boxW / 2 - 100, y + boxH - 34);
             }
 
             ctx.restore();
@@ -1949,14 +2330,22 @@
                 ctx.shadowColor = GREEN;
                 ctx.shadowBlur = 10;
 
-                ctx.beginPath();
-                ctx.arc(0, 0, 3, 0, Math.PI * 2); // 👈 circle instead of square
-                ctx.fill();
-                ctx.stroke();
+                if (ore.resourceType === "metal") {
+                    // 🔲 metal = square
+                    const size = 6;
+                    ctx.beginPath();
+                    ctx.rect(-size / 2, -size / 2, size, size);
+                    ctx.fill();
+                    ctx.stroke();
+                } else {
+                    // ⚪ ore = circle (existing behavior)
+                    ctx.beginPath();
+                    ctx.arc(0, 0, 3, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.stroke();
+                }
 
                 ctx.restore();
-
-                //drawText(ore.codename, ore.x + 8, ore.y - 6, 0.55);
             }
         }
 
@@ -2483,6 +2872,77 @@
             }
         }
 
+        function drawWreck(wreck) {
+            ctx.save();
+            ctx.globalAlpha = wreck.fade ?? 1;
+            ctx.translate(wreck.x, wreck.y);
+
+            const hovered = getHoveredTarget()?.object === wreck;
+
+            ctx.strokeStyle = hovered ? "rgba(180,255,210,0.95)" : "rgba(120,255,160,0.45)";
+            ctx.fillStyle = hovered ? "rgba(0,255,120,0.13)" : "rgba(0,255,90,0.05)";
+            ctx.lineWidth = hovered ? 3 : 2;
+            ctx.shadowColor = GREEN;
+            ctx.shadowBlur = hovered ? 18 : 6;
+
+            ctx.beginPath();
+            wreck.verts.forEach((p, i) => {
+                if (i === 0) ctx.moveTo(p.x, p.y);
+                else ctx.lineTo(p.x, p.y);
+            });
+            ctx.closePath();
+            ctx.fill();
+            ctx.stroke();
+
+            ctx.beginPath();
+            ctx.moveTo(-wreck.radius * 0.8, 0);
+            ctx.lineTo(wreck.radius * 0.8, 0);
+            ctx.moveTo(0, -wreck.radius * 0.5);
+            ctx.lineTo(0, wreck.radius * 0.5);
+            ctx.stroke();
+
+            ctx.restore();
+
+            drawText(wreck.codename, wreck.x - 36, wreck.y - wreck.radius - 20, wreck.fade ?? 1);
+            drawText(`METAL:${wreck.metal}`, wreck.x - 34, wreck.y + wreck.radius + 18, 0.7 * (wreck.fade ?? 1));
+        }
+
+        function drawSalvage() {
+            for (const slot of salvageSlots) {
+                if (slot.wreck) drawWreck(slot.wreck);
+                if (slot.hauler) drawSalvageHauler(slot.hauler);
+            }
+        }
+
+        function drawSalvageHauler(hauler) {
+            ctx.save();
+            ctx.translate(hauler.x, hauler.y);
+            ctx.rotate(hauler.angle);
+
+            ctx.strokeStyle = GREEN;
+            ctx.fillStyle = "rgba(0,255,90,0.10)";
+            ctx.lineWidth = 2;
+            ctx.shadowColor = GREEN;
+            ctx.shadowBlur = 10;
+
+            ctx.beginPath();
+            ctx.rect(-18, -10, 36, 20);
+            ctx.fill();
+            ctx.stroke();
+
+            ctx.beginPath();
+            ctx.moveTo(-26, -14);
+            ctx.lineTo(-18, -10);
+            ctx.moveTo(-26, 14);
+            ctx.lineTo(-18, 10);
+            ctx.stroke();
+
+            ctx.restore();
+
+            // keep label unrotated (world-aligned)
+            drawText(hauler.codename, hauler.x + 18, hauler.y - 14, 0.7);
+        }
+
         function drawAsteroid(a) {
             const hovered = getHoveredTarget()?.object === a;
 
@@ -2620,6 +3080,7 @@
             drawText(`FLEET: ${ships.length} MINING UNITS`, 24, 64, 0.75);
             if (resources.ore > 0) drawText(`ORE: ${resources.ore}`, 24, RESOURCES_OFFSET_Y + 82, 1.0);
             if (resources.science > 0) drawText(`SCIENCE: ${resources.science}`, 24, RESOURCES_OFFSET_Y + 100, 1.0);
+            if (resources.metal > 0) drawText(`METAL: ${resources.metal}`, 24, RESOURCES_OFFSET_Y + 118, 1.0);
 
             const hovered = getHoveredTarget();
 
@@ -2630,6 +3091,16 @@
                     drawText("TARGET OUT OF LASER RANGE", 24, 132, 0.8);
                 } else {
                     drawText(`TARGET LOCK: ${hovered.object.codename}`, 24, 132, 0.8);
+                }
+            }
+
+            if (hovered?.type === "wreck") {
+                const laser = getModuleById("stationMiningLaser");
+
+                if (laser && !isInModuleRange(laser, hovered.object)) {
+                    drawText("WRECK OUT OF LASER RANGE", 24, 132, 0.8);
+                } else {
+                    drawText(`SALVAGE LOCK: ${hovered.object.codename}`, 24, 132, 0.8);
                 }
             }
 
@@ -2668,6 +3139,7 @@
             updateGravityPulses();
             updateScienceProduction();
             updateScienceProbes();
+            updateSalvage();
 
             ctx.save();
             applyCameraTransform();
@@ -2677,6 +3149,7 @@
             asteroids.forEach(drawAsteroid);
             celestialBodies.forEach(drawCelestialBody);
             scienceProbes.forEach(drawScienceProbe);
+            drawSalvage();
 
             drawObservationLinks();
             drawLaserBeams();
