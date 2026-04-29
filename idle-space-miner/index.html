@@ -1844,17 +1844,48 @@
             }
         }
 
-        function chooseAsteroid(ship) {
-            const shipyard = getModuleById("smallShipyard");
+        function isAsteroidClaimedByOtherShip(asteroid, currentShip) {
+            return ships.some(other =>
+                other !== currentShip &&
+                other.target === asteroid &&
+                (
+                    other.state === "outbound" ||
+                    other.state === "mining"
+                )
+            );
+        }
 
-            const available = asteroids.filter(a => {
-                if (a.ore <= 0) return false;
-                if (!shipyard) return false;
-                return isInModuleRange(shipyard, a);
-            });
+        function isValidShipAsteroidTarget(ship, asteroid) {
+            if (!asteroid) return false;
+            if (asteroid.ore <= 0) return false;
+
+            const shipyard = getModuleById("smallShipyard");
+            if (!shipyard) return false;
+            if (!isInModuleRange(shipyard, asteroid)) return false;
+
+            // If another ship is already traveling to it or mining it,
+            // this ship should not use it.
+            if (isAsteroidClaimedByOtherShip(asteroid, ship)) return false;
+
+            return true;
+        }
+
+        function chooseAsteroid(ship) {
+            const available = asteroids.filter(a =>
+                isValidShipAsteroidTarget(ship, a)
+            );
 
             if (!available.length) return null;
-            return pick(available);
+
+            // Prefer nearest unclaimed asteroid.
+            // This reduces wasted travel compared to random selection.
+            available.sort((a, b) => {
+                const da = distSq(ship, a);
+                const db = distSq(ship, b);
+                return da - db;
+            });
+
+            return available[0];
         }
 
         function moveToward(obj, tx, ty, speed) {
@@ -2002,22 +2033,26 @@
         }
 
         function updateShip(ship) {
+            // Idle ships should keep looking for newly freed asteroids.
+            if (ship.state === "idle") {
+                ship.state = "seeking";
+            }
+
             if (ship.state === "seeking") {
                 ship.target = chooseAsteroid(ship);
-                ship.state = ship.target ? "outbound" : "idle";
+
+                if (ship.target) {
+                    ship.state = "outbound";
+                } else {
+                    ship.state = "idle";
+                    return;
+                }
             }
 
             if (ship.state === "outbound") {
-                if (!ship.target || ship.target.ore <= 0) {
-                    ship.state = "seeking";
+                if (!isValidShipAsteroidTarget(ship, ship.target)) {
                     ship.target = null;
-                    return;
-                }
-
-                const shipyard = getModuleById("smallShipyard");
-                if (!shipyard || !isInModuleRange(shipyard, ship.target)) {
                     ship.state = "seeking";
-                    ship.target = null;
                     return;
                 }
 
@@ -2028,9 +2063,15 @@
             }
 
             if (ship.state === "mining") {
+                if (!isValidShipAsteroidTarget(ship, ship.target)) {
+                    ship.target = null;
+                    ship.state = ship.cargo > 0 ? "returning" : "seeking";
+                    return;
+                }
+
                 ship.miningTimer++;
 
-                if (ship.miningTimer % getMiningInterval() === 0 && ship.target && ship.target.ore > 0) {
+                if (ship.miningTimer % getMiningInterval() === 0) {
                     const mined = Math.min(
                         getMiningAmountPerTick(),
                         ship.target.ore,
@@ -2042,15 +2083,21 @@
                 }
 
                 if (!ship.target || ship.target.ore <= 0 || ship.cargo >= ship.cargoMax) {
+                    // Important: release the asteroid reservation before returning.
+                    ship.target = null;
                     ship.state = "returning";
                 }
             }
 
             if (ship.state === "returning") {
                 if (moveToward(ship, station.x, station.y, ship.speed * 0.85)) {
-                    addResource("ore", ship.cargo);
-                    queueOreGatherSound();
+                    if (ship.cargo > 0) {
+                        addResource("ore", ship.cargo);
+                        queueOreGatherSound();
+                    }
+
                     ship.cargo = 0;
+                    ship.target = null;
                     ship.state = "seeking";
                 }
             }
@@ -2234,7 +2281,7 @@
             ctx.fillText("SECTOR KAPPA-9 // MINING AUTHORIZATION REQUIRED", W / 2, H / 2 - 18);
             ctx.globalAlpha = 1;
 
-            const hovered = pointInRect(mouseX, mouseY, startButton);
+            const hovered = pointInRect(mouseScreenX, mouseScreenY, startButton);
 
             ctx.strokeStyle = hovered ? "rgba(120,255,160,0.95)" : GREEN;
             ctx.fillStyle = hovered ? "rgba(0,255,90,0.18)" : "rgba(0,255,90,0.08)";
@@ -2325,33 +2372,67 @@
         }
 
         function drawFloatingOre() {
+            if (floatingOre.length <= 0) return;
+
+            // Only draw particles visible in the current camera view.
+            // Padding keeps glowy particles from popping at screen edges.
+            const pad = 40 / camera.zoom;
+            const left = camera.x - W / 2 / camera.zoom - pad;
+            const right = camera.x + W / 2 / camera.zoom + pad;
+            const top = camera.y - H / 2 / camera.zoom - pad;
+            const bottom = camera.y + H / 2 / camera.zoom + pad;
+
+            ctx.save();
+
+            ctx.strokeStyle = GREEN;
+            ctx.fillStyle = "rgba(80,255,130,0.25)";
+            ctx.lineWidth = 1;
+            ctx.shadowColor = GREEN;
+            ctx.shadowBlur = 10;
+
+            // ---- ORE CIRCLES ----
+            ctx.beginPath();
+
             for (const ore of floatingOre) {
-                ctx.save();
-                ctx.translate(ore.x, ore.y);
+                if (ore.resourceType === "metal") continue;
 
-                ctx.strokeStyle = GREEN;
-                ctx.fillStyle = "rgba(80,255,130,0.25)";
-                ctx.lineWidth = 1;
-                ctx.shadowColor = GREEN;
-                ctx.shadowBlur = 10;
-
-                if (ore.resourceType === "metal") {
-                    // 🔲 metal = square
-                    const size = 6;
-                    ctx.beginPath();
-                    ctx.rect(-size / 2, -size / 2, size, size);
-                    ctx.fill();
-                    ctx.stroke();
-                } else {
-                    // ⚪ ore = circle (existing behavior)
-                    ctx.beginPath();
-                    ctx.arc(0, 0, 3, 0, Math.PI * 2);
-                    ctx.fill();
-                    ctx.stroke();
+                if (
+                    ore.x < left || ore.x > right ||
+                    ore.y < top || ore.y > bottom
+                ) {
+                    continue;
                 }
 
-                ctx.restore();
+                ctx.moveTo(ore.x + 3, ore.y);
+                ctx.arc(ore.x, ore.y, 3, 0, Math.PI * 2);
             }
+
+            ctx.fill();
+            ctx.stroke();
+
+            // ---- METAL SQUARES ----
+            ctx.beginPath();
+
+            const size = 6;
+            const half = size / 2;
+
+            for (const ore of floatingOre) {
+                if (ore.resourceType !== "metal") continue;
+
+                if (
+                    ore.x < left || ore.x > right ||
+                    ore.y < top || ore.y > bottom
+                ) {
+                    continue;
+                }
+
+                ctx.rect(ore.x - half, ore.y - half, size, size);
+            }
+
+            ctx.fill();
+            ctx.stroke();
+
+            ctx.restore();
         }
 
         function drawGravityPulses() {
@@ -3145,6 +3226,7 @@
             updateScienceProduction();
             updateScienceProbes();
             updateSalvage();
+            ships.forEach(updateShip);
 
             ctx.save();
             applyCameraTransform();
@@ -3161,7 +3243,6 @@
             drawFloatingOre();
             drawGravityPulses();
 
-            ships.forEach(updateShip);
             ships.forEach(drawShip);
 
             drawStation();
