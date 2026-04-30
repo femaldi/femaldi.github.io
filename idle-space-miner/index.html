@@ -431,6 +431,11 @@
         const SALVAGE_RIGHTS_MAX = 5;
         const SALVAGE_WRECK_COOLDOWN = 60 * 60; // 1 minute at 60fps
 
+        const DRONE_SHIP_RANGE = 250;
+        const DRONE_LASER_INTERVAL = 42;
+        const DRONE_ORBIT_SPEED = 0.045;
+        const DRONE_IDLE_ORBIT_RADIUS = 26;
+
         const salvageSlots = [];
 
         let salvagingLicenseUnlocked = false;
@@ -624,10 +629,58 @@
                             upgrades.cargoCapacity.level++;
 
                             for (const ship of ships) {
-                                ship.cargoMax = Math.floor(ship.cargoMax * (1 + SHIP_CARGO_MULTIPLIER));
+                                if (typeof ship.cargoMax === "number") {
+                                    ship.cargoMax = Math.floor(ship.cargoMax * (1 + SHIP_CARGO_MULTIPLIER));
+                                }
                             }
                         }
-                    }
+                    },
+                    {
+                        label: "Drone Ship Schematic",
+                        type: "upgrade",
+                        getLevel: () => upgrades.droneShipSchematic.level,
+                        getCap: () => upgrades.droneShipSchematic.cap,
+                        getCost: () => ({ science: getDroneShipSchematicCost() }),
+                        isVisible: () =>
+                            hasDiscoveredMetal &&
+                            upgrades.droneShipSchematic.level < upgrades.droneShipSchematic.cap,
+                        canBuy: () => true,
+                        buy: () => {
+                            upgrades.droneShipSchematic.level++;
+                        }
+                    },
+                    {
+                        label: "Salvaging Ship Schematic",
+                        type: "upgrade",
+                        getLevel: () => upgrades.salvagingShipSchematic.level,
+                        getCap: () => upgrades.salvagingShipSchematic.cap,
+                        getCost: () => ({ science: getSalvagingShipSchematicCost() }),
+                        isVisible: () =>
+                            hasDiscoveredMetal &&
+                            upgrades.salvagingShipSchematic.level < upgrades.salvagingShipSchematic.cap,
+                        canBuy: () => true,
+                        buy: () => {
+                            upgrades.salvagingShipSchematic.level++;
+                        }
+                    },
+                    {
+                        label: "Drone Ship",
+                        getCost: () => ({ metal: getDroneShipCost() }),
+                        isVisible: () => upgrades.droneShipSchematic.level > 0,
+                        canBuy: () => true,
+                        buy: () => {
+                            ships.push(makeDroneShip(countShipsByKind("droneCarrier")));
+                        }
+                    },
+                    {
+                        label: "Salvaging Ship",
+                        getCost: () => ({ metal: getSalvagingShipCost() }),
+                        isVisible: () => upgrades.salvagingShipSchematic.level > 0,
+                        canBuy: () => true,
+                        buy: () => {
+                            ships.push(makeSalvagingShip(countShipsByKind("salvageShip")));
+                        }
+                    },
                 ]
             },
 
@@ -973,11 +1026,28 @@
                 .map(s => s.wreck);
         }
 
+        function getHoveredDroneShip() {
+            for (let i = ships.length - 1; i >= 0; i--) {
+                const ship = ships[i];
+
+                if (ship.kind !== "droneCarrier") continue;
+                if (pointInModule(mouseX, mouseY, ship)) return ship;
+            }
+
+            return null;
+        }
+
         function getHoveredTarget() {
             const module = getHoveredModule();
 
             if (module) {
                 return { type: "module", object: module };
+            }
+
+            const droneShip = getHoveredDroneShip();
+
+            if (droneShip) {
+                return { type: "droneShip", object: droneShip };
             }
 
             for (const body of celestialBodies) {
@@ -1326,8 +1396,39 @@
             return 1 + upgrades.miningSpeed.level;
         }
 
+        function countShipsByKind(kind) {
+            return ships.filter(s => (s.kind || "miningFrigate") === kind).length;
+        }
+
+        function getDroneShipSchematicCost() {
+            return 350;
+        }
+
+        function getSalvagingShipSchematicCost() {
+            return 250;
+        }
+
+        function getDroneShipCost() {
+            return Math.floor(220 * Math.pow(1.85, countShipsByKind("droneCarrier")));
+        }
+
+        function getSalvagingShipCost() {
+            return Math.floor(120 * Math.pow(1.75, countShipsByKind("salvageShip")));
+        }
+
+        function getMiningDroneCost(carrier) {
+            const count = carrier.drones.filter(d => d.droneType === "mining").length;
+            return Math.floor(45 * Math.pow(1.55, count));
+        }
+
+        function getSalvagingDroneCost(carrier) {
+            const count = carrier.drones.filter(d => d.droneType === "salvaging").length;
+            return Math.floor(55 * Math.pow(1.55, count));
+        }
+
         function makeShip(i) {
             return {
+                kind: "miningFrigate",
                 x: station.x + rand(-30, 30),
                 y: station.y + rand(-30, 30),
                 speed: getShipSpeedMultiplier(),
@@ -1337,6 +1438,78 @@
                 target: null,
                 state: "seeking",
                 codename: shipNames[i] || `MINER-${i + 1}`
+            };
+        }
+
+        function makeSalvagingShip(i) {
+            return {
+                kind: "salvageShip",
+                x: station.x + rand(-34, 34),
+                y: station.y + rand(-34, 34),
+                speed: getShipSpeedMultiplier() * 0.95,
+                cargo: 0,
+                cargoMax: 20 * getCargoCapacityMultiplier(),
+                miningTimer: 0,
+                target: null,
+                state: "seeking",
+                codename: `SALVAGER-${String(i + 1).padStart(2, "0")}`
+            };
+        }
+
+        function makeDroneShip(i) {
+            const ship = {
+                kind: "droneCarrier",
+                type: "menu",
+                x: station.x + rand(-40, 40),
+                y: station.y + rand(-40, 40),
+                speed: getShipSpeedMultiplier() * 0.75,
+                radius: 22,
+                range: DRONE_SHIP_RANGE,
+                target: null,
+                targetX: station.x,
+                targetY: station.y,
+                state: "seeking",
+                redeployTimer: 0,
+                drones: [],
+                menuTitle: "DRONE SHIP CONTROL",
+                codename: `DRONE-CARRIER-${String(i + 1).padStart(2, "0")}`
+            };
+
+            ship.items = makeDroneCarrierMenuItems(ship);
+            return ship;
+        }
+
+        function makeDroneCarrierMenuItems(ship) {
+            return [
+                {
+                    label: "Mining Drone",
+                    getCost: () => ({ metal: getMiningDroneCost(ship) }),
+                    canBuy: () => true,
+                    buy: () => {
+                        ship.drones.push(makeCarrierDrone(ship, "mining"));
+                    }
+                },
+                {
+                    label: "Salvaging Drone",
+                    getCost: () => ({ metal: getSalvagingDroneCost(ship) }),
+                    canBuy: () => true,
+                    buy: () => {
+                        ship.drones.push(makeCarrierDrone(ship, "salvaging"));
+                    }
+                }
+            ];
+        }
+
+        function makeCarrierDrone(carrier, droneType) {
+            return {
+                droneType,
+                x: carrier.x,
+                y: carrier.y,
+                angle: rand(0, Math.PI * 2),
+                orbitRadius: DRONE_IDLE_ORBIT_RADIUS,
+                orbitSpeed: DRONE_ORBIT_SPEED * rand(0.8, 1.2),
+                fireTimer: Math.floor(rand(0, DRONE_LASER_INTERVAL)),
+                target: null
             };
         }
 
@@ -1364,6 +1537,14 @@
             cargoCapacity: {
                 level: 0,
                 cap: 5
+            },
+            droneShipSchematic: {
+                level: 0,
+                cap: 1
+            },
+            salvagingShipSchematic: {
+                level: 0,
+                cap: 1
             }
         };
 
@@ -1774,11 +1955,17 @@
             }
         });
 
-        function updateActiveMenu() {
-            const prevMenu = activeMenu;
+        function getHoveredMenuObject() {
+            const hoveredModule = getHoveredModule();
+            if (hoveredModule && hoveredModule.type === "menu") return hoveredModule;
 
-            // If menu is open, hovering the menu keeps it active
-            // and blocks underlying modules from opening their own menus.
+            const hoveredDroneShip = getHoveredDroneShip();
+            if (hoveredDroneShip && hoveredDroneShip.type === "menu") return hoveredDroneShip;
+
+            return null;
+        }
+
+        function updateActiveMenu() {
             if (activeMenu && activeMenu.menuBounds) {
                 const b = activeMenu.menuBounds;
 
@@ -1786,7 +1973,7 @@
                     mouseScreenX >= b.x &&
                     mouseScreenX <= b.x + b.w &&
                     mouseScreenY >= b.y &&
-                    mouseScreenY <= b.y + b.h
+                    mouseScreenY <= b.y + b.h;
 
                 if (insideMenu) {
                     menuCloseTimer = 0;
@@ -1794,11 +1981,11 @@
                 }
             }
 
-            const hoveredModule = getHoveredModule();
+            const hoveredMenuObject = getHoveredMenuObject();
 
-            if (hoveredModule && hoveredModule.type === "menu") {
-                if (activeMenu !== hoveredModule) {
-                    activeMenu = hoveredModule;
+            if (hoveredMenuObject) {
+                if (activeMenu !== hoveredMenuObject) {
+                    activeMenu = hoveredMenuObject;
                     playSound("menu", {
                         volume: 0.3,
                         volumeVar: 0.05,
@@ -1870,22 +2057,195 @@
             return true;
         }
 
+        function getTargetResourceType(target) {
+            return target?.resourceType === "metal" ? "metal" : "ore";
+        }
+
+        function getTargetResourceAmount(target) {
+            return getTargetResourceType(target) === "metal" ? target.metal : target.ore;
+        }
+
+        function reduceTargetResource(target, amount) {
+            if (getTargetResourceType(target) === "metal") {
+                target.metal = Math.max(0, target.metal - amount);
+            } else {
+                target.ore = Math.max(0, target.ore - amount);
+            }
+        }
+
+        function isShipTargetClaimedByOther(ship, target, kind) {
+            return ships.some(other =>
+                other !== ship &&
+                (other.kind || "miningFrigate") === kind &&
+                other.target === target &&
+                (other.state === "outbound" || other.state === "mining")
+            );
+        }
+
+        function isValidMiningShipTarget(ship, asteroid) {
+            if (!asteroid || asteroid.ore <= 0) return false;
+
+            const shipyard = getModuleById("smallShipyard");
+            if (!shipyard || !isInModuleRange(shipyard, asteroid)) return false;
+
+            return !isShipTargetClaimedByOther(ship, asteroid, "miningFrigate");
+        }
+
+        function isValidSalvageShipTarget(ship, wreck) {
+            if (!wreck || wreck.fading || wreck.metal <= 0) return false;
+
+            return !isShipTargetClaimedByOther(ship, wreck, "salvageShip");
+        }
+
         function chooseAsteroid(ship) {
             const available = asteroids.filter(a =>
-                isValidShipAsteroidTarget(ship, a)
+                isValidMiningShipTarget(ship, a)
             );
 
             if (!available.length) return null;
 
-            // Prefer nearest unclaimed asteroid.
-            // This reduces wasted travel compared to random selection.
-            available.sort((a, b) => {
-                const da = distSq(ship, a);
-                const db = distSq(ship, b);
-                return da - db;
+            available.sort((a, b) => distSq(ship, a) - distSq(ship, b));
+            return available[0];
+        }
+
+        function chooseWreck(ship) {
+            const available = getActiveWrecks().filter(w =>
+                isValidSalvageShipTarget(ship, w)
+            );
+
+            if (!available.length) return null;
+
+            available.sort((a, b) => distSq(ship, a) - distSq(ship, b));
+            return available[0];
+        }
+
+        function getDroneCarrierCounts(carrier) {
+            let mining = 0;
+            let salvaging = 0;
+
+            for (const drone of carrier.drones) {
+                if (drone.droneType === "salvaging") salvaging++;
+                else mining++;
+            }
+
+            return { mining, salvaging };
+        }
+
+        function getDroneCarrierCandidateTargets(carrier) {
+            const shipyard = getModuleById("smallShipyard");
+
+            const asteroidTargets = asteroids.filter(a =>
+                a.ore > 0 && (!shipyard || isInModuleRange(shipyard, a))
+            );
+
+            const wreckTargets = getActiveWrecks().filter(w =>
+                w.metal > 0 && !w.fading
+            );
+
+            const { mining, salvaging } = getDroneCarrierCounts(carrier);
+
+            return salvaging > mining
+                ? [...wreckTargets, ...asteroidTargets]
+                : [...asteroidTargets, ...wreckTargets];
+        }
+
+        function scoreDroneCarrierTarget(carrier, target) {
+            const { mining, salvaging } = getDroneCarrierCounts(carrier);
+            const salvagePriority = salvaging > mining;
+
+            let score = 0;
+
+            for (const asteroid of asteroids) {
+                if (asteroid.ore <= 0) continue;
+
+                if (distSq(target, asteroid) <= DRONE_SHIP_RANGE * DRONE_SHIP_RANGE) {
+                    score += salvagePriority ? 1 : 4;
+                }
+            }
+
+            for (const wreck of getActiveWrecks()) {
+                if (wreck.metal <= 0 || wreck.fading) continue;
+
+                if (distSq(target, wreck) <= DRONE_SHIP_RANGE * DRONE_SHIP_RANGE) {
+                    score += salvagePriority ? 5 : 1;
+                }
+            }
+
+            score -= Math.sqrt(distSq(carrier, target)) / 10000;
+
+            return score;
+        }
+
+        function findDroneCarrierDeployment(carrier) {
+            const candidates = getDroneCarrierCandidateTargets(carrier);
+
+            if (!candidates.length) {
+                return {
+                    x: station.x,
+                    y: station.y,
+                    target: null
+                };
+            }
+
+            candidates.sort((a, b) =>
+                scoreDroneCarrierTarget(carrier, b) -
+                scoreDroneCarrierTarget(carrier, a)
+            );
+
+            const target = candidates[0];
+
+            // Park on the station-facing side of the asteroid/wreck.
+            const angle = Math.atan2(station.y - target.y, station.x - target.x);
+            const offset = target.radius + 95;
+
+            return {
+                x: Math.max(40, Math.min(WORLD_W - 40, target.x + Math.cos(angle) * offset)),
+                y: Math.max(40, Math.min(WORLD_H - 40, target.y + Math.sin(angle) * offset)),
+                target
+            };
+        }
+
+        function isTargetInsideCarrierRange(carrier, target) {
+            return distSq(carrier, target) <= carrier.range * carrier.range;
+        }
+
+        function getDroneTarget(carrier, drone) {
+            if (drone.droneType === "salvaging") {
+                const wrecks = getActiveWrecks()
+                    .filter(w =>
+                        w.metal > 0 &&
+                        !w.fading &&
+                        isTargetInsideCarrierRange(carrier, w)
+                    )
+                    .sort((a, b) => distSq(drone, a) - distSq(drone, b));
+
+                return wrecks[0] || null;
+            }
+
+            const asteroidTargets = asteroids
+                .filter(a =>
+                    a.ore > 0 &&
+                    isTargetInsideCarrierRange(carrier, a)
+                )
+                .sort((a, b) => distSq(drone, a) - distSq(drone, b));
+
+            return asteroidTargets[0] || null;
+        }
+
+        function fireDroneLaser(carrier, drone, target) {
+            if (!target || getTargetResourceAmount(target) <= 0) return;
+
+            laserBeams.push({
+                x1: drone.x,
+                y1: drone.y,
+                x2: target.x,
+                y2: target.y,
+                life: 8,
+                asteroid: target,
+                noSpawn: true
             });
 
-            return available[0];
+            spawnFloatingChunk(target);
         }
 
         function moveToward(obj, tx, ty, speed) {
@@ -1917,7 +2277,7 @@
 
                 beam.life--;
 
-                if (beam.life === 6) {
+                if (beam.life === 6 && !beam.noSpawn) {
                     const chunks = getLaserOreChunks();
 
                     for (let n = 0; n < chunks; n++) {
@@ -2032,14 +2392,13 @@
             }
         }
 
-        function updateShip(ship) {
-            // Idle ships should keep looking for newly freed asteroids.
+        function updateCargoMiningShip(ship, chooseTarget, isValidTarget, resourceType) {
             if (ship.state === "idle") {
                 ship.state = "seeking";
             }
 
             if (ship.state === "seeking") {
-                ship.target = chooseAsteroid(ship);
+                ship.target = chooseTarget(ship);
 
                 if (ship.target) {
                     ship.state = "outbound";
@@ -2050,7 +2409,7 @@
             }
 
             if (ship.state === "outbound") {
-                if (!isValidShipAsteroidTarget(ship, ship.target)) {
+                if (!isValidTarget(ship, ship.target)) {
                     ship.target = null;
                     ship.state = "seeking";
                     return;
@@ -2063,7 +2422,7 @@
             }
 
             if (ship.state === "mining") {
-                if (!isValidShipAsteroidTarget(ship, ship.target)) {
+                if (!isValidTarget(ship, ship.target)) {
                     ship.target = null;
                     ship.state = ship.cargo > 0 ? "returning" : "seeking";
                     return;
@@ -2074,16 +2433,19 @@
                 if (ship.miningTimer % getMiningInterval() === 0) {
                     const mined = Math.min(
                         getMiningAmountPerTick(),
-                        ship.target.ore,
+                        getTargetResourceAmount(ship.target),
                         ship.cargoMax - ship.cargo
                     );
 
-                    ship.target.ore -= mined;
+                    reduceTargetResource(ship.target, mined);
                     ship.cargo += mined;
                 }
 
-                if (!ship.target || ship.target.ore <= 0 || ship.cargo >= ship.cargoMax) {
-                    // Important: release the asteroid reservation before returning.
+                if (
+                    !ship.target ||
+                    getTargetResourceAmount(ship.target) <= 0 ||
+                    ship.cargo >= ship.cargoMax
+                ) {
                     ship.target = null;
                     ship.state = "returning";
                 }
@@ -2092,7 +2454,7 @@
             if (ship.state === "returning") {
                 if (moveToward(ship, station.x, station.y, ship.speed * 0.85)) {
                     if (ship.cargo > 0) {
-                        addResource("ore", ship.cargo);
+                        addResource(resourceType, ship.cargo);
                         queueOreGatherSound();
                     }
 
@@ -2101,6 +2463,98 @@
                     ship.state = "seeking";
                 }
             }
+        }
+
+        function hasDroneTargetsInRange(carrier) {
+            return asteroids.some(a =>
+                a.ore > 0 &&
+                isTargetInsideCarrierRange(carrier, a)
+            ) || getActiveWrecks().some(w =>
+                w.metal > 0 &&
+                !w.fading &&
+                isTargetInsideCarrierRange(carrier, w)
+            );
+        }
+
+        function updateCarrierDrone(carrier, drone) {
+            if (
+                !drone.target ||
+                getTargetResourceAmount(drone.target) <= 0 ||
+                !isTargetInsideCarrierRange(carrier, drone.target)
+            ) {
+                drone.target = getDroneTarget(carrier, drone);
+            }
+
+            if (!drone.target) {
+                drone.angle += drone.orbitSpeed * 0.65;
+                drone.x = carrier.x + Math.cos(drone.angle) * DRONE_IDLE_ORBIT_RADIUS;
+                drone.y = carrier.y + Math.sin(drone.angle) * DRONE_IDLE_ORBIT_RADIUS;
+                return;
+            }
+
+            drone.angle += drone.orbitSpeed;
+            drone.orbitRadius = drone.target.radius + 26;
+
+            drone.x = drone.target.x + Math.cos(drone.angle) * drone.orbitRadius;
+            drone.y = drone.target.y + Math.sin(drone.angle) * drone.orbitRadius;
+
+            drone.fireTimer--;
+
+            if (drone.fireTimer <= 0) {
+                fireDroneLaser(carrier, drone, drone.target);
+                drone.fireTimer = DRONE_LASER_INTERVAL;
+            }
+        }
+
+        function updateDroneCarrier(ship) {
+            ship.redeployTimer++;
+
+            const shouldRedeploy =
+                ship.state === "seeking" ||
+                (
+                    ship.state === "deployed" &&
+                    ship.redeployTimer > 180 &&
+                    !hasDroneTargetsInRange(ship)
+                );
+
+            if (shouldRedeploy) {
+                const deployment = findDroneCarrierDeployment(ship);
+
+                ship.target = deployment.target;
+                ship.targetX = deployment.x;
+                ship.targetY = deployment.y;
+                ship.state = "outbound";
+                ship.redeployTimer = 0;
+            }
+
+            if (ship.state === "outbound") {
+                const arrived = moveToward(ship, ship.targetX, ship.targetY, ship.speed);
+
+                if (arrived) {
+                    ship.state = "deployed";
+                    ship.redeployTimer = 0;
+                }
+            }
+
+            for (const drone of ship.drones) {
+                updateCarrierDrone(ship, drone);
+            }
+        }
+
+        function updateShip(ship) {
+            const kind = ship.kind || "miningFrigate";
+
+            if (kind === "salvageShip") {
+                updateCargoMiningShip(ship, chooseWreck, isValidSalvageShipTarget, "metal");
+                return;
+            }
+
+            if (kind === "droneCarrier") {
+                updateDroneCarrier(ship);
+                return;
+            }
+
+            updateCargoMiningShip(ship, chooseAsteroid, isValidMiningShipTarget, "ore");
         }
 
         function wrapTextLines(text, maxWidth) {
@@ -2751,7 +3205,7 @@
             }
 
             if (y < 12) y = 12;
-            if (y + h > H - 12) y = WORLD_H - h - 12;
+            if (y + h > H - 12) y = H - h - 12;
 
             activeMenu.menuBounds = { x, y, w, h };
 
@@ -3103,42 +3557,144 @@
             }
         }
 
+        function drawCarrierDrone(drone) {
+            ctx.save();
+            ctx.translate(drone.x, drone.y);
+
+            ctx.strokeStyle = drone.droneType === "salvaging"
+                ? "rgba(160,255,210,0.95)"
+                : GREEN;
+
+            ctx.fillStyle = drone.droneType === "salvaging"
+                ? "rgba(120,255,190,0.16)"
+                : "rgba(0,255,90,0.16)";
+
+            ctx.lineWidth = 1;
+            ctx.shadowColor = GREEN;
+            ctx.shadowBlur = 6;
+
+            if (drone.droneType === "salvaging") {
+                ctx.beginPath();
+                ctx.rect(-3, -3, 6, 6);
+                ctx.fill();
+                ctx.stroke();
+            } else {
+                ctx.beginPath();
+                ctx.arc(0, 0, 3.5, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.stroke();
+            }
+
+            ctx.restore();
+        }
+
         function drawShip(ship) {
+            const kind = ship.kind || "miningFrigate";
+            const isDroneCarrier = kind === "droneCarrier";
+            const isSalvageShip = kind === "salvageShip";
+
             const angle = ship.state === "returning"
                 ? Math.atan2(station.y - ship.y, station.x - ship.x)
                 : ship.target
-                    ? Math.atan2(ship.target.y - ship.y, ship.target.x - ship.x)
-                    : 0;
+                    ? Math.atan2(
+                        (ship.target.y ?? ship.targetY) - ship.y,
+                        (ship.target.x ?? ship.targetX) - ship.x
+                    )
+                    : ship.targetX !== undefined
+                        ? Math.atan2(ship.targetY - ship.y, ship.targetX - ship.x)
+                        : 0;
+
+            const hovered = getHoveredTarget()?.object === ship;
+
+            if (isDroneCarrier && (hovered || activeMenu === ship)) {
+                ctx.save();
+                ctx.strokeStyle = "rgba(80,255,130,0.18)";
+                ctx.lineWidth = 1;
+                ctx.setLineDash([8, 8]);
+                ctx.beginPath();
+                ctx.arc(ship.x, ship.y, ship.range, 0, Math.PI * 2);
+                ctx.stroke();
+                ctx.restore();
+            }
 
             ctx.save();
             ctx.translate(ship.x, ship.y);
             ctx.rotate(angle);
 
-            ctx.strokeStyle = GREEN;
-            ctx.fillStyle = "rgba(0,255,90,0.12)";
-            ctx.lineWidth = 2;
+            ctx.strokeStyle = hovered ? "rgba(180,255,210,0.95)" : GREEN;
+
+            ctx.fillStyle = isDroneCarrier
+                ? "rgba(80,255,180,0.14)"
+                : isSalvageShip
+                    ? "rgba(120,255,190,0.14)"
+                    : "rgba(0,255,90,0.12)";
+
+            ctx.lineWidth = hovered ? 3 : 2;
             ctx.shadowColor = GREEN;
-            ctx.shadowBlur = 8;
+            ctx.shadowBlur = hovered ? 14 : 8;
 
             ctx.beginPath();
-            ctx.moveTo(12, 0);
-            ctx.lineTo(-9, -7);
-            ctx.lineTo(-5, 0);
-            ctx.lineTo(-9, 7);
-            ctx.closePath();
+
+            if (isDroneCarrier) {
+                ctx.rect(-15, -11, 30, 22);
+                ctx.moveTo(15, 0);
+                ctx.lineTo(25, -8);
+                ctx.lineTo(25, 8);
+                ctx.closePath();
+            } else if (isSalvageShip) {
+                ctx.moveTo(14, 0);
+                ctx.lineTo(-10, -9);
+                ctx.lineTo(-4, 0);
+                ctx.lineTo(-10, 9);
+                ctx.closePath();
+
+                ctx.moveTo(-14, -11);
+                ctx.lineTo(-7, -6);
+                ctx.moveTo(-14, 11);
+                ctx.lineTo(-7, 6);
+            } else {
+                ctx.moveTo(12, 0);
+                ctx.lineTo(-9, -7);
+                ctx.lineTo(-5, 0);
+                ctx.lineTo(-9, 7);
+                ctx.closePath();
+            }
+
             ctx.fill();
             ctx.stroke();
 
             ctx.restore();
 
+            if (isDroneCarrier) {
+                for (const drone of ship.drones) {
+                    drawCarrierDrone(drone);
+                }
+            }
+
             drawText(ship.codename, ship.x + 10, ship.y - 10);
-            drawText(`${ship.state.toUpperCase()} ${ship.cargo}/${ship.cargoMax}`, ship.x + 10, ship.y + 4, 0.65);
+
+            if (isDroneCarrier) {
+                const { mining, salvaging } = getDroneCarrierCounts(ship);
+                drawText(`${ship.state.toUpperCase()} M:${mining} S:${salvaging}`, ship.x + 10, ship.y + 4, 0.65);
+            } else {
+                const resourceLabel = isSalvageShip ? "METAL" : "ORE";
+                drawText(`${ship.state.toUpperCase()} ${resourceLabel}:${ship.cargo}/${ship.cargoMax}`, ship.x + 10, ship.y + 4, 0.65);
+            }
 
             if (ship.target && ship.state !== "idle") {
-                ctx.strokeStyle = "rgba(80,255,130,0.12)";
+                ctx.strokeStyle = isSalvageShip
+                    ? "rgba(120,255,190,0.14)"
+                    : "rgba(80,255,130,0.12)";
+
                 ctx.beginPath();
                 ctx.moveTo(ship.x, ship.y);
                 ctx.lineTo(ship.target.x, ship.target.y);
+                ctx.stroke();
+            } else if (isDroneCarrier && ship.state === "outbound") {
+                ctx.strokeStyle = "rgba(80,255,130,0.12)";
+                ctx.beginPath();
+                ctx.moveTo(ship.x, ship.y);
+                ctx.lineTo(ship.targetX, ship.targetY);
                 ctx.stroke();
             }
         }
@@ -3163,10 +3719,10 @@
 
             drawText("DEEP SPACE EXTRACTION COMMAND", 24, 28);
             drawText("SECTOR: KAPPA-9 / STATUS: ACTIVE", 24, 46, 0.75);
-            drawText(`FLEET: ${ships.length} MINING UNITS`, 24, 64, 0.75);
-            if (resources.ore > 0) drawText(`ORE: ${resources.ore}`, 24, RESOURCES_OFFSET_Y + 82, 1.0);
-            if (resources.science > 0) drawText(`SCIENCE: ${resources.science}`, 24, RESOURCES_OFFSET_Y + 100, 1.0);
-            if (resources.metal > 0) drawText(`METAL: ${resources.metal}`, 24, RESOURCES_OFFSET_Y + 118, 1.0);
+            drawText(`FLEET: ${ships.length} UNITS`, 24, 64, 0.75);
+            drawText(`ORE: ${resources.ore}`, 24, RESOURCES_OFFSET_Y + 82, 1.0);
+            if (hasDiscoveredScience) drawText(`SCIENCE: ${resources.science}`, 24, RESOURCES_OFFSET_Y + 100, 1.0);
+            if (hasDiscoveredMetal) drawText(`METAL: ${resources.metal}`, 24, RESOURCES_OFFSET_Y + 118, 1.0);
 
             const hovered = getHoveredTarget();
 
@@ -3192,6 +3748,16 @@
 
             if (hovered?.type === "module") {
                 drawText(`MODULE LOCK: ${hovered.object.codename}`, 24, 132, 0.8);
+            }
+
+            if (hovered?.type === "droneShip") {
+                const { mining, salvaging } = getDroneCarrierCounts(hovered.object);
+                drawText(
+                    `DRONE SHIP: ${hovered.object.codename} // M:${mining} S:${salvaging}`,
+                    24,
+                    132,
+                    0.8
+                );
             }
 
         }
