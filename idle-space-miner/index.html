@@ -255,11 +255,14 @@
         const resources = {
             ore: 0,
             science: 0,
-            metal: 0
+            metal: 0,
+            helion: 0
         };
 
         let hasDiscoveredScience = false;
         let hasDiscoveredMetal = false;
+        let hasDiscoveredHelion = false;
+        let largeShipyardUnlocked = false;
 
         const oreQuotas = [
             {
@@ -285,15 +288,22 @@
             },
             {
                 amount: 10000,
-                label: "QUOTA II",
+                label: "LARGE SHIPYARD",
                 unlocked: false,
+                onUnlock: () => {
+                    largeShipyardUnlocked = true;
+                },
                 message: {
                     title: "INCOMING MESSAGE // QUOTA VERIFIED",
                     from: "DEBT-CLAIM AUTHORITY",
                     body: [
                         "Quota milestone reached: 10.000 total ore units acquired.",
                         "",
-                        "Additional operational privileges have been marked for future issuance."
+                        "Authorization tier upgraded.",
+                        "",
+                        "Large Shipyard construction is now permitted.",
+                        "",
+                        "Specialized stellar-fuel vessels may now be requisitioned once the proper infrastructure is built."
                     ]
                 }
             },
@@ -354,6 +364,10 @@
 
             if (type === "metal" && amount > 0) {
                 hasDiscoveredMetal = true;
+            }
+
+            if (type === "helion" && amount > 0) {
+                hasDiscoveredHelion = true;
             }
 
             if (type === "ore") {
@@ -444,6 +458,52 @@
         const SHIP_STANDBY_BASE_RADIUS = 82;
         const SHIP_STANDBY_RING_GAP = 46;
 
+        const STAR_SIPHONER_BASE_SPEED = 0.65; // intentionally slow, no speed upgrades
+        const STAR_SIPHON_INTERVAL_BASE = 80;
+        const STAR_SIPHON_AMOUNT_BASE = 1;
+        const STAR_SIPHON_STANDOFF = 145;
+
+        function countShipsByKind(kind) {
+            return ships.filter(s => (s.kind || "miningFrigate") === kind).length;
+        }
+
+        function getLargeShipyardCost() {
+            return 25000;
+        }
+
+        function getStarSiphonerCost() {
+            return {
+                metal: Math.floor(650 * Math.pow(1.9, countShipsByKind("starSiphoner")))
+            };
+        }
+
+        function getSiphoningSpeedCost() {
+            return {
+                science: Math.floor(500 * Math.pow(2.25, upgrades.siphoningSpeed.level))
+            };
+        }
+
+        function getSiphonCargoCost() {
+            return {
+                science: Math.floor(450 * Math.pow(2.1, upgrades.siphonCargo.level))
+            };
+        }
+
+        function getStarSiphonInterval() {
+            return Math.max(
+                18,
+                STAR_SIPHON_INTERVAL_BASE - upgrades.siphoningSpeed.level * 10
+            );
+        }
+
+        function getStarSiphonAmount() {
+            return STAR_SIPHON_AMOUNT_BASE + upgrades.siphoningSpeed.level;
+        }
+
+        function getStarSiphonerCargoMax() {
+            return 12 + upgrades.siphonCargo.level * 8;
+        }
+
         const salvageSlots = [];
 
         let salvagingLicenseUnlocked = false;
@@ -496,7 +556,19 @@
                         buy: () => {
                             addSalvageSlot();
                         }
-                    }
+                    },
+                    {
+                        label: "Large Shipyard",
+                        getCost: () => ({ ore: getLargeShipyardCost() }),
+                        isVisible: () =>
+                            largeShipyardUnlocked &&
+                            !stationModules.some(m => m.id === "largeShipyard"),
+                        canBuy: () => true,
+                        buy: () => {
+                            stationModules.push(createModule("largeShipyard"));
+                            activeMenu = null;
+                        }
+                    },
                 ]
             },
 
@@ -689,6 +761,56 @@
                             ships.push(makeSalvagingShip(countShipsByKind("salvageShip")));
                         }
                     },
+                ]
+            },
+
+            largeShipyard: {
+                id: "largeShipyard",
+                codename: "YARD-OMEGA",
+                type: "menu",
+                xOffset: 100,
+                yOffset: 100,
+                radius: 52,
+                menuTitle: "LARGE SHIPYARD REQUISITIONS",
+                items: [
+                    {
+                        label: "Helion Siphoner",
+                        getCost: () => getStarSiphonerCost(),
+                        canBuy: () => true,
+                        buy: () => {
+                            ships.push(makeStarSiphoner(countShipsByKind("starSiphoner")));
+                        }
+                    },
+                    {
+                        label: "Siphoning Speed",
+                        type: "upgrade",
+                        getLevel: () => upgrades.siphoningSpeed.level,
+                        getCap: () => upgrades.siphoningSpeed.cap,
+                        getCost: () => getSiphoningSpeedCost(),
+                        isVisible: () => upgrades.siphoningSpeed.level < upgrades.siphoningSpeed.cap,
+                        canBuy: () => true,
+                        buy: () => {
+                            upgrades.siphoningSpeed.level++;
+                        }
+                    },
+                    {
+                        label: "Siphon Cargo Space",
+                        type: "upgrade",
+                        getLevel: () => upgrades.siphonCargo.level,
+                        getCap: () => upgrades.siphonCargo.cap,
+                        getCost: () => getSiphonCargoCost(),
+                        isVisible: () => upgrades.siphonCargo.level < upgrades.siphonCargo.cap,
+                        canBuy: () => true,
+                        buy: () => {
+                            upgrades.siphonCargo.level++;
+
+                            for (const ship of ships) {
+                                if (ship.kind === "starSiphoner") {
+                                    ship.cargoMax = getStarSiphonerCargoMax();
+                                }
+                            }
+                        }
+                    }
                 ]
             },
 
@@ -1498,6 +1620,21 @@
             return false;
         }
 
+        function makeStarSiphoner(i) {
+            return {
+                kind: "starSiphoner",
+                x: station.x + rand(-40, 40),
+                y: station.y + rand(-40, 40),
+                speed: STAR_SIPHONER_BASE_SPEED,
+                cargo: 0,
+                cargoMax: getStarSiphonerCargoMax(),
+                siphonTimer: 0,
+                target: null,
+                state: "seeking",
+                codename: `HELION-${String(i + 1).padStart(2, "0")}`
+            };
+        }
+
         function makeShip(i) {
             return {
                 kind: "miningFrigate",
@@ -1621,6 +1758,14 @@
             salvagingShipSchematic: {
                 level: 0,
                 cap: 1
+            },
+            siphoningSpeed: {
+                level: 0,
+                cap: 6
+            },
+            siphonCargo: {
+                level: 0,
+                cap: 6
             }
         };
 
@@ -2105,6 +2250,34 @@
                 firePulseLaser(heldAsteroidTarget);
                 cd.current = cd.getMax();
             }
+        }
+
+        function isActiveStarTarget(body) {
+            return body && body.type === "STAR";
+        }
+
+        function isStarClaimedByOtherSiphoner(star, currentShip) {
+            return ships.some(other =>
+                other !== currentShip &&
+                other.kind === "starSiphoner" &&
+                other.target === star &&
+                (
+                    other.state === "outbound" ||
+                    other.state === "siphoning"
+                )
+            );
+        }
+
+        function chooseStarForSiphoner(ship) {
+            const stars = celestialBodies
+                .filter(isActiveStarTarget)
+                .filter(star => !isStarClaimedByOtherSiphoner(star, ship));
+
+            if (!stars.length) return null;
+
+            stars.sort((a, b) => distSq(ship, a) - distSq(ship, b));
+
+            return stars[0];
         }
 
         function isAsteroidClaimedByOtherShip(asteroid, currentShip) {
@@ -2953,6 +3126,86 @@
             }
         }
 
+        function updateStarSiphoner(ship) {
+            if (ship.state === "idle" || ship.state === "standby") {
+                ship.state = "seeking";
+            }
+
+            if (ship.state === "seeking") {
+                ship.target = chooseStarForSiphoner(ship);
+
+                if (ship.target) {
+                    ship.state = "outbound";
+                } else {
+                    ship.state = "idle";
+                    return;
+                }
+            }
+
+            if (ship.state === "outbound") {
+                if (!ship.target || !isActiveStarTarget(ship.target)) {
+                    ship.target = null;
+                    ship.state = "seeking";
+                    return;
+                }
+
+                const siphonDistance = ship.target.radius + STAR_SIPHON_STANDOFF;
+
+                const dx = ship.x - ship.target.x;
+                const dy = ship.y - ship.target.y;
+                const d = Math.hypot(dx, dy) || 1;
+
+                const targetX = ship.target.x + dx / d * siphonDistance;
+                const targetY = ship.target.y + dy / d * siphonDistance;
+
+                if (moveToward(ship, targetX, targetY, ship.speed)) {
+                    ship.state = "siphoning";
+                    ship.siphonTimer = 0;
+                }
+            }
+
+            if (ship.state === "siphoning") {
+                if (!ship.target || !isActiveStarTarget(ship.target)) {
+                    ship.target = null;
+                    ship.state = ship.cargo > 0 ? "returning" : "seeking";
+                    return;
+                }
+
+                ship.siphonTimer++;
+
+                if (ship.siphonTimer >= getStarSiphonInterval()) {
+                    ship.siphonTimer = 0;
+
+                    const amount = Math.min(
+                        getStarSiphonAmount(),
+                        ship.cargoMax - ship.cargo
+                    );
+
+                    ship.cargo += amount;
+                }
+
+                if (ship.cargo >= ship.cargoMax) {
+                    ship.target = null;
+                    ship.state = "returning";
+                }
+            }
+
+            if (ship.state === "returning") {
+                const largeShipyard = getModuleById("largeShipyard") || station;
+
+                if (moveToward(ship, largeShipyard.x, largeShipyard.y, ship.speed)) {
+                    if (ship.cargo > 0) {
+                        addResource("helion", ship.cargo);
+                        queueOreGatherSound();
+                    }
+
+                    ship.cargo = 0;
+                    ship.target = null;
+                    ship.state = "seeking";
+                }
+            }
+        }
+
         function updateShip(ship) {
             const kind = ship.kind || "miningFrigate";
 
@@ -2963,6 +3216,11 @@
 
             if (kind === "droneCarrier") {
                 updateDroneCarrier(ship);
+                return;
+            }
+
+            if (kind === "starSiphoner") {
+                updateStarSiphoner(ship);
                 return;
             }
 
@@ -3398,6 +3656,8 @@
                 drawGravityModuleShape(module);
             } else if (module.id === "smallShipyard") {
                 drawShipyardShape(module);
+            } else if (module.id === "largeShipyard") {
+                drawLargeShipyardShape(module);
             } else if (module.id === "stationMiningLaser") {
                 drawMiningLaserShape(module);
             } else if (module.id === "observatory") {
@@ -3545,6 +3805,49 @@
             ctx.moveTo(0, 18);
             ctx.lineTo(0, 34);
             ctx.stroke();
+        }
+
+        function drawLargeShipyardShape(module) {
+            // Main heavy dock body
+            ctx.beginPath();
+            ctx.rect(-36, -24, 72, 48);
+            ctx.fill();
+            ctx.stroke();
+
+            // Left construction gantry
+            ctx.beginPath();
+            ctx.moveTo(-48, -34);
+            ctx.lineTo(-34, -24);
+            ctx.lineTo(-34, 24);
+            ctx.lineTo(-48, 34);
+            ctx.stroke();
+
+            // Right launch gantry
+            ctx.beginPath();
+            ctx.moveTo(48, -34);
+            ctx.lineTo(34, -24);
+            ctx.lineTo(34, 24);
+            ctx.lineTo(48, 34);
+            ctx.stroke();
+
+            // Central drydock opening
+            ctx.beginPath();
+            ctx.rect(-18, -12, 36, 24);
+            ctx.stroke();
+
+            // Antenna / crane mast
+            ctx.beginPath();
+            ctx.moveTo(0, -24);
+            ctx.lineTo(0, -46);
+            ctx.moveTo(-10, -38);
+            ctx.lineTo(10, -38);
+            ctx.stroke();
+
+            // Small docking lights
+            ctx.fillRect(-28, -16, 4, 4);
+            ctx.fillRect(24, -16, 4, 4);
+            ctx.fillRect(-28, 12, 4, 4);
+            ctx.fillRect(24, 12, 4, 4);
         }
 
         function drawShipyardShape(module) {
@@ -4000,10 +4303,125 @@
             ctx.restore();
         }
 
+        function drawSalvageShipShape(hovered) {
+            // Assumes ctx is already translated/rotated to ship position.
+
+            // Main industrial hull
+            ctx.beginPath();
+            ctx.rect(-14, -10, 22, 20);
+            ctx.fill();
+            ctx.stroke();
+
+            // Front recovery frame / clamp arms
+            ctx.beginPath();
+            ctx.moveTo(8, -12);
+            ctx.lineTo(18, -16);
+            ctx.lineTo(24, -8);
+
+            ctx.moveTo(8, 12);
+            ctx.lineTo(18, 16);
+            ctx.lineTo(24, 8);
+
+            // Connecting frame
+            ctx.moveTo(8, -7);
+            ctx.lineTo(18, -7);
+            ctx.lineTo(18, 7);
+            ctx.lineTo(8, 7);
+            ctx.stroke();
+
+            // Rear engine pods
+            ctx.beginPath();
+            ctx.rect(-22, -8, 8, 6);
+            ctx.rect(-22, 2, 8, 6);
+            ctx.fill();
+            ctx.stroke();
+
+            // Top detail line
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(-10, 0);
+            ctx.lineTo(6, 0);
+            ctx.stroke();
+
+            // Clamp tips / lights
+            ctx.fillStyle = hovered ? "rgba(180,255,210,0.95)" : GREEN;
+            ctx.fillRect(22, -10, 3, 3);
+            ctx.fillRect(22, 7, 3, 3);
+        }
+
+        function drawStarSiphonerShape(hovered) {
+            // Assumes ctx is already translated/rotated to ship position.
+
+            // Central tanker body
+            ctx.beginPath();
+            ctx.rect(-28, -12, 46, 24);
+            ctx.fill();
+            ctx.stroke();
+
+            // Forward command / siphon bow
+            ctx.beginPath();
+            ctx.moveTo(18, -10);
+            ctx.lineTo(34, -6);
+            ctx.lineTo(38, 0);
+            ctx.lineTo(34, 6);
+            ctx.lineTo(18, 10);
+            ctx.closePath();
+            ctx.fill();
+            ctx.stroke();
+
+            // Upper fuel tank
+            ctx.beginPath();
+            ctx.rect(-18, -22, 28, 8);
+            ctx.fill();
+            ctx.stroke();
+
+            // Lower fuel tank
+            ctx.beginPath();
+            ctx.rect(-18, 14, 28, 8);
+            ctx.fill();
+            ctx.stroke();
+
+            // Rear engine block
+            ctx.beginPath();
+            ctx.rect(-38, -10, 10, 20);
+            ctx.fill();
+            ctx.stroke();
+
+            // Rear thruster nozzles
+            ctx.beginPath();
+            ctx.rect(-46, -8, 8, 5);
+            ctx.rect(-46, 3, 8, 5);
+            ctx.fill();
+            ctx.stroke();
+
+            // Siphon arms / pipework
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(8, -16);
+            ctx.lineTo(22, -16);
+            ctx.lineTo(30, -10);
+
+            ctx.moveTo(8, 16);
+            ctx.lineTo(22, 16);
+            ctx.lineTo(30, 10);
+
+            ctx.moveTo(-6, -14);
+            ctx.lineTo(-6, 14);
+            ctx.stroke();
+
+            // Status lights - green, no yellow
+            ctx.fillStyle = hovered ? "rgba(180,255,210,0.95)" : GREEN;
+            ctx.fillRect(-10, -20, 3, 3);
+            ctx.fillRect(4, -20, 3, 3);
+            ctx.fillRect(-10, 17, 3, 3);
+            ctx.fillRect(4, 17, 3, 3);
+        }
+
         function drawShip(ship) {
             const kind = ship.kind || "miningFrigate";
             const isDroneCarrier = kind === "droneCarrier";
             const isSalvageShip = kind === "salvageShip";
+            const isStarSiphoner = kind === "starSiphoner";
 
             const angle = ship.state === "returning"
                 ? Math.atan2(station.y - ship.y, station.x - ship.x)
@@ -4035,11 +4453,13 @@
 
             ctx.strokeStyle = hovered ? "rgba(180,255,210,0.95)" : GREEN;
 
-            ctx.fillStyle = isDroneCarrier
-                ? "rgba(80,255,180,0.14)"
-                : isSalvageShip
-                    ? "rgba(120,255,190,0.14)"
-                    : "rgba(0,255,90,0.12)";
+            ctx.fillStyle = isStarSiphoner
+                            ? "rgba(80,255,130,0.18)"
+                            : isDroneCarrier
+                                ? "rgba(80,255,180,0.14)"
+                                : isSalvageShip
+                                    ? "rgba(120,255,190,0.18)"
+                                    : "rgba(0,255,90,0.12)";
 
             ctx.lineWidth = hovered ? 3 : 2;
             ctx.shadowColor = GREEN;
@@ -4047,23 +4467,16 @@
 
             ctx.beginPath();
 
-            if (isDroneCarrier) {
+            if (isStarSiphoner) {
+                drawStarSiphonerShape(hovered);
+            } else if (isDroneCarrier) {
                 ctx.rect(-15, -11, 30, 22);
                 ctx.moveTo(15, 0);
                 ctx.lineTo(25, -8);
                 ctx.lineTo(25, 8);
                 ctx.closePath();
             } else if (isSalvageShip) {
-                ctx.moveTo(14, 0);
-                ctx.lineTo(-10, -9);
-                ctx.lineTo(-4, 0);
-                ctx.lineTo(-10, 9);
-                ctx.closePath();
-
-                ctx.moveTo(-14, -11);
-                ctx.lineTo(-7, -6);
-                ctx.moveTo(-14, 11);
-                ctx.lineTo(-7, 6);
+                drawSalvageShipShape(hovered);
             } else {
                 ctx.moveTo(12, 0);
                 ctx.lineTo(-9, -7);
@@ -4077,6 +4490,10 @@
 
             ctx.restore();
 
+            if (isStarSiphoner) {
+                drawHelionSiphonEffect(ship);
+            }
+
             if (isDroneCarrier) {
                 for (const drone of ship.drones) {
                     drawCarrierDrone(drone);
@@ -4088,6 +4505,8 @@
             if (isDroneCarrier) {
                 const { mining, salvaging } = getDroneCarrierCounts(ship);
                 drawText(`${ship.state.toUpperCase()} M:${mining} S:${salvaging}`, ship.x + 10, ship.y + 4, 0.65);
+            } else if (isStarSiphoner) {
+                drawText(`${ship.state.toUpperCase()} HELION:${ship.cargo}/${ship.cargoMax}`, ship.x + 10, ship.y + 4, 0.65);
             } else {
                 const resourceLabel = isSalvageShip ? "METAL" : "ORE";
                 drawText(`${ship.state.toUpperCase()} ${resourceLabel}:${ship.cargo}/${ship.cargoMax}`, ship.x + 10, ship.y + 4, 0.65);
@@ -4109,6 +4528,153 @@
                 ctx.lineTo(ship.targetX, ship.targetY);
                 ctx.stroke();
             }
+        }
+
+        function drawHelionSiphonEffect(ship) {
+            if (ship.kind !== "starSiphoner") return;
+            if (ship.state !== "siphoning") return;
+            if (!ship.target) return;
+
+            const target = ship.target;
+
+            const angle = Math.atan2(target.y - ship.y, target.x - ship.x);
+
+            // Start the effect a bit in front of the tanker,
+            // so it feels like it comes from the siphon apparatus.
+            const startX = ship.x + Math.cos(angle) * 34;
+            const startY = ship.y + Math.sin(angle) * 34;
+
+            // End slightly inside the star edge, not dead center.
+            const endX = target.x - Math.cos(angle) * (target.radius * 0.2);
+            const endY = target.y - Math.sin(angle) * (target.radius * 0.2);
+
+            const dx = endX - startX;
+            const dy = endY - startY;
+            const len = Math.hypot(dx, dy) || 1;
+
+            // Perpendicular vector for beam wobble / plasma ribbon effect
+            const nx = -dy / len;
+            const ny = dx / len;
+
+            const t = frameCount * 0.12;
+            const midX = (startX + endX) * 0.5;
+            const midY = (startY + endY) * 0.5;
+
+            const wobble = 10 + Math.sin(t * 0.9) * 3;
+
+            ctx.save();
+            ctx.lineCap = "round";
+            ctx.lineJoin = "round";
+
+            // --- Outer plasma haze ---
+            ctx.strokeStyle = "rgba(80,255,130,0.10)";
+            ctx.lineWidth = 20 + Math.sin(t * 1.1) * 2;
+            ctx.shadowColor = GREEN;
+            ctx.shadowBlur = 24;
+            ctx.beginPath();
+            ctx.moveTo(startX, startY);
+            ctx.quadraticCurveTo(
+                midX + nx * wobble,
+                midY + ny * wobble,
+                endX,
+                endY
+            );
+            ctx.stroke();
+
+            // --- Main plasma ribbon ---
+            ctx.strokeStyle = "rgba(100,255,150,0.28)";
+            ctx.lineWidth = 12;
+            ctx.shadowBlur = 18;
+            ctx.beginPath();
+            ctx.moveTo(startX, startY);
+            ctx.quadraticCurveTo(
+                midX + nx * wobble * 0.7,
+                midY + ny * wobble * 0.7,
+                endX,
+                endY
+            );
+            ctx.stroke();
+
+            // --- Bright inner core ---
+            ctx.strokeStyle = "rgba(180,255,210,0.72)";
+            ctx.lineWidth = 5;
+            ctx.shadowBlur = 10;
+            ctx.beginPath();
+            ctx.moveTo(startX, startY);
+            ctx.quadraticCurveTo(
+                midX + nx * wobble * 0.4,
+                midY + ny * wobble * 0.4,
+                endX,
+                endY
+            );
+            ctx.stroke();
+
+            // --- Extra plasma strands ---
+            for (let i = 0; i < 3; i++) {
+                const strandPhase = t + i * 1.8;
+                const strandOffset = (i - 1) * 6 + Math.sin(strandPhase) * 3;
+
+                ctx.strokeStyle = `rgba(120,255,170,${0.18 + i * 0.05})`;
+                ctx.lineWidth = 2 + i * 0.7;
+                ctx.shadowBlur = 8;
+
+                ctx.beginPath();
+                ctx.moveTo(startX, startY);
+                ctx.quadraticCurveTo(
+                    midX + nx * strandOffset,
+                    midY + ny * strandOffset,
+                    endX,
+                    endY
+                );
+                ctx.stroke();
+            }
+
+            // --- Plasma packets moving along the beam ---
+            for (let i = 0; i < 6; i++) {
+                const p = (i / 6 + (t * 0.08)) % 1;
+
+                const curveX =
+                    (1 - p) * (1 - p) * startX +
+                    2 * (1 - p) * p * (midX + nx * wobble * 0.55) +
+                    p * p * endX;
+
+                const curveY =
+                    (1 - p) * (1 - p) * startY +
+                    2 * (1 - p) * p * (midY + ny * wobble * 0.55) +
+                    p * p * endY;
+
+                const r = 2.5 + Math.sin(t + i) * 0.8;
+
+                ctx.fillStyle = "rgba(180,255,210,0.75)";
+                ctx.shadowBlur = 10;
+                ctx.beginPath();
+                ctx.arc(curveX, curveY, r, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            // --- Impact flare on the star ---
+            const impactPulse = 10 + Math.sin(t * 1.8) * 3;
+
+            ctx.fillStyle = "rgba(120,255,170,0.18)";
+            ctx.shadowBlur = 18;
+            ctx.beginPath();
+            ctx.arc(endX, endY, impactPulse, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.fillStyle = "rgba(180,255,210,0.65)";
+            ctx.shadowBlur = 8;
+            ctx.beginPath();
+            ctx.arc(endX, endY, 4 + Math.sin(t * 2.2), 0, Math.PI * 2);
+            ctx.fill();
+
+            // --- Siphon nozzle glow on the ship ---
+            ctx.fillStyle = "rgba(120,255,170,0.28)";
+            ctx.shadowBlur = 14;
+            ctx.beginPath();
+            ctx.arc(startX, startY, 7 + Math.sin(t * 1.4) * 1.5, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.restore();
         }
 
         function drawScanlines() {
@@ -4135,6 +4701,7 @@
             drawText(`ORE: ${resources.ore}`, 24, RESOURCES_OFFSET_Y + 82, 1.0);
             if (hasDiscoveredScience) drawText(`SCIENCE: ${resources.science}`, 24, RESOURCES_OFFSET_Y + 100, 1.0);
             if (hasDiscoveredMetal) drawText(`METAL: ${resources.metal}`, 24, RESOURCES_OFFSET_Y + 118, 1.0);
+            if (hasDiscoveredHelion) drawText(`HELION: ${Math.floor(resources.helion).toLocaleString("de-DE")}`, 24, RESOURCES_OFFSET_Y + 130, 0.8);
 
             const hovered = getHoveredTarget();
 
