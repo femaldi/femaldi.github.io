@@ -111,7 +111,7 @@
             const finalPitch = pitch + (Math.random() * 2 - 1) * pitchVar;
             s.playbackRate = Math.max(0.5, Math.min(2.0, finalPitch));
 
-            s.play().catch(() => {});
+            s.play().catch(() => { });
         }
 
         const keys = {};
@@ -435,6 +435,14 @@
         const DRONE_LASER_INTERVAL = 42;
         const DRONE_ORBIT_SPEED = 0.045;
         const DRONE_IDLE_ORBIT_RADIUS = 26;
+        const DRONE_CARRIER_MIN_SEPARATION = 180;
+        const DRONE_CARRIER_PARKING_SAMPLES = 12;
+        const DRONE_CARRIER_REDEPLOY_CHECK_INTERVAL = 90;
+
+        const SHIP_STANDBY_RETRY_INTERVAL = 75;
+        const SHIP_STANDBY_RING_SIZE = 8;
+        const SHIP_STANDBY_BASE_RADIUS = 82;
+        const SHIP_STANDBY_RING_GAP = 46;
 
         const salvageSlots = [];
 
@@ -559,7 +567,7 @@
                         type: "upgrade",
                         getLevel: () => upgrades.automaticPulse.level,
                         getCap: () => upgrades.automaticPulse.cap,
-                        getCost: () =>  ({ ore: getAutomaticPulseCost() }),
+                        getCost: () => ({ ore: getAutomaticPulseCost() }),
                         isVisible: () => upgrades.automaticPulse.level < upgrades.automaticPulse.cap,
                         canBuy: () => true,
                         buy: () => {
@@ -578,7 +586,7 @@
                 xOffset: 110,
                 yOffset: 0,
                 radius: 40,
-                range: 500,
+                //range: 500,
                 menuTitle: "SHIPYARD REQUISITIONS",
                 items: [
                     {
@@ -1426,6 +1434,70 @@
             return Math.floor(55 * Math.pow(1.55, count));
         }
 
+        function getShipyardStandbyCenter() {
+            return getModuleById("smallShipyard") || station;
+        }
+
+        function shouldUseStandbyFormation(ship) {
+            const kind = ship.kind || "miningFrigate";
+
+            if (kind === "droneCarrier" && ship.drones.length <= 0) {
+                return true;
+            }
+
+            return ship.state === "standby" || ship.state === "idle";
+        }
+
+        function getStandbyFormationIndex(ship) {
+            return ships
+                .filter(shouldUseStandbyFormation)
+                .indexOf(ship);
+        }
+
+        function getShipStandbyPosition(ship) {
+            const center = getShipyardStandbyCenter();
+            const index = Math.max(0, getStandbyFormationIndex(ship));
+
+            const ring = Math.floor(index / SHIP_STANDBY_RING_SIZE);
+            const slot = index % SHIP_STANDBY_RING_SIZE;
+
+            const slotsInRing = SHIP_STANDBY_RING_SIZE + ring * 4;
+            const radius = SHIP_STANDBY_BASE_RADIUS + ring * SHIP_STANDBY_RING_GAP;
+
+            // Offset angle so the first few ships don't sit directly over the station.
+            const angle =
+                -Math.PI / 2 +
+                (slot / slotsInRing) * Math.PI * 2 +
+                ring * 0.28;
+
+            return {
+                x: center.x + Math.cos(angle) * radius,
+                y: center.y + Math.sin(angle) * radius
+            };
+        }
+
+        function updateShipStandbyPosition(ship) {
+            const pos = getShipStandbyPosition(ship);
+
+            ship.target = null;
+            ship.targetX = pos.x;
+            ship.targetY = pos.y;
+            ship.state = "standby";
+
+            moveToward(ship, pos.x, pos.y, ship.speed * 0.75);
+        }
+
+        function shouldStandbyShipRetryWork(ship) {
+            ship.standbySearchTimer = (ship.standbySearchTimer || 0) + 1;
+
+            if (ship.standbySearchTimer >= SHIP_STANDBY_RETRY_INTERVAL) {
+                ship.standbySearchTimer = 0;
+                return true;
+            }
+
+            return false;
+        }
+
         function makeShip(i) {
             return {
                 kind: "miningFrigate",
@@ -1470,6 +1542,8 @@
                 targetY: station.y,
                 state: "seeking",
                 redeployTimer: 0,
+                forceRedeploy: true,
+                lastSalvagePriority: false,
                 drones: [],
                 menuTitle: "DRONE SHIP CONTROL",
                 codename: `DRONE-CARRIER-${String(i + 1).padStart(2, "0")}`
@@ -1487,6 +1561,7 @@
                     canBuy: () => true,
                     buy: () => {
                         ship.drones.push(makeCarrierDrone(ship, "mining"));
+                        ship.forceRedeploy = true;
                     }
                 },
                 {
@@ -1495,6 +1570,7 @@
                     canBuy: () => true,
                     buy: () => {
                         ship.drones.push(makeCarrierDrone(ship, "salvaging"));
+                        ship.forceRedeploy = true;
                     }
                 }
             ];
@@ -2048,7 +2124,7 @@
 
             const shipyard = getModuleById("smallShipyard");
             if (!shipyard) return false;
-            if (!isInModuleRange(shipyard, asteroid)) return false;
+            //if (!isInModuleRange(shipyard, asteroid)) return false;
 
             // If another ship is already traveling to it or mining it,
             // this ship should not use it.
@@ -2084,9 +2160,6 @@
 
         function isValidMiningShipTarget(ship, asteroid) {
             if (!asteroid || asteroid.ore <= 0) return false;
-
-            const shipyard = getModuleById("smallShipyard");
-            if (!shipyard || !isInModuleRange(shipyard, asteroid)) return false;
 
             return !isShipTargetClaimedByOther(ship, asteroid, "miningFrigate");
         }
@@ -2135,7 +2208,7 @@
             const shipyard = getModuleById("smallShipyard");
 
             const asteroidTargets = asteroids.filter(a =>
-                a.ore > 0 && (!shipyard || isInModuleRange(shipyard, a))
+                a.ore > 0
             );
 
             const wreckTargets = getActiveWrecks().filter(w =>
@@ -2149,87 +2222,8 @@
                 : [...asteroidTargets, ...wreckTargets];
         }
 
-        function scoreDroneCarrierTarget(carrier, target) {
-            const { mining, salvaging } = getDroneCarrierCounts(carrier);
-            const salvagePriority = salvaging > mining;
-
-            let score = 0;
-
-            for (const asteroid of asteroids) {
-                if (asteroid.ore <= 0) continue;
-
-                if (distSq(target, asteroid) <= DRONE_SHIP_RANGE * DRONE_SHIP_RANGE) {
-                    score += salvagePriority ? 1 : 4;
-                }
-            }
-
-            for (const wreck of getActiveWrecks()) {
-                if (wreck.metal <= 0 || wreck.fading) continue;
-
-                if (distSq(target, wreck) <= DRONE_SHIP_RANGE * DRONE_SHIP_RANGE) {
-                    score += salvagePriority ? 5 : 1;
-                }
-            }
-
-            score -= Math.sqrt(distSq(carrier, target)) / 10000;
-
-            return score;
-        }
-
-        function findDroneCarrierDeployment(carrier) {
-            const candidates = getDroneCarrierCandidateTargets(carrier);
-
-            if (!candidates.length) {
-                return {
-                    x: station.x,
-                    y: station.y,
-                    target: null
-                };
-            }
-
-            candidates.sort((a, b) =>
-                scoreDroneCarrierTarget(carrier, b) -
-                scoreDroneCarrierTarget(carrier, a)
-            );
-
-            const target = candidates[0];
-
-            // Park on the station-facing side of the asteroid/wreck.
-            const angle = Math.atan2(station.y - target.y, station.x - target.x);
-            const offset = target.radius + 95;
-
-            return {
-                x: Math.max(40, Math.min(WORLD_W - 40, target.x + Math.cos(angle) * offset)),
-                y: Math.max(40, Math.min(WORLD_H - 40, target.y + Math.sin(angle) * offset)),
-                target
-            };
-        }
-
         function isTargetInsideCarrierRange(carrier, target) {
             return distSq(carrier, target) <= carrier.range * carrier.range;
-        }
-
-        function getDroneTarget(carrier, drone) {
-            if (drone.droneType === "salvaging") {
-                const wrecks = getActiveWrecks()
-                    .filter(w =>
-                        w.metal > 0 &&
-                        !w.fading &&
-                        isTargetInsideCarrierRange(carrier, w)
-                    )
-                    .sort((a, b) => distSq(drone, a) - distSq(drone, b));
-
-                return wrecks[0] || null;
-            }
-
-            const asteroidTargets = asteroids
-                .filter(a =>
-                    a.ore > 0 &&
-                    isTargetInsideCarrierRange(carrier, a)
-                )
-                .sort((a, b) => distSq(drone, a) - distSq(drone, b));
-
-            return asteroidTargets[0] || null;
         }
 
         function fireDroneLaser(carrier, drone, target) {
@@ -2393,7 +2387,13 @@
         }
 
         function updateCargoMiningShip(ship, chooseTarget, isValidTarget, resourceType) {
-            if (ship.state === "idle") {
+            if (ship.state === "idle" || ship.state === "standby") {
+                updateShipStandbyPosition(ship);
+
+                if (!shouldStandbyShipRetryWork(ship)) {
+                    return;
+                }
+
                 ship.state = "seeking";
             }
 
@@ -2402,8 +2402,9 @@
 
                 if (ship.target) {
                     ship.state = "outbound";
+                    ship.standbySearchTimer = 0;
                 } else {
-                    ship.state = "idle";
+                    updateShipStandbyPosition(ship);
                     return;
                 }
             }
@@ -2465,16 +2466,462 @@
             }
         }
 
-        function hasDroneTargetsInRange(carrier) {
-            return asteroids.some(a =>
-                a.ore > 0 &&
-                isTargetInsideCarrierRange(carrier, a)
-            ) || getActiveWrecks().some(w =>
-                w.metal > 0 &&
-                !w.fading &&
-                isTargetInsideCarrierRange(carrier, w)
+        function isActiveAsteroidTarget(target) {
+            return target && target.ore > 0;
+        }
+
+        function isActiveWreckTarget(target) {
+            return target && target.metal > 0 && !target.fading;
+        }
+
+        function isDroneCarrier(ship) {
+            return (ship.kind || "miningFrigate") === "droneCarrier";
+        }
+
+        function getOtherDroneCarriers(carrier) {
+            return ships.filter(other =>
+                other !== carrier &&
+                isDroneCarrier(other)
             );
         }
+
+        function getDroneCarrierCounts(carrier) {
+            let mining = 0;
+            let salvaging = 0;
+
+            for (const drone of carrier.drones) {
+                if (drone.droneType === "salvaging") salvaging++;
+                else mining++;
+            }
+
+            return { mining, salvaging };
+        }
+
+        function droneCarrierPrefersSalvage(carrier) {
+            const { mining, salvaging } = getDroneCarrierCounts(carrier);
+            return salvaging > mining;
+        }
+
+        function getGravityPulseModule() {
+            return getModuleById("gravityPulse");
+        }
+
+        function isTargetInsideGravPulseRange(target) {
+            const grav = getGravityPulseModule();
+            if (!grav || !grav.range) return false;
+
+            return distSq(grav, target) <= grav.range * grav.range;
+        }
+
+        function preferGravPulseTargets(targets) {
+            const inside = targets.filter(isTargetInsideGravPulseRange);
+
+            // If there are valid targets inside grav range, use only those.
+            // Otherwise fall back to all targets so carriers do not become useless.
+            return inside.length > 0 ? inside : targets;
+        }
+
+        function getPreferredCarrierTargets(carrier) {
+            const salvagePriority = droneCarrierPrefersSalvage(carrier);
+
+            const wreckTargets = getActiveWrecks().filter(isActiveWreckTarget);
+            const asteroidTargets = asteroids.filter(isActiveAsteroidTarget);
+
+            const gravWrecks = preferGravPulseTargets(wreckTargets);
+            const gravAsteroids = preferGravPulseTargets(asteroidTargets);
+
+            // Salvage-heavy carriers should prefer wrecks,
+            // but among wrecks they should prefer ones inside Grav Pulse range.
+            if (salvagePriority && wreckTargets.length > 0) {
+                return gravWrecks;
+            }
+
+            // Mining-heavy or balanced carriers should prefer asteroids,
+            // but among asteroids they should prefer ones inside Grav Pulse range.
+            if (asteroidTargets.length > 0) {
+                return gravAsteroids;
+            }
+
+            // Fallback: no asteroids, use wrecks.
+            return gravWrecks;
+        }
+
+        function getCarrierCoverageScoreAt(x, y, salvagePriority) {
+            let score = 0;
+            const rangeSq = DRONE_SHIP_RANGE * DRONE_SHIP_RANGE;
+
+            for (const asteroid of asteroids) {
+                if (!isActiveAsteroidTarget(asteroid)) continue;
+
+                const dx = asteroid.x - x;
+                const dy = asteroid.y - y;
+
+                if (dx * dx + dy * dy <= rangeSq) {
+                    const insideGrav = isTargetInsideGravPulseRange(asteroid);
+
+                    score += salvagePriority ? 1 : 5;
+
+                    // Big bonus because chunks created here can be collected.
+                    if (insideGrav) {
+                        score += salvagePriority ? 4 : 20;
+                    }
+                }
+            }
+
+            for (const wreck of getActiveWrecks()) {
+                if (!isActiveWreckTarget(wreck)) continue;
+
+                const dx = wreck.x - x;
+                const dy = wreck.y - y;
+
+                if (dx * dx + dy * dy <= rangeSq) {
+                    const insideGrav = isTargetInsideGravPulseRange(wreck);
+
+                    score += salvagePriority ? 8 : 2;
+
+                    // Big bonus because metal chunks created here can be collected.
+                    if (insideGrav) {
+                        score += salvagePriority ? 32 : 8;
+                    }
+                }
+            }
+
+            return score;
+        }
+
+        function wouldCarrierOverlapAt(carrier, x, y) {
+            const minDistSq = DRONE_CARRIER_MIN_SEPARATION * DRONE_CARRIER_MIN_SEPARATION;
+
+            return getOtherDroneCarriers(carrier).some(other => {
+                const ox = other.targetX ?? other.x;
+                const oy = other.targetY ?? other.y;
+
+                const dx = ox - x;
+                const dy = oy - y;
+
+                return dx * dx + dy * dy < minDistSq;
+            });
+        }
+
+        function getParkingCandidatesAroundTarget(carrier, target) {
+            const candidates = [];
+
+            const baseAngle = Math.atan2(
+                station.y - target.y,
+                station.x - target.x
+            );
+
+            const parkingDist = Math.min(
+                DRONE_SHIP_RANGE * 0.72,
+                target.radius + 115
+            );
+
+            for (let i = 0; i < DRONE_CARRIER_PARKING_SAMPLES; i++) {
+                // Start with station-facing side, then rotate around the target.
+                const angle = baseAngle + (i / DRONE_CARRIER_PARKING_SAMPLES) * Math.PI * 2;
+
+                const x = Math.max(
+                    40,
+                    Math.min(WORLD_W - 40, target.x + Math.cos(angle) * parkingDist)
+                );
+
+                const y = Math.max(
+                    40,
+                    Math.min(WORLD_H - 40, target.y + Math.sin(angle) * parkingDist)
+                );
+
+                candidates.push({
+                    x,
+                    y,
+                    target
+                });
+            }
+
+            return candidates;
+        }
+
+        function scoreCarrierParkingCandidate(carrier, candidate) {
+            const salvagePriority = droneCarrierPrefersSalvage(carrier);
+
+            let score = getCarrierCoverageScoreAt(
+                candidate.x,
+                candidate.y,
+                salvagePriority
+            );
+
+            // Prefer not travelling too far if two positions are similar.
+            score -= Math.sqrt(distSq(carrier, candidate)) / 1200;
+
+            // Strong penalty for overlapping another carrier.
+            // We still allow it as a fallback if every possible space overlaps.
+            if (wouldCarrierOverlapAt(carrier, candidate.x, candidate.y)) {
+                score -= 10000;
+            }
+
+            return score;
+        }
+
+        function findDroneCarrierDeployment(carrier) {
+            const targets = getPreferredCarrierTargets(carrier);
+
+            if (!targets.length) {
+                return {
+                    x: station.x,
+                    y: station.y,
+                    target: null
+                };
+            }
+
+            const candidates = [];
+
+            for (const target of targets) {
+                candidates.push(...getParkingCandidatesAroundTarget(carrier, target));
+            }
+
+            candidates.sort((a, b) =>
+                scoreCarrierParkingCandidate(carrier, b) -
+                scoreCarrierParkingCandidate(carrier, a)
+            );
+
+            // First try to find a non-overlapping space.
+            const nonOverlapping = candidates.find(c =>
+                !wouldCarrierOverlapAt(carrier, c.x, c.y)
+            );
+
+            return nonOverlapping || candidates[0];
+        }
+
+        function isTargetInsideCarrierRange(carrier, target) {
+            return distSq(carrier, target) <= carrier.range * carrier.range;
+        }
+
+        function getDroneTargetsForType(carrier, droneType) {
+            let targets;
+
+            if (droneType === "salvaging") {
+                targets = getActiveWrecks()
+                    .filter(w =>
+                        isActiveWreckTarget(w) &&
+                        isTargetInsideCarrierRange(carrier, w)
+                    );
+            } else {
+                targets = asteroids
+                    .filter(a =>
+                        isActiveAsteroidTarget(a) &&
+                        isTargetInsideCarrierRange(carrier, a)
+                    );
+            }
+
+            return preferGravPulseTargets(targets);
+        }
+
+        function countCarrierDronesAssignedToTarget(carrier, droneType, target, ignoredDrone = null) {
+            let count = 0;
+
+            for (const drone of carrier.drones) {
+                if (drone === ignoredDrone) continue;
+                if (drone.droneType !== droneType) continue;
+                if (drone.target !== target) continue;
+
+                count++;
+            }
+
+            return count;
+        }
+
+        function getDroneTarget(carrier, drone) {
+            const targets = getDroneTargetsForType(carrier, drone.droneType);
+
+            if (!targets.length) return null;
+
+            targets.sort((a, b) => {
+                const aInsideGrav = isTargetInsideGravPulseRange(a);
+                const bInsideGrav = isTargetInsideGravPulseRange(b);
+
+                if (aInsideGrav !== bInsideGrav) {
+                    return aInsideGrav ? -1 : 1;
+                }
+
+                const assignedA = countCarrierDronesAssignedToTarget(
+                    carrier,
+                    drone.droneType,
+                    a,
+                    drone
+                );
+
+                const assignedB = countCarrierDronesAssignedToTarget(
+                    carrier,
+                    drone.droneType,
+                    b,
+                    drone
+                );
+
+                if (assignedA !== assignedB) {
+                    return assignedA - assignedB;
+                }
+
+                return distSq(drone, a) - distSq(drone, b);
+            });
+
+            return targets[0];
+        }
+
+        function hasPreferredDroneTargetsInRange(carrier) {
+            const salvagePriority = droneCarrierPrefersSalvage(carrier);
+
+            const wrecksInRange = getActiveWrecks().filter(w =>
+                isActiveWreckTarget(w) &&
+                isTargetInsideCarrierRange(carrier, w)
+            );
+
+            const asteroidsInRange = asteroids.filter(a =>
+                isActiveAsteroidTarget(a) &&
+                isTargetInsideCarrierRange(carrier, a)
+            );
+
+            if (salvagePriority) {
+                const activeWrecks = getActiveWrecks().filter(isActiveWreckTarget);
+                const gravWreckExists = activeWrecks.some(isTargetInsideGravPulseRange);
+
+                if (gravWreckExists) {
+                    return wrecksInRange.some(isTargetInsideGravPulseRange);
+                }
+
+                if (activeWrecks.length > 0) {
+                    return wrecksInRange.length > 0;
+                }
+            }
+
+            const gravAsteroidExists = asteroids
+                .filter(isActiveAsteroidTarget)
+                .some(isTargetInsideGravPulseRange);
+
+            if (gravAsteroidExists) {
+                return asteroidsInRange.some(isTargetInsideGravPulseRange);
+            }
+
+            return asteroidsInRange.length > 0 || wrecksInRange.length > 0;
+        }
+
+        function retargetCarrierDrones(carrier) {
+            for (const drone of carrier.drones) {
+                if (
+                    !drone.target ||
+                    getTargetResourceAmount(drone.target) <= 0 ||
+                    !isTargetInsideCarrierRange(carrier, drone.target)
+                ) {
+                    drone.target = null;
+                }
+            }
+
+            for (const drone of carrier.drones) {
+                drone.target = getDroneTarget(carrier, drone);
+            }
+        }
+
+        function hasAnyDroneCarrierWorkAvailable(carrier) {
+            const { mining, salvaging } = getDroneCarrierCounts(carrier);
+
+            if (mining > 0 && asteroids.some(isActiveAsteroidTarget)) {
+                return true;
+            }
+
+            if (salvaging > 0 && getActiveWrecks().some(isActiveWreckTarget)) {
+                return true;
+            }
+
+            return false;
+        }
+
+        function updateDroneCarrierStandby(ship) {
+            updateShipStandbyPosition(ship);
+
+            for (const drone of ship.drones) {
+                drone.target = null;
+                updateCarrierDrone(ship, drone);
+            }
+
+            if (shouldStandbyShipRetryWork(ship)) {
+                ship.forceRedeploy = true;
+                ship.state = "seeking";
+            }
+        }
+
+        function updateDroneCarrier(ship) {
+            if (ship.drones.length <= 0) {
+                ship.forceRedeploy = false;
+                ship.redeployTimer = 0;
+                updateShipStandbyPosition(ship);
+                return;
+            }
+
+            if (!hasAnyDroneCarrierWorkAvailable(ship)) {
+                updateDroneCarrierStandby(ship);
+                return;
+            }
+
+            if (ship.state === "standby") {
+                ship.forceRedeploy = true;
+                ship.state = "seeking";
+            }
+
+            ship.redeployTimer++;
+
+            const salvagePriority = droneCarrierPrefersSalvage(ship);
+            const priorityChanged = ship.lastSalvagePriority !== salvagePriority;
+            ship.lastSalvagePriority = salvagePriority;
+
+            const shouldCheckDeployment =
+                ship.redeployTimer >= DRONE_CARRIER_REDEPLOY_CHECK_INTERVAL;
+
+            const shouldRedeploy =
+                ship.forceRedeploy ||
+                priorityChanged ||
+                ship.state === "seeking" ||
+                (
+                    ship.state === "deployed" &&
+                    shouldCheckDeployment &&
+                    !hasPreferredDroneTargetsInRange(ship)
+                );
+
+            if (shouldRedeploy) {
+                const deployment = findDroneCarrierDeployment(ship);
+
+                ship.target = deployment.target;
+                ship.targetX = deployment.x;
+                ship.targetY = deployment.y;
+                ship.state = "outbound";
+                ship.redeployTimer = 0;
+                ship.forceRedeploy = false;
+
+                // Force drones to choose targets again after the carrier moves.
+                for (const drone of ship.drones) {
+                    drone.target = null;
+                }
+            }
+
+            if (ship.state === "outbound") {
+                const arrived = moveToward(ship, ship.targetX, ship.targetY, ship.speed);
+
+                if (arrived) {
+                    ship.state = "deployed";
+                    ship.redeployTimer = 0;
+                    retargetCarrierDrones(ship);
+                }
+            }
+
+            if (
+                ship.state === "deployed" &&
+                ship.redeployTimer % 60 === 0
+            ) {
+                retargetCarrierDrones(ship);
+            }
+
+            for (const drone of ship.drones) {
+                updateCarrierDrone(ship, drone);
+            }
+        }
+
 
         function updateCarrierDrone(carrier, drone) {
             if (
@@ -2503,41 +2950,6 @@
             if (drone.fireTimer <= 0) {
                 fireDroneLaser(carrier, drone, drone.target);
                 drone.fireTimer = DRONE_LASER_INTERVAL;
-            }
-        }
-
-        function updateDroneCarrier(ship) {
-            ship.redeployTimer++;
-
-            const shouldRedeploy =
-                ship.state === "seeking" ||
-                (
-                    ship.state === "deployed" &&
-                    ship.redeployTimer > 180 &&
-                    !hasDroneTargetsInRange(ship)
-                );
-
-            if (shouldRedeploy) {
-                const deployment = findDroneCarrierDeployment(ship);
-
-                ship.target = deployment.target;
-                ship.targetX = deployment.x;
-                ship.targetY = deployment.y;
-                ship.state = "outbound";
-                ship.redeployTimer = 0;
-            }
-
-            if (ship.state === "outbound") {
-                const arrived = moveToward(ship, ship.targetX, ship.targetY, ship.speed);
-
-                if (arrived) {
-                    ship.state = "deployed";
-                    ship.redeployTimer = 0;
-                }
-            }
-
-            for (const drone of ship.drones) {
-                updateCarrierDrone(ship, drone);
             }
         }
 
@@ -3397,7 +3809,7 @@
 
             // labels (same for both)
             drawText(`${body.type}: ${body.codename}`, body.x - 54, body.y - body.radius - 50, 0.9);
-            
+
             const orbitingProbes = getOrbitingProbeCount(body);
             const effectiveYield = body.sciencePerSecond * (1 + orbitingProbes);
 
@@ -3690,7 +4102,7 @@
                 ctx.moveTo(ship.x, ship.y);
                 ctx.lineTo(ship.target.x, ship.target.y);
                 ctx.stroke();
-            } else if (isDroneCarrier && ship.state === "outbound") {
+            } else if (ship.targetX !== undefined && ship.state === "outbound") {
                 ctx.strokeStyle = "rgba(80,255,130,0.12)";
                 ctx.beginPath();
                 ctx.moveTo(ship.x, ship.y);
@@ -3728,7 +4140,7 @@
 
             if (hovered?.type === "asteroid") {
                 const laser = getModuleById("stationMiningLaser");
-                
+
                 if (laser && !isInModuleRange(laser, hovered.object)) {
                     drawText("TARGET OUT OF LASER RANGE", 24, 132, 0.8);
                 } else {
@@ -3812,9 +4224,9 @@
             ships.forEach(drawShip);
 
             drawStation();
-            
+
             ctx.restore();
-            
+
             drawActiveMenu();
             drawScanlines();
             drawVignette();
