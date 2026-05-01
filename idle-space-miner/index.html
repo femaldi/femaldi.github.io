@@ -421,6 +421,12 @@
             return module.id === "observatory" ? 500 : 250;
         }
 
+        function getHyperlaneBuildCost() {
+            return {
+                metal: Math.floor(10000 * Math.pow(2, hyperlanes.length))
+            };
+        }
+
         function addRangeUpgradeItem(module) {
             if (!module.range) return;
 
@@ -462,6 +468,19 @@
         const STAR_SIPHON_INTERVAL_BASE = 80;
         const STAR_SIPHON_AMOUNT_BASE = 1;
         const STAR_SIPHON_STANDOFF = 145;
+
+        const STAR_SIPHONER_PARKING_SAMPLES = 18;
+        const STAR_SIPHONER_PARKING_SEPARATION = 95;
+        const STAR_SIPHONER_PARKING_RING_GAP = 65;
+
+        const HYPERLANE_SIPHONER_COST = 5;
+        const HYPERLANE_TRAVEL_SPEED = 28;
+        const HYPERLANE_BODY_STANDOFF = 300;
+        const HYPERLANE_STATION_STANDOFF = 300;
+
+        const hyperlanes = [];
+
+        let activeHyperlaneScreen = false;
 
         function countShipsByKind(kind) {
             return ships.filter(s => (s.kind || "miningFrigate") === kind).length;
@@ -569,6 +588,15 @@
                             activeMenu = null;
                         }
                     },
+                    {
+                        label: "Hyperlane Construction",
+                        cost: {},
+                        isVisible: () => hasDiscoveredHelion,
+                        canBuy: () => true,
+                        buy: () => {
+                            openHyperlaneScreen();
+                        }
+                    },
                 ]
             },
 
@@ -663,10 +691,12 @@
                 items: [
                     {
                         label: "Mining Frigate",
-                        getCost: () => ({ ore: Math.floor(Math.pow(2, ships.length) * 10) }),
+                        getCost: () => ({
+                            ore: Math.floor(Math.pow(2, countShipsByKind("miningFrigate")) * 10)
+                        }),
                         canBuy: () => true,
                         buy: () => {
-                            ships.push(makeShip(ships.length));
+                            ships.push(makeShip(countShipsByKind("miningFrigate")));
                         }
                     },
                     {
@@ -1373,6 +1403,7 @@
         function spawnAsteroidBeltAround(body, count = 10) {
             let spawned = 0;
             let attempts = 0;
+            body.hasAsteroidBelt = true;
             const maxAttempts = count * 80;
 
             while (spawned < count && attempts < maxAttempts) {
@@ -1618,6 +1649,115 @@
             }
 
             return false;
+        }
+
+        function openHyperlaneScreen() {
+            activeHyperlaneScreen = true;
+            activeMenu = null;
+        }
+
+        function closeHyperlaneScreen() {
+            activeHyperlaneScreen = false;
+        }
+
+        function getHyperlaneTargets() {
+            return celestialBodies.filter(body =>
+                body.type === "STAR" ||
+                body.hasAsteroidBelt
+            );
+        }
+
+        function handleHyperlaneScreenClick(sx, sy) {
+            const layout = getHyperlaneMapLayout();
+
+            const dxClose = sx - layout.closeX;
+            const dyClose = sy - layout.closeY;
+
+            if (dxClose * dxClose + dyClose * dyClose <= layout.closeR * layout.closeR) {
+                closeHyperlaneScreen();
+                return true;
+            }
+
+            for (const body of getHyperlaneTargets()) {
+                if (hasHyperlaneTo(body)) continue;
+
+                const p = worldToHyperlaneMap(body.x, body.y, layout);
+                const dx = sx - p.x;
+                const dy = sy - p.y;
+
+                if (dx * dx + dy * dy <= 18 * 18) {
+                    const cost = getHyperlaneBuildCost();
+
+                    if (!canAffordCost(cost)) {
+                        return true;
+                    }
+
+                    if (spendCost(cost)) {
+                        buildHyperlaneTo(body);
+                        closeHyperlaneScreen();
+                    }
+
+                    return true;
+                }
+            }
+
+            return true;
+        }
+
+        function hasHyperlaneTo(body) {
+            return hyperlanes.some(lane => lane.destination === body);
+        }
+
+        function buildHyperlaneTo(body) {
+            if (!body) return false;
+            if (hasHyperlaneTo(body)) return false;
+
+            hyperlanes.push({
+                destination: body,
+                codename: `LANE-${String(hyperlanes.length + 1).padStart(2, "0")}`
+            });
+
+            return true;
+        }
+
+        function getHyperlaneStationEndpoint(destination) {
+            if (!destination) {
+                return {
+                    x: station.x,
+                    y: station.y
+                };
+            }
+
+            const dx = destination.x - station.x;
+            const dy = destination.y - station.y;
+            const d = Math.hypot(dx, dy) || 1;
+
+            return {
+                x: station.x + dx / d * HYPERLANE_STATION_STANDOFF,
+                y: station.y + dy / d * HYPERLANE_STATION_STANDOFF
+            };
+        }
+
+        function getHyperlaneBodyEndpoint(body) {
+            const dx = station.x - body.x;
+            const dy = station.y - body.y;
+            const d = Math.hypot(dx, dy) || 1;
+
+            return {
+                x: body.x + dx / d * (body.radius + HYPERLANE_BODY_STANDOFF),
+                y: body.y + dy / d * (body.radius + HYPERLANE_BODY_STANDOFF)
+            };
+        }
+
+        function getHyperlaneEndpoints(lane) {
+            return {
+                from: getHyperlaneStationEndpoint(lane.destination),
+                to: getHyperlaneBodyEndpoint(lane.destination)
+            };
+        }
+
+        function canUseHyperlane() {
+            return getResourceAmount("helion") >= HYPERLANE_SIPHONER_COST;
         }
 
         function makeStarSiphoner(i) {
@@ -1996,6 +2136,15 @@
                 return;
             }
 
+            if (activeHyperlaneScreen) {
+                if (e.code === "Escape") {
+                    e.preventDefault();
+                    closeHyperlaneScreen();
+                }
+
+                return;
+            }
+
             if (e.code === "Space") {
                 e.preventDefault(); // avoid page scroll
                 centerCameraOnStation();
@@ -2041,6 +2190,10 @@
                     startMusic();
                 }
 
+                return;
+            }
+
+            if (activeHyperlaneScreen) {
                 return;
             }
 
@@ -2107,6 +2260,11 @@
             const sx = (e.clientX - rect.left) * (canvas.width / rect.width);
             const sy = (e.clientY - rect.top) * (canvas.height / rect.height);
             const { x: mx, y: my } = screenToWorld(sx, sy);
+
+            if (activeHyperlaneScreen) {
+                handleHyperlaneScreenClick(sx, sy);
+                return;
+            }
 
             // Menu clicks first
             if (activeMenu) {
@@ -2256,26 +2414,193 @@
             return body && body.type === "STAR";
         }
 
-        function isStarClaimedByOtherSiphoner(star, currentShip) {
-            return ships.some(other =>
-                other !== currentShip &&
-                other.kind === "starSiphoner" &&
-                other.target === star &&
+        function isSiphonerActivelyUsingStar(ship, star) {
+            return ship &&
+                ship.kind === "starSiphoner" &&
+                ship.target === star &&
                 (
-                    other.state === "outbound" ||
-                    other.state === "siphoning"
-                )
+                    ship.state === "outbound" ||
+                    ship.state === "siphoning" ||
+                    ship.state === "hyperlaneEntry" ||
+                    ship.state === "hyperlaneTravel"
+                );
+        }
+
+        function getOtherSiphonersUsingStar(currentShip, star) {
+            return ships.filter(other =>
+                other !== currentShip &&
+                isSiphonerActivelyUsingStar(other, star)
             );
+        }
+
+        function wouldSiphonerParkingOverlap(currentShip, star, x, y) {
+            const minDistSq =
+                STAR_SIPHONER_PARKING_SEPARATION *
+                STAR_SIPHONER_PARKING_SEPARATION;
+
+            return getOtherSiphonersUsingStar(currentShip, star).some(other => {
+                const px = other.siphonPoint?.x ?? other.x;
+                const py = other.siphonPoint?.y ?? other.y;
+
+                const dx = px - x;
+                const dy = py - y;
+
+                return dx * dx + dy * dy < minDistSq;
+            });
+        }
+
+        function scoreSiphonerParkingSpot(ship, star, spot, preferredFromPoint) {
+            let score = 0;
+
+            // Prefer spots close to where the ship is coming from.
+            // This keeps travel paths natural.
+            score -= Math.sqrt(distSq(spot, preferredFromPoint)) / 20;
+
+            // Strongly avoid overlapping another siphoner's assigned spot.
+            if (wouldSiphonerParkingOverlap(ship, star, spot.x, spot.y)) {
+                score -= 100000;
+            }
+
+            return score;
+        }
+
+        function chooseSiphonerParkingSpot(ship, star, preferredFromPoint = ship) {
+            const candidates = [];
+
+            const baseAngle = Math.atan2(
+                preferredFromPoint.y - star.y,
+                preferredFromPoint.x - star.x
+            );
+
+            for (let ring = 0; ring < 3; ring++) {
+                const distance =
+                    star.radius +
+                    STAR_SIPHON_STANDOFF +
+                    ring * STAR_SIPHONER_PARKING_RING_GAP;
+
+                const samples = STAR_SIPHONER_PARKING_SAMPLES + ring * 6;
+
+                for (let i = 0; i < samples; i++) {
+                    const angle =
+                        baseAngle +
+                        (i / samples) * Math.PI * 2 +
+                        ring * 0.17;
+
+                    candidates.push({
+                        x: star.x + Math.cos(angle) * distance,
+                        y: star.y + Math.sin(angle) * distance,
+                        ring
+                    });
+                }
+            }
+
+            candidates.sort((a, b) =>
+                scoreSiphonerParkingSpot(ship, star, b, preferredFromPoint) -
+                scoreSiphonerParkingSpot(ship, star, a, preferredFromPoint)
+            );
+
+            return candidates[0] || getStarSiphonPointFrom(star, preferredFromPoint);
+        }
+
+        function assignSiphonerParkingSpot(ship, star, preferredFromPoint = ship) {
+            ship.siphonPoint = chooseSiphonerParkingSpot(
+                ship,
+                star,
+                preferredFromPoint
+            );
+
+            return ship.siphonPoint;
+        }
+
+        function getBestHyperlaneRouteToStar(ship, star) {
+            if (!canUseHyperlane()) return null;
+            if (hyperlanes.length <= 0) return null;
+
+            const normalSiphonPoint = chooseSiphonerParkingSpot(ship, star, ship);
+            const normalTime = estimateTravelTime(ship, normalSiphonPoint, ship.speed);
+
+            let bestRoute = null;
+            let bestTime = normalTime;
+
+            for (const lane of hyperlanes) {
+                const endpoints = getHyperlaneEndpoints(lane);
+
+                const exitPoint = endpoints.to;
+                const postLaneSiphonPoint = chooseSiphonerParkingSpot(ship, star, exitPoint);
+
+                const directDistanceToStar = Math.sqrt(distSq(ship, normalSiphonPoint));
+                const exitDistanceToStar = Math.sqrt(distSq(exitPoint, postLaneSiphonPoint));
+
+                // The lane must actually place the siphoner closer to the star's siphon point.
+                if (exitDistanceToStar >= directDistanceToStar) {
+                    continue;
+                }
+
+                const timeToEntry = estimateTravelTime(ship, endpoints.from, ship.speed);
+                const laneTime = estimateTravelTime(endpoints.from, endpoints.to, HYPERLANE_TRAVEL_SPEED);
+                const timeAfterExit = estimateTravelTime(exitPoint, postLaneSiphonPoint, ship.speed);
+
+                const totalTime = timeToEntry + laneTime + timeAfterExit;
+
+                // No minimum-save threshold.
+                // Any faster route is preferred over conventional travel.
+                if (totalTime < bestTime) {
+                    bestTime = totalTime;
+                    bestRoute = {
+                        lane,
+                        from: endpoints.from,
+                        to: endpoints.to,
+                        afterState: "outbound"
+                    };
+                }
+            }
+
+            return bestRoute;
+        }
+
+        function estimateSiphonerTravelTimeToStar(ship, star) {
+            const normalSiphonPoint = chooseSiphonerParkingSpot(ship, star, ship);
+            const normalTime = estimateTravelTime(ship, normalSiphonPoint, ship.speed);
+
+            const hyperlaneRoute = getBestHyperlaneRouteToStar(ship, star);
+
+            if (!hyperlaneRoute) {
+                return normalTime;
+            }
+
+            const timeToEntry = estimateTravelTime(ship, hyperlaneRoute.from, ship.speed);
+            const laneTime = estimateTravelTime(
+                hyperlaneRoute.from,
+                hyperlaneRoute.to,
+                HYPERLANE_TRAVEL_SPEED
+            );
+
+            const postLaneSiphonPoint = chooseSiphonerParkingSpot(ship, star, hyperlaneRoute.to);
+            const timeAfterExit = estimateTravelTime(
+                hyperlaneRoute.to,
+                postLaneSiphonPoint,
+                ship.speed
+            );
+
+            return timeToEntry + laneTime + timeAfterExit;
         }
 
         function chooseStarForSiphoner(ship) {
             const stars = celestialBodies
-                .filter(isActiveStarTarget)
-                .filter(star => !isStarClaimedByOtherSiphoner(star, ship));
+                .filter(isActiveStarTarget);
 
             if (!stars.length) return null;
 
-            stars.sort((a, b) => distSq(ship, a) - distSq(ship, b));
+            stars.sort((a, b) => {
+                const timeA = estimateSiphonerTravelTimeToStar(ship, a);
+                const timeB = estimateSiphonerTravelTimeToStar(ship, b);
+
+                if (timeA !== timeB) {
+                    return timeA - timeB;
+                }
+
+                return distSq(ship, a) - distSq(ship, b);
+            });
 
             return stars[0];
         }
@@ -3126,7 +3451,132 @@
             }
         }
 
+        function getStarSiphonPointFrom(star, fromPoint) {
+            const siphonDistance = star.radius + STAR_SIPHON_STANDOFF;
+
+            const dx = fromPoint.x - star.x;
+            const dy = fromPoint.y - star.y;
+            const d = Math.hypot(dx, dy) || 1;
+
+            return {
+                x: star.x + dx / d * siphonDistance,
+                y: star.y + dy / d * siphonDistance
+            };
+        }
+
+        function getLargeShipyardDockPoint() {
+            const largeShipyard = getModuleById("largeShipyard") || station;
+
+            return {
+                x: largeShipyard.x,
+                y: largeShipyard.y
+            };
+        }
+
+        function estimateTravelTime(a, b, speed) {
+            return Math.sqrt(distSq(a, b)) / speed;
+        }
+
+        function getBestHyperlaneRouteToStation(ship) {
+            if (!canUseHyperlane()) return null;
+            if (hyperlanes.length <= 0) return null;
+
+            const dock = getLargeShipyardDockPoint();
+            const normalTime = estimateTravelTime(ship, dock, ship.speed);
+
+            let bestRoute = null;
+            let bestTime = normalTime;
+
+            for (const lane of hyperlanes) {
+                const endpoints = getHyperlaneEndpoints(lane);
+
+                const timeToEntry = estimateTravelTime(ship, endpoints.to, ship.speed);
+                const laneTime = estimateTravelTime(endpoints.to, endpoints.from, HYPERLANE_TRAVEL_SPEED);
+                const timeAfterExit = estimateTravelTime(endpoints.from, dock, ship.speed);
+
+                const totalTime = timeToEntry + laneTime + timeAfterExit;
+
+                if (totalTime < bestTime) {
+                    bestTime = totalTime;
+                    bestRoute = {
+                        lane,
+                        from: endpoints.to,
+                        to: endpoints.from,
+                        afterState: "returning"
+                    };
+                }
+            }
+
+            return bestRoute;
+        }
+
+        function startSiphonerHyperlaneTravel(ship, route) {
+            if (!route) return false;
+
+            if (!spendResource("helion", HYPERLANE_SIPHONER_COST)) {
+                return false;
+            }
+
+            ship.hyperlane = {
+                from: route.from,
+                to: route.to,
+                afterState: route.afterState,
+                lane: route.lane
+            };
+
+            ship.state = "hyperlaneEntry";
+            return true;
+        }
+
+        function updateSiphonerHyperlaneTravel(ship) {
+            if (!ship.hyperlane) {
+                ship.state = "seeking";
+                return;
+            }
+
+            if (ship.state === "hyperlaneEntry") {
+                const arrived = moveToward(
+                    ship,
+                    ship.hyperlane.from.x,
+                    ship.hyperlane.from.y,
+                    ship.speed
+                );
+
+                if (arrived) {
+                    ship.state = "hyperlaneTravel";
+                }
+
+                return;
+            }
+
+            if (ship.state === "hyperlaneTravel") {
+                const arrived = moveToward(
+                    ship,
+                    ship.hyperlane.to.x,
+                    ship.hyperlane.to.y,
+                    HYPERLANE_TRAVEL_SPEED
+                );
+
+                if (arrived) {
+                    const afterState = ship.hyperlane.afterState;
+                    const exitPoint = ship.hyperlane.to;
+
+                    if (afterState === "outbound" && ship.target) {
+                        assignSiphonerParkingSpot(ship, ship.target, exitPoint);
+                    }
+
+                    ship.hyperlane = null;
+                    ship.state = afterState;
+                }
+            }
+        }
+
         function updateStarSiphoner(ship) {
+            if (ship.state === "hyperlaneEntry" || ship.state === "hyperlaneTravel") {
+                updateSiphonerHyperlaneTravel(ship);
+                return;
+            }
+
             if (ship.state === "idle" || ship.state === "standby") {
                 ship.state = "seeking";
             }
@@ -3135,8 +3585,10 @@
                 ship.target = chooseStarForSiphoner(ship);
 
                 if (ship.target) {
+                    assignSiphonerParkingSpot(ship, ship.target, ship);
                     ship.state = "outbound";
                 } else {
+                    ship.siphonPoint = null;
                     ship.state = "idle";
                     return;
                 }
@@ -3149,16 +3601,17 @@
                     return;
                 }
 
-                const siphonDistance = ship.target.radius + STAR_SIPHON_STANDOFF;
+                const route = getBestHyperlaneRouteToStar(ship, ship.target);
 
-                const dx = ship.x - ship.target.x;
-                const dy = ship.y - ship.target.y;
-                const d = Math.hypot(dx, dy) || 1;
+                if (route && startSiphonerHyperlaneTravel(ship, route)) {
+                    return;
+                }
 
-                const targetX = ship.target.x + dx / d * siphonDistance;
-                const targetY = ship.target.y + dy / d * siphonDistance;
+                if (!ship.siphonPoint) {
+                    assignSiphonerParkingSpot(ship, ship.target, ship);
+                }
 
-                if (moveToward(ship, targetX, targetY, ship.speed)) {
+                if (moveToward(ship, ship.siphonPoint.x, ship.siphonPoint.y, ship.speed)) {
                     ship.state = "siphoning";
                     ship.siphonTimer = 0;
                 }
@@ -3185,15 +3638,20 @@
                 }
 
                 if (ship.cargo >= ship.cargoMax) {
-                    ship.target = null;
                     ship.state = "returning";
                 }
             }
 
             if (ship.state === "returning") {
-                const largeShipyard = getModuleById("largeShipyard") || station;
+                const route = getBestHyperlaneRouteToStation(ship);
 
-                if (moveToward(ship, largeShipyard.x, largeShipyard.y, ship.speed)) {
+                if (route && startSiphonerHyperlaneTravel(ship, route)) {
+                    return;
+                }
+
+                const dock = getLargeShipyardDockPoint();
+
+                if (moveToward(ship, dock.x, dock.y, ship.speed)) {
                     if (ship.cargo > 0) {
                         addResource("helion", ship.cargo);
                         queueOreGatherSound();
@@ -3201,6 +3659,7 @@
 
                     ship.cargo = 0;
                     ship.target = null;
+                    ship.siphonPoint = null;
                     ship.state = "seeking";
                 }
             }
@@ -3245,6 +3704,206 @@
 
             if (line) lines.push(line);
             return lines;
+        }
+
+        function getHyperlaneMapLayout() {
+            const size = 720;
+            const x = W / 2 - size / 2;
+            const y = H / 2 - size / 2 + 18;
+
+            return {
+                x,
+                y,
+                w: size,
+                h: size,
+                titleY: y - 48,
+                closeX: x + size - 28,
+                closeY: y - 28,
+                closeR: 15
+            };
+        }
+
+        function worldToHyperlaneMap(wx, wy, layout) {
+            return {
+                x: layout.x + (wx / WORLD_W) * layout.w,
+                y: layout.y + (wy / WORLD_H) * layout.h
+            };
+        }
+
+        function drawHyperlaneScreen() {
+            if (!activeHyperlaneScreen) return;
+
+            const layout = getHyperlaneMapLayout();
+            const targets = getHyperlaneTargets();
+
+            ctx.save();
+
+            // Background veil
+            ctx.fillStyle = "rgba(0,0,0,0.72)";
+            ctx.fillRect(0, 0, W, H);
+
+            // Title
+            ctx.shadowColor = GREEN;
+            ctx.shadowBlur = 16;
+            ctx.fillStyle = GREEN;
+            ctx.font = "22px monospace";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText("HYPERLANE CONSTRUCTION // SECTOR MAP", W / 2, layout.titleY);
+
+            ctx.font = "13px monospace";
+            ctx.globalAlpha = 0.72;
+            ctx.fillText("SELECT A PLANETARY BELT OR STAR TO ANCHOR A NEW HYPERLANE", W / 2, layout.titleY + 28);
+            ctx.globalAlpha = 1;
+
+            // Map panel
+            ctx.strokeStyle = GREEN;
+            ctx.fillStyle = "rgba(0,20,0,0.94)";
+            ctx.lineWidth = 2;
+            ctx.shadowBlur = 14;
+
+            ctx.fillRect(layout.x, layout.y, layout.w, layout.h);
+            ctx.strokeRect(layout.x, layout.y, layout.w, layout.h);
+
+            // Grid
+            ctx.strokeStyle = "rgba(80,255,130,0.10)";
+            ctx.lineWidth = 1;
+            ctx.shadowBlur = 0;
+
+            for (let i = 1; i < 8; i++) {
+                const gx = layout.x + layout.w * i / 8;
+                const gy = layout.y + layout.h * i / 8;
+
+                ctx.beginPath();
+                ctx.moveTo(gx, layout.y);
+                ctx.lineTo(gx, layout.y + layout.h);
+                ctx.stroke();
+
+                ctx.beginPath();
+                ctx.moveTo(layout.x, gy);
+                ctx.lineTo(layout.x + layout.w, gy);
+                ctx.stroke();
+            }
+
+            // Existing hyperlanes
+            for (const lane of hyperlanes) {
+                const s = worldToHyperlaneMap(station.x, station.y, layout);
+                const d = worldToHyperlaneMap(lane.destination.x, lane.destination.y, layout);
+
+                ctx.strokeStyle = "rgba(80,255,130,0.42)";
+                ctx.lineWidth = 2;
+                ctx.setLineDash([8, 6]);
+
+                ctx.beginPath();
+                ctx.moveTo(s.x, s.y);
+                ctx.lineTo(d.x, d.y);
+                ctx.stroke();
+
+                ctx.setLineDash([]);
+            }
+
+            // Station marker
+            const stationP = worldToHyperlaneMap(station.x, station.y, layout);
+
+            ctx.fillStyle = "rgba(80,255,130,0.28)";
+            ctx.strokeStyle = GREEN;
+            ctx.lineWidth = 2;
+            ctx.shadowColor = GREEN;
+            ctx.shadowBlur = 10;
+
+            ctx.beginPath();
+            ctx.rect(stationP.x - 8, stationP.y - 8, 16, 16);
+            ctx.fill();
+            ctx.stroke();
+
+            ctx.font = "11px monospace";
+            ctx.textAlign = "left";
+            ctx.fillStyle = GREEN;
+            ctx.fillText("STATION", stationP.x + 12, stationP.y - 10);
+
+            // Destination markers
+            for (const body of targets) {
+                const p = worldToHyperlaneMap(body.x, body.y, layout);
+                const alreadyBuilt = hasHyperlaneTo(body);
+                const hovered = distSq({ x: mouseScreenX, y: mouseScreenY }, p) <= 16 * 16;
+
+                ctx.shadowColor = GREEN;
+                ctx.shadowBlur = hovered ? 18 : 8;
+                ctx.lineWidth = hovered ? 3 : 2;
+
+                if (alreadyBuilt) {
+                    ctx.strokeStyle = "rgba(80,255,130,0.35)";
+                    ctx.fillStyle = "rgba(80,255,130,0.08)";
+                } else if (body.type === "STAR") {
+                    ctx.strokeStyle = hovered ? "rgba(180,255,210,0.95)" : GREEN;
+                    ctx.fillStyle = hovered ? "rgba(80,255,130,0.24)" : "rgba(80,255,130,0.14)";
+                } else {
+                    ctx.strokeStyle = hovered ? "rgba(180,255,210,0.95)" : "rgba(120,255,170,0.85)";
+                    ctx.fillStyle = hovered ? "rgba(80,255,130,0.20)" : "rgba(80,255,130,0.10)";
+                }
+
+                ctx.beginPath();
+
+                if (body.type === "STAR") {
+                    ctx.arc(p.x, p.y, hovered ? 11 : 9, 0, Math.PI * 2);
+                } else {
+                    ctx.rect(p.x - 8, p.y - 8, 16, 16);
+                }
+
+                ctx.fill();
+                ctx.stroke();
+
+                ctx.font = "11px monospace";
+                ctx.textAlign = "left";
+                ctx.fillStyle = alreadyBuilt ? "rgba(80,255,130,0.45)" : GREEN;
+
+                const label = alreadyBuilt
+                    ? `${body.codename} // LINKED`
+                    : `${body.codename} // ${body.type === "STAR" ? "STAR" : "BELT WORLD"}`;
+
+                ctx.fillText(label, p.x + 14, p.y - 10);
+            }
+
+            // Close button
+            ctx.shadowBlur = 10;
+            ctx.strokeStyle = GREEN;
+            ctx.fillStyle = "rgba(0,255,90,0.08)";
+            ctx.lineWidth = 2;
+
+            ctx.beginPath();
+            ctx.arc(layout.closeX, layout.closeY, layout.closeR, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+
+            ctx.fillStyle = GREEN;
+            ctx.font = "15px monospace";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText("X", layout.closeX, layout.closeY);
+
+            // Footer
+            const hyperlaneCost = getHyperlaneBuildCost();
+            const canBuildLane = canAffordCost(hyperlaneCost);
+
+            ctx.font = "12px monospace";
+            ctx.globalAlpha = 0.72;
+            ctx.fillText("ESC OR X TO CLOSE", W / 2, layout.y + layout.h + 32);
+            ctx.globalAlpha = 1;
+
+            ctx.font = "13px monospace";
+            ctx.textAlign = "center";
+            ctx.fillStyle = canBuildLane ? GREEN : "rgba(120,255,160,0.45)";
+            ctx.globalAlpha = 0.9;
+            ctx.fillText(
+                `BUILD COST: ${formatCost(hyperlaneCost)}`,
+                W / 2,
+                layout.y + layout.h + 14
+            );
+            ctx.globalAlpha = 0.72;
+            ctx.fillText("ESC OR X TO CLOSE", W / 2, layout.y + layout.h + 36);
+            ctx.globalAlpha = 1;
+
+            ctx.restore();
         }
 
         function drawDebtProgressBar() {
@@ -3493,6 +4152,201 @@
 
                 ctx.restore();
             }
+        }
+
+        function drawHyperlaneGate(x, y, angle, label) {
+            ctx.save();
+            ctx.translate(x, y);
+            ctx.rotate(angle);
+
+            const pulse = 0.78 + Math.sin(frameCount * 0.08) * 0.12;
+
+            // Gate is drawn top-down, aligned with the lane:
+            // lane direction = +X / -X
+            // gate width = across the lane (Y axis)
+
+            // --- soft glow ---
+            ctx.fillStyle = `rgba(80,255,130,${0.08 * pulse})`;
+            ctx.shadowColor = GREEN;
+            ctx.shadowBlur = 16;
+            ctx.beginPath();
+            ctx.roundRect(-16, -24, 32, 48, 8);
+            ctx.fill();
+
+            // --- left pylon ---
+            ctx.fillStyle = "rgba(0,255,90,0.12)";
+            ctx.strokeStyle = "rgba(120,255,170,0.7)";
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.roundRect(-12, -24, 8, 48, 4);
+            ctx.fill();
+            ctx.stroke();
+
+            // --- right pylon ---
+            ctx.beginPath();
+            ctx.roundRect(4, -24, 8, 48, 4);
+            ctx.fill();
+            ctx.stroke();
+
+            // --- top connector ---
+            ctx.strokeStyle = `rgba(180,255,210,${0.55 * pulse})`;
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(-4, -18);
+            ctx.lineTo(4, -18);
+            ctx.stroke();
+
+            // --- bottom connector ---
+            ctx.beginPath();
+            ctx.moveTo(-4, 18);
+            ctx.lineTo(4, 18);
+            ctx.stroke();
+
+            // --- central gate core / aperture ---
+            ctx.strokeStyle = `rgba(180,255,210,${0.75 * pulse})`;
+            ctx.fillStyle = `rgba(120,255,170,${0.12 * pulse})`;
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.roundRect(-5, -10, 10, 20, 4);
+            ctx.fill();
+            ctx.stroke();
+
+            // --- animated inner energy line ---
+            ctx.strokeStyle = `rgba(120,255,170,${0.55 * pulse})`;
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(0, -8);
+            ctx.lineTo(0, 8);
+            ctx.stroke();
+
+            // --- small indicator lights ---
+            ctx.fillStyle = GREEN;
+            ctx.globalAlpha = 0.75 + Math.sin(frameCount * 0.12) * 0.08;
+            ctx.fillRect(-10, -16, 2, 2);
+            ctx.fillRect(8, -16, 2, 2);
+            ctx.fillRect(-10, 14, 2, 2);
+            ctx.fillRect(8, 14, 2, 2);
+
+            ctx.restore();
+
+            if (label) {
+                drawText(label, x + 14, y - 18, 0.55);
+            }
+        }
+
+        function drawHyperlanes() {
+            if (hyperlanes.length <= 0) return;
+
+            ctx.save();
+            ctx.lineCap = "round";
+            ctx.lineJoin = "round";
+
+            for (const lane of hyperlanes) {
+                const { from, to } = getHyperlaneEndpoints(lane);
+
+                const dx = to.x - from.x;
+                const dy = to.y - from.y;
+                const len = Math.hypot(dx, dy) || 1;
+
+                const nx = -dy / len;
+                const ny = dx / len;
+
+                const angle = Math.atan2(dy, dx);
+                const pulse = 0.22 + Math.sin(frameCount * 0.05) * 0.06;
+
+                // --- Outer corridor haze ---
+                ctx.strokeStyle = `rgba(80,255,130,${pulse})`;
+                ctx.lineWidth = 16;
+                ctx.shadowColor = GREEN;
+                ctx.shadowBlur = 22;
+                ctx.beginPath();
+                ctx.moveTo(from.x, from.y);
+                ctx.lineTo(to.x, to.y);
+                ctx.stroke();
+
+                // --- Main lane body ---
+                ctx.strokeStyle = "rgba(100,255,150,0.22)";
+                ctx.lineWidth = 9;
+                ctx.shadowBlur = 14;
+                ctx.beginPath();
+                ctx.moveTo(from.x, from.y);
+                ctx.lineTo(to.x, to.y);
+                ctx.stroke();
+
+                // --- Bright inner core ---
+                ctx.strokeStyle = "rgba(180,255,210,0.32)";
+                ctx.lineWidth = 3;
+                ctx.shadowBlur = 8;
+                ctx.beginPath();
+                ctx.moveTo(from.x, from.y);
+                ctx.lineTo(to.x, to.y);
+                ctx.stroke();
+
+                // --- Animated energy flow strands ---
+                ctx.strokeStyle = "rgba(120,255,170,0.32)";
+                ctx.lineWidth = 1.5;
+                ctx.shadowBlur = 6;
+
+                for (let s = -1; s <= 1; s++) {
+                    const offset = s * 4;
+
+                    ctx.setLineDash([14, 10]);
+                    ctx.lineDashOffset = -(frameCount * 1.2 + s * 9);
+
+                    ctx.beginPath();
+                    ctx.moveTo(from.x + nx * offset, from.y + ny * offset);
+                    ctx.lineTo(to.x + nx * offset, to.y + ny * offset);
+                    ctx.stroke();
+                }
+
+                ctx.setLineDash([]);
+
+                // --- Structural ribs across the corridor ---
+                ctx.strokeStyle = "rgba(80,255,130,0.22)";
+                ctx.lineWidth = 1;
+                ctx.shadowBlur = 0;
+
+                const ribSpacing = 70;
+                const ribHalfWidth = 10;
+
+                for (let d = 40; d < len - 40; d += ribSpacing) {
+                    const px = from.x + dx / len * d;
+                    const py = from.y + dy / len * d;
+
+                    ctx.beginPath();
+                    ctx.moveTo(px - nx * ribHalfWidth, py - ny * ribHalfWidth);
+                    ctx.lineTo(px + nx * ribHalfWidth, py + ny * ribHalfWidth);
+                    ctx.stroke();
+                }
+
+                // --- Small moving plasma packets ---
+                for (let i = 0; i < 5; i++) {
+                    const p = ((frameCount * 0.01) + i / 5) % 1;
+                    const px = from.x + dx * p;
+                    const py = from.y + dy * p;
+
+                    ctx.fillStyle = "rgba(180,255,210,0.55)";
+                    ctx.shadowColor = GREEN;
+                    ctx.shadowBlur = 10;
+                    ctx.beginPath();
+                    ctx.arc(px, py, 2.5, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                // --- Draw start and end gates ---
+                drawHyperlaneGate(from.x, from.y, angle, `${lane.codename}-A`);
+                drawHyperlaneGate(to.x, to.y, angle + Math.PI, `${lane.codename}-B`);
+
+                // --- Mid-lane codename ---
+                drawText(
+                    lane.codename,
+                    (from.x + to.x) * 0.5 + nx * 14,
+                    (from.y + to.y) * 0.5 + ny * 14,
+                    0.65
+                );
+            }
+
+            ctx.restore();
         }
 
         function drawFloatingOre() {
@@ -4423,16 +5277,43 @@
             const isSalvageShip = kind === "salvageShip";
             const isStarSiphoner = kind === "starSiphoner";
 
-            const angle = ship.state === "returning"
-                ? Math.atan2(station.y - ship.y, station.x - ship.x)
-                : ship.target
-                    ? Math.atan2(
-                        (ship.target.y ?? ship.targetY) - ship.y,
-                        (ship.target.x ?? ship.targetX) - ship.x
-                    )
-                    : ship.targetX !== undefined
-                        ? Math.atan2(ship.targetY - ship.y, ship.targetX - ship.x)
-                        : 0;
+            let angle = 0;
+
+            if (
+                (ship.state === "hyperlaneEntry" || ship.state === "hyperlaneTravel") &&
+                ship.hyperlane
+            ) {
+                const headingTarget = ship.state === "hyperlaneEntry"
+                    ? ship.hyperlane.from
+                    : ship.hyperlane.to;
+
+                angle = Math.atan2(
+                    headingTarget.y - ship.y,
+                    headingTarget.x - ship.x
+                );
+
+            } else if (ship.state === "returning") {
+                const returnTarget = ship.kind === "starSiphoner"
+                    ? getLargeShipyardDockPoint()
+                    : station;
+
+                angle = Math.atan2(
+                    returnTarget.y - ship.y,
+                    returnTarget.x - ship.x
+                );
+
+            } else if (ship.target) {
+                angle = Math.atan2(
+                    ship.target.y - ship.y,
+                    ship.target.x - ship.x
+                );
+
+            } else if (ship.targetX !== undefined) {
+                angle = Math.atan2(
+                    ship.targetY - ship.y,
+                    ship.targetX - ship.x
+                );
+            }
 
             const hovered = getHoveredTarget()?.object === ship;
 
@@ -4506,21 +5387,50 @@
                 const { mining, salvaging } = getDroneCarrierCounts(ship);
                 drawText(`${ship.state.toUpperCase()} M:${mining} S:${salvaging}`, ship.x + 10, ship.y + 4, 0.65);
             } else if (isStarSiphoner) {
-                drawText(`${ship.state.toUpperCase()} HELION:${ship.cargo}/${ship.cargoMax}`, ship.x + 10, ship.y + 4, 0.65);
+                const stateLabel = ship.state === "hyperlaneEntry"
+                    ? "ENTERING LANE"
+                    : ship.state === "hyperlaneTravel"
+                        ? "HYPERLANE"
+                        : ship.state.toUpperCase();
+
+                drawText(`${stateLabel} HELION:${ship.cargo}/${ship.cargoMax}`, ship.x + 18, ship.y + 6, 0.65);
             } else {
                 const resourceLabel = isSalvageShip ? "METAL" : "ORE";
                 drawText(`${ship.state.toUpperCase()} ${resourceLabel}:${ship.cargo}/${ship.cargoMax}`, ship.x + 10, ship.y + 4, 0.65);
             }
 
-            if (ship.target && ship.state !== "idle") {
-                ctx.strokeStyle = isSalvageShip
-                    ? "rgba(120,255,190,0.14)"
-                    : "rgba(80,255,130,0.12)";
+            if (ship.state === "hyperlaneEntry" && ship.hyperlane) {
+                ctx.strokeStyle = "rgba(80,255,130,0.18)";
+                ctx.beginPath();
+                ctx.moveTo(ship.x, ship.y);
+                ctx.lineTo(ship.hyperlane.from.x, ship.hyperlane.from.y);
+                ctx.stroke();
+
+            } else if (ship.state === "hyperlaneTravel" && ship.hyperlane) {
+                ctx.strokeStyle = "rgba(120,255,160,0.35)";
+                ctx.lineWidth = 2;
+                ctx.setLineDash([10, 8]);
+                ctx.lineDashOffset = -frameCount;
+
+                ctx.beginPath();
+                ctx.moveTo(ship.x, ship.y);
+                ctx.lineTo(ship.hyperlane.to.x, ship.hyperlane.to.y);
+                ctx.stroke();
+
+                ctx.setLineDash([]);
+
+            } else if (ship.target && ship.state !== "idle" && ship.state !== "standby") {
+                ctx.strokeStyle = isStarSiphoner
+                    ? "rgba(80,255,130,0.16)"
+                    : isSalvageShip
+                        ? "rgba(120,255,190,0.14)"
+                        : "rgba(80,255,130,0.12)";
 
                 ctx.beginPath();
                 ctx.moveTo(ship.x, ship.y);
                 ctx.lineTo(ship.target.x, ship.target.y);
                 ctx.stroke();
+
             } else if (ship.targetX !== undefined && ship.state === "outbound") {
                 ctx.strokeStyle = "rgba(80,255,130,0.12)";
                 ctx.beginPath();
@@ -4787,6 +5697,7 @@
             drawLaserBeams();
             drawFloatingOre();
             drawGravityPulses();
+            drawHyperlanes();
 
             ships.forEach(drawShip);
 
@@ -4800,6 +5711,7 @@
 
             drawHud();
             drawDebtProgressBar();
+            drawHyperlaneScreen();
             drawCrosshair();
             drawIncomingMessage();
 
