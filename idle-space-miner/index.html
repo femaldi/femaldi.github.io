@@ -438,6 +438,7 @@
                 type: "upgrade",
                 getLevel: () => module.rangeUpgradeLevel,
                 getCap: () => module.rangeUpgradeCap,
+                description: () => "Increases module range by +250 per level, or +500 for Observatory",
                 getCost: () => getRangeUpgradeCost(module),
                 isVisible: () => module.rangeUpgradeLevel < module.rangeUpgradeCap && hasDiscoveredScience,
                 canBuy: () => true,
@@ -542,7 +543,9 @@
                     {
                         label: "Shipyard",
                         cost: { ore: 10 },
-                        canBuy: () => !stationModules.some(m => m.id === "smallShipyard"),
+                        isVisible: () => !stationModules.some(m => m.id === "smallShipyard"),
+                        description: () => "Unlocks Small Shipyard ships and upgrades.",
+                        canBuy: () => true,
                         buy: () => {
                             stationModules.push(createModule("smallShipyard"));
                             activeMenu = null;
@@ -551,7 +554,9 @@
                     {
                         label: "Observatory",
                         cost: { ore: 25 },
-                        canBuy: () => !stationModules.some(m => m.id === "observatory"),
+                        isVisible: () => !stationModules.some(m => m.id === "observatory"),
+                        description: () => "Unlocks celestial observation and Science generation.",
+                        canBuy: () => true,
                         buy: () => {
                             stationModules.push(createModule("observatory"));
 
@@ -571,6 +576,7 @@
                         getCap: () => SALVAGE_RIGHTS_MAX,
                         getCost: () => ({ ore: Math.floor(1500 * Math.pow(2.2, salvageSlots.length)) }),
                         isVisible: () => salvagingLicenseUnlocked && salvageSlots.length < SALVAGE_RIGHTS_MAX,
+                        description: () => "Adds +1 salvage hauler slot per level. Max:" + SALVAGE_RIGHTS_MAX,
                         canBuy: () => true,
                         buy: () => {
                             addSalvageSlot();
@@ -579,6 +585,7 @@
                     {
                         label: "Large Shipyard",
                         getCost: () => ({ ore: getLargeShipyardCost() }),
+                        description: () => "Unlocks heavy ships.",
                         isVisible: () =>
                             largeShipyardUnlocked &&
                             !stationModules.some(m => m.id === "largeShipyard"),
@@ -592,6 +599,7 @@
                         label: "Hyperlane Construction",
                         cost: {},
                         isVisible: () => hasDiscoveredHelion,
+                        description: () => "Opens hyperlane map.",
                         canBuy: () => true,
                         buy: () => {
                             openHyperlaneScreen();
@@ -614,6 +622,7 @@
                         label: "Laser Strength",
                         type: "upgrade",
                         getLevel: () => upgrades.laserStrength.level,
+                        description: () => "Increases laser output by +1 chunk per level.",
                         getCap: () => upgrades.laserStrength.cap,
                         getCost: () => ({ science: getLaserStrengthCost() }),
                         isVisible: () => upgrades.laserStrength.level < upgrades.laserStrength.cap && hasDiscoveredScience,
@@ -628,6 +637,7 @@
                         label: "Laser Speed",
                         type: "upgrade",
                         getLevel: () => upgrades.laserSpeed.level,
+                        description: () => "Reduces laser cooldown: 30 / 20 / 15 / 10",
                         getCap: () => upgrades.laserSpeed.cap,
                         getCost: () => ({ science: getLaserSpeedCost() }),
                         isVisible: () =>
@@ -667,6 +677,7 @@
                         type: "upgrade",
                         getLevel: () => upgrades.automaticPulse.level,
                         getCap: () => upgrades.automaticPulse.cap,
+                        description: () => "Enables automatic Grav Pulse. Interval: 10s / 6s / 3s",
                         getCost: () => ({ ore: getAutomaticPulseCost() }),
                         isVisible: () => upgrades.automaticPulse.level < upgrades.automaticPulse.cap,
                         canBuy: () => true,
@@ -694,6 +705,7 @@
                         getCost: () => ({
                             ore: Math.floor(Math.pow(2, countShipsByKind("miningFrigate")) * 10)
                         }),
+                        description: () => "Builds mining ship that mines nearby asteroids.",
                         canBuy: () => true,
                         buy: () => {
                             ships.push(makeShip(countShipsByKind("miningFrigate")));
@@ -704,21 +716,19 @@
                         type: "upgrade",
                         getLevel: () => upgrades.shipSpeed.level,
                         getCap: () => upgrades.shipSpeed.cap,
+                        description: () => "Increases small ship speed by +50% per level.",
                         getCost: () => ({ science: Math.floor(75 * Math.pow(2, upgrades.shipSpeed.level)) }),
                         isVisible: () => upgrades.shipSpeed.level < upgrades.shipSpeed.cap && hasDiscoveredScience,
                         canBuy: () => true,
                         buy: () => {
                             upgrades.shipSpeed.level++;
-
-                            for (const ship of ships) {
-                                ship.speed *= (1 + SHIP_SPEED_MULTIPLIER);
-                            }
                         }
                     },
                     {
                         label: "Mining Speed",
                         type: "upgrade",
                         getLevel: () => upgrades.miningSpeed.level,
+                        description: () => "Increases cargo mining rate by +1 resource per mining tick.",
                         getCap: () => upgrades.miningSpeed.cap,
                         getCost: () => ({ science: Math.floor(90 * Math.pow(2, upgrades.miningSpeed.level)) }),
                         isVisible: () => upgrades.miningSpeed.level < upgrades.miningSpeed.cap && hasDiscoveredScience,
@@ -731,24 +741,20 @@
                         label: "Cargo Capacity",
                         type: "upgrade",
                         getLevel: () => upgrades.cargoCapacity.level,
+                        description: () => "Increases small cargo ship capacity by +50% per level.",
                         getCap: () => upgrades.cargoCapacity.cap,
                         getCost: () => ({ science: Math.floor(80 * Math.pow(2, upgrades.cargoCapacity.level)) }),
                         isVisible: () => upgrades.cargoCapacity.level < upgrades.cargoCapacity.cap && hasDiscoveredScience,
                         canBuy: () => true,
                         buy: () => {
                             upgrades.cargoCapacity.level++;
-
-                            for (const ship of ships) {
-                                if (typeof ship.cargoMax === "number") {
-                                    ship.cargoMax = Math.floor(ship.cargoMax * (1 + SHIP_CARGO_MULTIPLIER));
-                                }
-                            }
                         }
                     },
                     {
                         label: "Drone Ship Schematic",
                         type: "upgrade",
                         getLevel: () => upgrades.droneShipSchematic.level,
+                        description: () => "Unlocks Drone Ship construction.",
                         getCap: () => upgrades.droneShipSchematic.cap,
                         getCost: () => ({ science: getDroneShipSchematicCost() }),
                         isVisible: () =>
@@ -763,6 +769,7 @@
                         label: "Salvaging Ship Schematic",
                         type: "upgrade",
                         getLevel: () => upgrades.salvagingShipSchematic.level,
+                        description: () => "Unlocks Salvaging Ship construction.",
                         getCap: () => upgrades.salvagingShipSchematic.cap,
                         getCost: () => ({ science: getSalvagingShipSchematicCost() }),
                         isVisible: () =>
@@ -776,6 +783,7 @@
                     {
                         label: "Drone Ship",
                         getCost: () => ({ metal: getDroneShipCost() }),
+                        description: () => "Builds drone carrier.",
                         isVisible: () => upgrades.droneShipSchematic.level > 0,
                         canBuy: () => true,
                         buy: () => {
@@ -785,6 +793,7 @@
                     {
                         label: "Salvaging Ship",
                         getCost: () => ({ metal: getSalvagingShipCost() }),
+                        description: () => "Builds wreck-salvaging ship.",
                         isVisible: () => upgrades.salvagingShipSchematic.level > 0,
                         canBuy: () => true,
                         buy: () => {
@@ -806,6 +815,7 @@
                     {
                         label: "Helion Siphoner",
                         getCost: () => getStarSiphonerCost(),
+                        description: () => "Build a heavy fuel tanker that siphons fuel from stars",
                         canBuy: () => true,
                         buy: () => {
                             ships.push(makeStarSiphoner(countShipsByKind("starSiphoner")));
@@ -815,6 +825,7 @@
                         label: "Siphoning Speed",
                         type: "upgrade",
                         getLevel: () => upgrades.siphoningSpeed.level,
+                        description: () => "Siphons +1 HELION per cycle per level.",
                         getCap: () => upgrades.siphoningSpeed.cap,
                         getCost: () => getSiphoningSpeedCost(),
                         isVisible: () => upgrades.siphoningSpeed.level < upgrades.siphoningSpeed.cap,
@@ -827,18 +838,13 @@
                         label: "Siphon Cargo Space",
                         type: "upgrade",
                         getLevel: () => upgrades.siphonCargo.level,
+                        description: () => "Increases Helion Siphoner cargo by +8 HELION per level.",
                         getCap: () => upgrades.siphonCargo.cap,
                         getCost: () => getSiphonCargoCost(),
                         isVisible: () => upgrades.siphonCargo.level < upgrades.siphonCargo.cap,
                         canBuy: () => true,
                         buy: () => {
                             upgrades.siphonCargo.level++;
-
-                            for (const ship of ships) {
-                                if (ship.kind === "starSiphoner") {
-                                    ship.cargoMax = getStarSiphonerCargoMax();
-                                }
-                            }
                         }
                     }
                 ]
@@ -859,6 +865,7 @@
                         type: "upgrade",
                         getLevel: () => observatoryArrays.length,
                         getCap: () => 3,
+                        description: () => "Adds +1 Observatory array. Each array can be used to observe a single celestial body.",
                         getCost: () => ({ ore: Math.floor(Math.pow(2, observatoryArrays.length) * 75) }),
                         isVisible: () => observatoryArrays.length < 3,
                         canBuy: () => true,
@@ -873,6 +880,7 @@
                     {
                         label: "Science Probe",
                         getCost: () => ({ ore: Math.floor(500 * Math.pow(2.25, scienceProbes.length)) }),
+                        description: () => "Adds +1 probe. Probes increase observed-body Science multiplier by +1x each.",
                         canBuy: () => observatoryArrays.some(a => a.target),
                         buy: () => {
                             const observatory = getModuleById("observatory");
@@ -1549,6 +1557,38 @@
             return 1 + upgrades.cargoCapacity.level * SHIP_CARGO_MULTIPLIER;
         }
 
+        function getEffectiveShipSpeed(ship) {
+            const kind = ship.kind || "miningFrigate";
+
+            // Large ships are intentionally slow and are NOT affected
+            // by Small Shipyard speed upgrades.
+            if (kind === "starSiphoner") {
+                return ship.baseSpeed ?? STAR_SIPHONER_BASE_SPEED;
+            }
+
+            const baseSpeed = ship.baseSpeed ?? getEffectiveShipSpeed(ship) ?? 1;
+
+            return baseSpeed * getShipSpeedMultiplier();
+        }
+
+        function getEffectiveCargoMax(ship) {
+            const kind = ship.kind || "miningFrigate";
+
+            // Helion Siphoners use Large Shipyard cargo upgrades only.
+            if (kind === "starSiphoner") {
+                return getStarSiphonerCargoMax();
+            }
+
+            // Drone carriers do not carry resources.
+            if (kind === "droneCarrier") {
+                return 0;
+            }
+
+            const baseCargoMax = ship.baseCargoMax ?? getEffectiveCargoMax(ship) ?? 0;
+
+            return Math.floor(baseCargoMax * getCargoCapacityMultiplier());
+        }
+
         function getMiningInterval() {
             return 14;
         }
@@ -1637,7 +1677,7 @@
             ship.targetY = pos.y;
             ship.state = "standby";
 
-            moveToward(ship, pos.x, pos.y, ship.speed * 0.75);
+            moveToward(ship, pos.x, pos.y, getEffectiveShipSpeed(ship) * 0.75);
         }
 
         function shouldStandbyShipRetryWork(ship) {
@@ -1765,9 +1805,8 @@
                 kind: "starSiphoner",
                 x: station.x + rand(-40, 40),
                 y: station.y + rand(-40, 40),
-                speed: STAR_SIPHONER_BASE_SPEED,
+                baseSpeed: STAR_SIPHONER_BASE_SPEED,
                 cargo: 0,
-                cargoMax: getStarSiphonerCargoMax(),
                 siphonTimer: 0,
                 target: null,
                 state: "seeking",
@@ -1780,9 +1819,9 @@
                 kind: "miningFrigate",
                 x: station.x + rand(-30, 30),
                 y: station.y + rand(-30, 30),
-                speed: getShipSpeedMultiplier(),
+                baseSpeed: 1,
                 cargo: 0,
-                cargoMax: 25 * getCargoCapacityMultiplier(),
+                baseCargoMax: 25,
                 miningTimer: 0,
                 target: null,
                 state: "seeking",
@@ -1795,9 +1834,9 @@
                 kind: "salvageShip",
                 x: station.x + rand(-34, 34),
                 y: station.y + rand(-34, 34),
-                speed: getShipSpeedMultiplier() * 0.95,
+                baseSpeed: 0.95,
                 cargo: 0,
-                cargoMax: 20 * getCargoCapacityMultiplier(),
+                baseCargoMax: 20,
                 miningTimer: 0,
                 target: null,
                 state: "seeking",
@@ -1811,7 +1850,7 @@
                 type: "menu",
                 x: station.x + rand(-40, 40),
                 y: station.y + rand(-40, 40),
-                speed: getShipSpeedMultiplier() * 0.75,
+                baseSpeed: 0.75,
                 radius: 22,
                 range: DRONE_SHIP_RANGE,
                 target: null,
@@ -1836,6 +1875,7 @@
                     label: "Mining Drone",
                     getCost: () => ({ metal: getMiningDroneCost(ship) }),
                     canBuy: () => true,
+                    description: () => "Adds +1 mining drone. Generates ore chunks from asteroids",
                     buy: () => {
                         ship.drones.push(makeCarrierDrone(ship, "mining"));
                         ship.forceRedeploy = true;
@@ -1845,6 +1885,7 @@
                     label: "Salvaging Drone",
                     getCost: () => ({ metal: getSalvagingDroneCost(ship) }),
                     canBuy: () => true,
+                    description: () => "Adds +1 salvaging drone. Generates metal chunks from wrecks",
                     buy: () => {
                         ship.drones.push(makeCarrierDrone(ship, "salvaging"));
                         ship.forceRedeploy = true;
@@ -2347,6 +2388,7 @@
         function updateActiveMenu() {
             if (activeMenu && activeMenu.menuBounds) {
                 const b = activeMenu.menuBounds;
+                const t = activeMenu.tooltipBounds;
 
                 const insideMenu =
                     mouseScreenX >= b.x &&
@@ -2354,7 +2396,14 @@
                     mouseScreenY >= b.y &&
                     mouseScreenY <= b.y + b.h;
 
-                if (insideMenu) {
+                const insideTooltip =
+                    t &&
+                    mouseScreenX >= t.x &&
+                    mouseScreenX <= t.x + t.w &&
+                    mouseScreenY >= t.y &&
+                    mouseScreenY <= t.y + t.h;
+
+                if (insideMenu || insideTooltip) {
                     menuCloseTimer = 0;
                     return;
                 }
@@ -2517,7 +2566,7 @@
             if (hyperlanes.length <= 0) return null;
 
             const normalSiphonPoint = chooseSiphonerParkingSpot(ship, star, ship);
-            const normalTime = estimateTravelTime(ship, normalSiphonPoint, ship.speed);
+            const normalTime = estimateTravelTime(ship, normalSiphonPoint, getEffectiveShipSpeed(ship));
 
             let bestRoute = null;
             let bestTime = normalTime;
@@ -2536,9 +2585,9 @@
                     continue;
                 }
 
-                const timeToEntry = estimateTravelTime(ship, endpoints.from, ship.speed);
+                const timeToEntry = estimateTravelTime(ship, endpoints.from, getEffectiveShipSpeed(ship));
                 const laneTime = estimateTravelTime(endpoints.from, endpoints.to, HYPERLANE_TRAVEL_SPEED);
-                const timeAfterExit = estimateTravelTime(exitPoint, postLaneSiphonPoint, ship.speed);
+                const timeAfterExit = estimateTravelTime(exitPoint, postLaneSiphonPoint, getEffectiveShipSpeed(ship));
 
                 const totalTime = timeToEntry + laneTime + timeAfterExit;
 
@@ -2560,7 +2609,7 @@
 
         function estimateSiphonerTravelTimeToStar(ship, star) {
             const normalSiphonPoint = chooseSiphonerParkingSpot(ship, star, ship);
-            const normalTime = estimateTravelTime(ship, normalSiphonPoint, ship.speed);
+            const normalTime = estimateTravelTime(ship, normalSiphonPoint, getEffectiveShipSpeed(ship));
 
             const hyperlaneRoute = getBestHyperlaneRouteToStar(ship, star);
 
@@ -2568,7 +2617,7 @@
                 return normalTime;
             }
 
-            const timeToEntry = estimateTravelTime(ship, hyperlaneRoute.from, ship.speed);
+            const timeToEntry = estimateTravelTime(ship, hyperlaneRoute.from, getEffectiveShipSpeed(ship));
             const laneTime = estimateTravelTime(
                 hyperlaneRoute.from,
                 hyperlaneRoute.to,
@@ -2579,7 +2628,7 @@
             const timeAfterExit = estimateTravelTime(
                 hyperlaneRoute.to,
                 postLaneSiphonPoint,
-                ship.speed
+                getEffectiveShipSpeed(ship)
             );
 
             return timeToEntry + laneTime + timeAfterExit;
@@ -2885,6 +2934,7 @@
         }
 
         function updateCargoMiningShip(ship, chooseTarget, isValidTarget, resourceType) {
+
             if (ship.state === "idle" || ship.state === "standby") {
                 updateShipStandbyPosition(ship);
 
@@ -2914,7 +2964,7 @@
                     return;
                 }
 
-                if (moveToward(ship, ship.target.x, ship.target.y, ship.speed)) {
+                if (moveToward(ship, ship.target.x, ship.target.y, getEffectiveShipSpeed(ship))) {
                     ship.state = "mining";
                     ship.miningTimer = 0;
                 }
@@ -2933,7 +2983,7 @@
                     const mined = Math.min(
                         getMiningAmountPerTick(),
                         getTargetResourceAmount(ship.target),
-                        ship.cargoMax - ship.cargo
+                        getEffectiveCargoMax(ship) - ship.cargo
                     );
 
                     reduceTargetResource(ship.target, mined);
@@ -2943,7 +2993,7 @@
                 if (
                     !ship.target ||
                     getTargetResourceAmount(ship.target) <= 0 ||
-                    ship.cargo >= ship.cargoMax
+                    ship.cargo >= getEffectiveCargoMax(ship)
                 ) {
                     ship.target = null;
                     ship.state = "returning";
@@ -2951,7 +3001,7 @@
             }
 
             if (ship.state === "returning") {
-                if (moveToward(ship, station.x, station.y, ship.speed * 0.85)) {
+                if (moveToward(ship, station.x, station.y, getEffectiveShipSpeed(ship) * 0.85)) {
                     if (ship.cargo > 0) {
                         addResource(resourceType, ship.cargo);
                         queueOreGatherSound();
@@ -3399,7 +3449,7 @@
             }
 
             if (ship.state === "outbound") {
-                const arrived = moveToward(ship, ship.targetX, ship.targetY, ship.speed);
+                const arrived = moveToward(ship, ship.targetX, ship.targetY, getEffectiveShipSpeed(ship));
 
                 if (arrived) {
                     ship.state = "deployed";
@@ -3482,7 +3532,7 @@
             if (hyperlanes.length <= 0) return null;
 
             const dock = getLargeShipyardDockPoint();
-            const normalTime = estimateTravelTime(ship, dock, ship.speed);
+            const normalTime = estimateTravelTime(ship, dock, getEffectiveShipSpeed(ship));
 
             let bestRoute = null;
             let bestTime = normalTime;
@@ -3490,9 +3540,9 @@
             for (const lane of hyperlanes) {
                 const endpoints = getHyperlaneEndpoints(lane);
 
-                const timeToEntry = estimateTravelTime(ship, endpoints.to, ship.speed);
+                const timeToEntry = estimateTravelTime(ship, endpoints.to, getEffectiveShipSpeed(ship));
                 const laneTime = estimateTravelTime(endpoints.to, endpoints.from, HYPERLANE_TRAVEL_SPEED);
-                const timeAfterExit = estimateTravelTime(endpoints.from, dock, ship.speed);
+                const timeAfterExit = estimateTravelTime(endpoints.from, dock, getEffectiveShipSpeed(ship));
 
                 const totalTime = timeToEntry + laneTime + timeAfterExit;
 
@@ -3539,7 +3589,7 @@
                     ship,
                     ship.hyperlane.from.x,
                     ship.hyperlane.from.y,
-                    ship.speed
+                    getEffectiveShipSpeed(ship)
                 );
 
                 if (arrived) {
@@ -3611,7 +3661,7 @@
                     assignSiphonerParkingSpot(ship, ship.target, ship);
                 }
 
-                if (moveToward(ship, ship.siphonPoint.x, ship.siphonPoint.y, ship.speed)) {
+                if (moveToward(ship, ship.siphonPoint.x, ship.siphonPoint.y, getEffectiveShipSpeed(ship))) {
                     ship.state = "siphoning";
                     ship.siphonTimer = 0;
                 }
@@ -3631,13 +3681,13 @@
 
                     const amount = Math.min(
                         getStarSiphonAmount(),
-                        ship.cargoMax - ship.cargo
+                        getEffectiveCargoMax(ship) - ship.cargo
                     );
 
                     ship.cargo += amount;
                 }
 
-                if (ship.cargo >= ship.cargoMax) {
+                if (ship.cargo >= getEffectiveCargoMax(ship)) {
                     ship.state = "returning";
                 }
             }
@@ -3651,7 +3701,7 @@
 
                 const dock = getLargeShipyardDockPoint();
 
-                if (moveToward(ship, dock.x, dock.y, ship.speed)) {
+                if (moveToward(ship, dock.x, dock.y, getEffectiveShipSpeed(ship))) {
                     if (ship.cargo > 0) {
                         addResource("helion", ship.cargo);
                         queueOreGatherSound();
@@ -4736,6 +4786,129 @@
             };
         }
 
+        function getHoveredMenuItem(visibleItems) {
+            for (const item of visibleItems) {
+                if (!item.bounds) continue;
+
+                const inside =
+                    mouseScreenX >= item.bounds.x &&
+                    mouseScreenX <= item.bounds.x + item.bounds.w &&
+                    mouseScreenY >= item.bounds.y &&
+                    mouseScreenY <= item.bounds.y + item.bounds.h;
+
+                if (inside) return item;
+            }
+
+            return null;
+        }
+
+        function getMenuItemDescription(item) {
+            if (!item) return null;
+
+            if (typeof item.description === "function") {
+                return item.description();
+            }
+
+            return null;
+        }
+
+        function drawMenuTooltip(menuX, menuY, menuW, menuH, item, isMenuOnRight) {
+            const description = getMenuItemDescription(item);
+
+            if (!description) {
+                activeMenu.tooltipBounds = null;
+                return;
+            }
+
+            const gap = 8;
+            const tooltipW = 320;
+            const padding = 14;
+            const lineHeight = 18;
+
+            ctx.save();
+            ctx.font = "13px monospace";
+
+            const lines = wrapTextLines(description, tooltipW - padding * 2);
+            const tooltipH = Math.max(
+                48,
+                padding * 2 + lines.length * lineHeight
+            );
+
+            let x = menuX + menuW + gap;
+
+            // Prefer right side, fallback left.
+            if (x + tooltipW > W - 12) {
+                x = menuX - tooltipW - gap;
+            }
+
+            // Align tooltip with hovered row when possible.
+            let y = item.bounds
+                ? item.bounds.y + item.bounds.h / 2 - tooltipH / 2
+                : menuY;
+
+            // Keep onscreen.
+            if (y < 12) y = 12;
+            if (y + tooltipH > H - 12) y = H - tooltipH - 12;
+
+            activeMenu.tooltipBounds = {
+                x,
+                y,
+                w: tooltipW,
+                h: tooltipH
+            };
+
+            ctx.strokeStyle = GREEN;
+            ctx.fillStyle = "rgba(0,20,0,0.90)";
+            ctx.lineWidth = 1;
+            ctx.shadowColor = GREEN;
+            ctx.shadowBlur = 10;
+
+            ctx.fillRect(x, y, tooltipW, tooltipH);
+            ctx.strokeRect(x, y, tooltipW, tooltipH);
+
+            // Inner frame
+            ctx.strokeStyle = "rgba(80,255,130,0.28)";
+            ctx.strokeRect(
+                x + 6,
+                y + 6,
+                tooltipW - 12,
+                tooltipH - 12
+            );
+
+            // Connector line from hovered item to tooltip
+            if (item.bounds) {
+                const itemCenterY = item.bounds.y + item.bounds.h / 2;
+
+                ctx.strokeStyle = "rgba(80,255,130,0.35)";
+                ctx.beginPath();
+
+                if (x > menuX) {
+                    ctx.moveTo(item.bounds.x + item.bounds.w, itemCenterY);
+                    ctx.lineTo(x, itemCenterY);
+                } else {
+                    ctx.moveTo(item.bounds.x, itemCenterY);
+                    ctx.lineTo(x + tooltipW, itemCenterY);
+                }
+
+                ctx.stroke();
+            }
+
+            // Description only. No header.
+            ctx.fillStyle = GREEN;
+            ctx.font = "13px monospace";
+            ctx.textAlign = "left";
+            ctx.textBaseline = "top";
+
+            let lineY = y + padding;
+
+            for (const line of lines) {
+                ctx.fillText(line, x + padding, lineY);
+                lineY += lineHeight;
+            }
+
+            ctx.restore();
+        }
+
         const MENU_OFFSET = 6; // was 18
 
         function drawActiveMenu() {
@@ -4838,7 +5011,7 @@
 
                 if (item.type === "upgrade") {
                     const nextLevel = item.getLevel() + 1;
-                    label = `${item.label} ${toRoman(nextLevel)}`;
+                    label = `${item.label} ${nextLevel}`;
                 }
 
                 ctx.fillText(`${label} (${formatCost(cost)})`, bx + 8, by + 14);
@@ -4853,6 +5026,14 @@
 
                 item.bounds = { x: bx, y: by, w: bw, h: bh };
             });
+
+            const hoveredItem = getHoveredMenuItem(visibleItems);
+
+            if (hoveredItem) {
+                drawMenuTooltip(x, y, w, h, hoveredItem, isMenuOnRight);
+            } else {
+                activeMenu.tooltipBounds = null;
+            }
 
             ctx.restore();
         }
@@ -5393,10 +5574,10 @@
                         ? "HYPERLANE"
                         : ship.state.toUpperCase();
 
-                drawText(`${stateLabel} HELION:${ship.cargo}/${ship.cargoMax}`, ship.x + 18, ship.y + 6, 0.65);
+                drawText(`${stateLabel} HELION:${ship.cargo}/${getEffectiveCargoMax(ship)}`, ship.x + 18, ship.y + 6, 0.65);
             } else {
                 const resourceLabel = isSalvageShip ? "METAL" : "ORE";
-                drawText(`${ship.state.toUpperCase()} ${resourceLabel}:${ship.cargo}/${ship.cargoMax}`, ship.x + 10, ship.y + 4, 0.65);
+                drawText(`${ship.state.toUpperCase()} ${resourceLabel}:${ship.cargo}/${getEffectiveCargoMax(ship)}`, ship.x + 10, ship.y + 4, 0.65);
             }
 
             if (ship.state === "hyperlaneEntry" && ship.hyperlane) {
