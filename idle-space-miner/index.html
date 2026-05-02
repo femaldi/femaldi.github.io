@@ -466,6 +466,32 @@
         const DRONE_STRENGTH_UPGRADE_AMOUNT = 1;
         const DRONE_RANGE_UPGRADE_AMOUNT = 75;
 
+        const DRONE_CARRIER_OPERATION_MODES = ["mixed", "mining", "salvaging"];
+
+        function getDroneCarrierOperationMode(carrier) {
+            return carrier.operationMode || "mixed";
+        }
+
+        function getDroneCarrierOperationModeLabel(carrier) {
+            return getDroneCarrierOperationMode(carrier).toUpperCase();
+        }
+
+        function cycleDroneCarrierOperationMode(carrier) {
+            const current = getDroneCarrierOperationMode(carrier);
+            const index = DRONE_CARRIER_OPERATION_MODES.indexOf(current);
+            const next = DRONE_CARRIER_OPERATION_MODES[
+                (index + 1) % DRONE_CARRIER_OPERATION_MODES.length
+            ];
+
+            carrier.operationMode = next;
+            carrier.forceRedeploy = true;
+            carrier.redeployTimer = 0;
+
+            for (const drone of carrier.drones) {
+                drone.target = null;
+            }
+        }
+
         const SHIP_STANDBY_RETRY_INTERVAL = 75;
         const SHIP_STANDBY_RING_SIZE = 8;
         const SHIP_STANDBY_BASE_RADIUS = 82;
@@ -2041,6 +2067,7 @@
                 targetX: station.x,
                 targetY: station.y,
                 state: "seeking",
+                operationMode: "mixed",
                 redeployTimer: 0,
                 forceRedeploy: true,
                 lastSalvagePriority: false,
@@ -2055,6 +2082,16 @@
 
         function makeDroneCarrierMenuItems(ship) {
             return [
+                {
+                    label: "Operation Mode",
+                    cost: {},
+                    description: () =>
+                        `Cycles Drone Ship targeting mode. Current: ${getDroneCarrierOperationModeLabel(ship)}. Mixed uses drone counts. Mining prioritizes asteroids. Salvaging prioritizes wrecks.`,
+                    canBuy: () => true,
+                    buy: () => {
+                        cycleDroneCarrierOperationMode(ship);
+                    }
+                },
                 {
                     label: "Mining Drone",
                     getCost: () => ({ metal: getMiningDroneCost(ship) }),
@@ -3286,6 +3323,12 @@
         }
 
         function droneCarrierPrefersSalvage(carrier) {
+            const mode = getDroneCarrierOperationMode(carrier);
+
+            if (mode === "salvaging") return true;
+            if (mode === "mining") return false;
+
+            // Mixed mode: current behavior.
             const { mining, salvaging } = getDroneCarrierCounts(carrier);
             return salvaging > mining;
         }
@@ -3310,6 +3353,7 @@
         }
 
         function getPreferredCarrierTargets(carrier) {
+            const mode = getDroneCarrierOperationMode(carrier);
             const salvagePriority = droneCarrierPrefersSalvage(carrier);
 
             const wreckTargets = getActiveWrecks()
@@ -3323,19 +3367,23 @@
             const gravWrecks = preferGravPulseTargets(wreckTargets);
             const gravAsteroids = preferGravPulseTargets(asteroidTargets);
 
-            // Salvage-heavy carriers should prefer wrecks,
-            // but among wrecks they should prefer ones inside Grav Pulse range.
+            if (mode === "salvaging") {
+                return wreckTargets.length > 0 ? gravWrecks : gravAsteroids;
+            }
+
+            if (mode === "mining") {
+                return asteroidTargets.length > 0 ? gravAsteroids : gravWrecks;
+            }
+
+            // Mixed mode.
             if (salvagePriority && wreckTargets.length > 0) {
                 return gravWrecks;
             }
 
-            // Mining-heavy or balanced carriers should prefer asteroids,
-            // but among asteroids they should prefer ones inside Grav Pulse range.
             if (asteroidTargets.length > 0) {
                 return gravAsteroids;
             }
 
-            // Fallback: no asteroids, use wrecks.
             return gravWrecks;
         }
 
@@ -5823,7 +5871,12 @@
 
             if (isDroneCarrier) {
                 const { mining, salvaging } = getDroneCarrierCounts(ship);
-                drawText(`${ship.state.toUpperCase()} M:${mining} S:${salvaging}`, ship.x + 10, ship.y + 4, 0.65);
+                drawText(
+                    `${ship.state.toUpperCase()} ${getDroneCarrierOperationModeLabel(ship)} M:${mining} S:${salvaging}`,
+                    ship.x + 10,
+                    ship.y + 4,
+                    0.65
+                );
             } else if (isStarSiphoner) {
                 const stateLabel = ship.state === "hyperlaneEntry"
                     ? "ENTERING LANE"
