@@ -429,6 +429,7 @@
 
         function addRangeUpgradeItem(module) {
             if (!module.range) return;
+            if (module.disableRangeUpgrade) return;
 
             module.rangeUpgradeLevel = module.rangeUpgradeLevel ?? 0;
             module.rangeUpgradeCap = module.rangeUpgradeCap ?? 5;
@@ -451,6 +452,9 @@
 
         const SALVAGE_RIGHTS_MAX = 5;
         const SALVAGE_WRECK_COOLDOWN = 60 * 60; // 1 minute at 60fps
+        const WRECK_QUALITY_METAL_BONUS = 0.5;
+        const SALVAGE_COOLDOWN_REDUCTION = 0.20;
+        const SALVAGE_WRECK_COOLDOWN_MIN = 60 * 15; // 15 seconds
 
         const DRONE_SHIP_RANGE = 250;
         const DRONE_LASER_INTERVAL = 42;
@@ -459,6 +463,8 @@
         const DRONE_CARRIER_MIN_SEPARATION = 180;
         const DRONE_CARRIER_PARKING_SAMPLES = 12;
         const DRONE_CARRIER_REDEPLOY_CHECK_INTERVAL = 90;
+        const DRONE_STRENGTH_UPGRADE_AMOUNT = 1;
+        const DRONE_RANGE_UPGRADE_AMOUNT = 75;
 
         const SHIP_STANDBY_RETRY_INTERVAL = 75;
         const SHIP_STANDBY_RING_SIZE = 8;
@@ -583,6 +589,38 @@
                         }
                     },
                     {
+                        label: "Wreck Quality",
+                        type: "upgrade",
+                        getLevel: () => upgrades.wreckQuality.level,
+                        getCap: () => upgrades.wreckQuality.cap,
+                        getCost: () => getWreckQualityCost(),
+                        description: () =>
+                            `Increases wreck metal by +${Math.floor(WRECK_QUALITY_METAL_BONUS * 100)}% per level. Current: x${getWreckMetalMultiplier().toFixed(1)}.`,
+                        isVisible: () =>
+                            salvagingLicenseUnlocked &&
+                            upgrades.wreckQuality.level < upgrades.wreckQuality.cap,
+                        canBuy: () => true,
+                        buy: () => {
+                            upgrades.wreckQuality.level++;
+                        }
+                    },
+                    {
+                        label: "Wreck Hauling Speed",
+                        type: "upgrade",
+                        getLevel: () => upgrades.wreckHaulingSpeed.level,
+                        getCap: () => upgrades.wreckHaulingSpeed.cap,
+                        getCost: () => getWreckHaulingSpeedCost(),
+                        description: () =>
+                            `Reduces wreck cooldown by ${Math.floor(SALVAGE_COOLDOWN_REDUCTION * 100)}% per level. Current cooldown: ${formatSecondsFromFrames(getSalvageWreckCooldown())}.`,
+                        isVisible: () =>
+                            salvagingLicenseUnlocked &&
+                            upgrades.wreckHaulingSpeed.level < upgrades.wreckHaulingSpeed.cap,
+                        canBuy: () => true,
+                        buy: () => {
+                            upgrades.wreckHaulingSpeed.level++;
+                        }
+                    },
+                    {
                         label: "Large Shipyard",
                         getCost: () => ({ ore: getLargeShipyardCost() }),
                         description: () => "Unlocks heavy ships.",
@@ -597,7 +635,8 @@
                     },
                     {
                         label: "Hyperlane Construction",
-                        cost: {},
+                        opensScreen: true,
+                        getCost: () => getHyperlaneBuildCost(),
                         isVisible: () => hasDiscoveredHelion,
                         description: () => "Opens hyperlane map.",
                         canBuy: () => true,
@@ -641,7 +680,6 @@
                         getCap: () => upgrades.laserSpeed.cap,
                         getCost: () => ({ science: getLaserSpeedCost() }),
                         isVisible: () =>
-                            upgrades.laserStrength.level >= upgrades.laserStrength.cap &&
                             upgrades.laserSpeed.level < upgrades.laserSpeed.cap &&
                             hasDiscoveredScience,
                         canBuy: () => true,
@@ -697,7 +735,8 @@
                 xOffset: 110,
                 yOffset: 0,
                 radius: 40,
-                //range: 500,
+                range: 800,
+                disableRangeUpgrade: true,
                 menuTitle: "SHIPYARD REQUISITIONS",
                 items: [
                     {
@@ -798,6 +837,38 @@
                         canBuy: () => true,
                         buy: () => {
                             ships.push(makeSalvagingShip(countShipsByKind("salvageShip")));
+                        }
+                    },
+                    {
+                        label: "Drone Strength",
+                        type: "upgrade",
+                        getLevel: () => upgrades.droneStrength.level,
+                        getCap: () => upgrades.droneStrength.cap,
+                        getCost: () => ({ science: getDroneStrengthCost() }),
+                        description: () =>
+                            `Increases drone output by +${DRONE_STRENGTH_UPGRADE_AMOUNT} chunk per shot per level. Current output: ${getDroneChunksPerShot()} chunks.`,
+                        isVisible: () =>
+                            upgrades.droneShipSchematic.level > 0 &&
+                            upgrades.droneStrength.level < upgrades.droneStrength.cap,
+                        canBuy: () => true,
+                        buy: () => {
+                            upgrades.droneStrength.level++;
+                        }
+                    },
+                    {
+                        label: "Drone Range",
+                        type: "upgrade",
+                        getLevel: () => upgrades.droneRange.level,
+                        getCap: () => upgrades.droneRange.cap,
+                        getCost: () => ({ science: getDroneRangeCost() }),
+                        description: () =>
+                            `Increases Drone Ship operating range by +${DRONE_RANGE_UPGRADE_AMOUNT} per level. Current range: ${DRONE_SHIP_RANGE + upgrades.droneRange.level * DRONE_RANGE_UPGRADE_AMOUNT}.`,
+                        isVisible: () =>
+                            upgrades.droneShipSchematic.level > 0 &&
+                            upgrades.droneRange.level < upgrades.droneRange.cap,
+                        canBuy: () => true,
+                        buy: () => {
+                            upgrades.droneRange.level++;
                         }
                     },
                 ]
@@ -1045,6 +1116,38 @@
             };
         }
 
+        function getWreckQualityCost() {
+            return {
+                science: Math.floor(400 * Math.pow(2, upgrades.wreckQuality.level))
+            };
+        }
+
+        function getWreckHaulingSpeedCost() {
+            return {
+                science: Math.floor(350 * Math.pow(2, upgrades.wreckHaulingSpeed.level))
+            };
+        }
+
+        function getWreckMetalMultiplier() {
+            return 1 + upgrades.wreckQuality.level * WRECK_QUALITY_METAL_BONUS;
+        }
+
+        function getSalvageWreckCooldown() {
+            const multiplier = Math.pow(
+                1 - SALVAGE_COOLDOWN_REDUCTION,
+                upgrades.wreckHaulingSpeed.level
+            );
+
+            return Math.max(
+                SALVAGE_WRECK_COOLDOWN_MIN,
+                Math.floor(SALVAGE_WRECK_COOLDOWN * multiplier)
+            );
+        }
+
+        function formatSecondsFromFrames(frames) {
+            return `${Math.ceil(frames / 60)}s`;
+        }
+
         function makeWreck(slot, x, y) {
             const radius = rand(42, 68);
             const verts = [];
@@ -1060,13 +1163,16 @@
                 });
             }
 
+            const baseMetal = Math.floor(rand(4000, 5000));
+            const metal = Math.floor(baseMetal * getWreckMetalMultiplier());
+
             return {
                 x,
                 y,
                 radius,
                 verts,
-                metal: Math.floor(rand(450, 900)),
-                maxMetal: 900,
+                metal,
+                maxMetal: metal,
                 resourceType: "metal",
                 codename: `WRECK-${String(slot.id).padStart(2, "0")}`,
                 fading: false,
@@ -1170,10 +1276,88 @@
                     if (slot.wreck.fade <= 0) {
                         slot.wreck = null;
                         slot.state = "cooldown";
-                        slot.cooldown = SALVAGE_WRECK_COOLDOWN;
+                        slot.cooldown = getSalvageWreckCooldown();
                     }
                 }
             }
+        }
+
+        function formatEtaFrames(frames) {
+            frames = Math.max(0, Math.ceil(frames));
+
+            const totalSeconds = Math.ceil(frames / 60);
+            const minutes = Math.floor(totalSeconds / 60);
+            const seconds = totalSeconds % 60;
+
+            if (minutes <= 0) {
+                return `${seconds}s`;
+            }
+
+            return `${minutes}:${String(seconds).padStart(2, "0")}`;
+        }
+
+        function getHaulerInboundEtaFrames(slot) {
+            if (!slot.hauler) return null;
+            if (slot.state !== "hauling") return null;
+            if (slot.hauler.state !== "inbound") return null;
+
+            const h = slot.hauler;
+            const dx = h.targetX - h.x;
+            const dy = h.targetY - h.y;
+            const distance = Math.hypot(dx, dy);
+
+            return distance / h.speed;
+        }
+
+        function getSalvageHudRows() {
+            const rows = [];
+
+            for (const slot of salvageSlots) {
+                const id = String(slot.id).padStart(2, "0");
+
+                if (slot.state === "cooldown") {
+                    rows.push({
+                        label: `SLOT-${id}`,
+                        status: `NEXT WRECK IN ${formatEtaFrames(slot.cooldown)}`
+                    });
+                    continue;
+                }
+
+                if (slot.state === "hauling" && slot.hauler?.state === "inbound") {
+                    const eta = getHaulerInboundEtaFrames(slot);
+
+                    rows.push({
+                        label: `SLOT-${id}`,
+                        status: `HAULER INBOUND // ETA ${formatEtaFrames(eta)}`
+                    });
+                    continue;
+                }
+
+                if (slot.state === "hauling" && slot.hauler?.state === "leaving") {
+                    rows.push({
+                        label: `SLOT-${id}`,
+                        status: "WRECK DELIVERED // HAULER EXITING"
+                    });
+                    continue;
+                }
+
+                if (slot.state === "parked" && slot.wreck && !slot.wreck.fading) {
+                    rows.push({
+                        label: `SLOT-${id}`,
+                        status: `${slot.wreck.codename} PARKED // ${slot.wreck.metal}/${slot.wreck.maxMetal} METAL`
+                    });
+                    continue;
+                }
+
+                if (slot.state === "parked" && slot.wreck?.fading) {
+                    rows.push({
+                        label: `SLOT-${id}`,
+                        status: "WRECK DEPLETED // CLEARING SITE"
+                    });
+                }
+            }
+
+            return rows;
         }
 
         function updateSalvage() {
@@ -1500,8 +1684,8 @@
                 y,
                 radius,
                 verts,
-                ore: Math.floor(rand(1000, 50000)),
-                maxOre: 50000,
+                ore: Infinity, // Math.floor(rand(1000, 50000)),
+                maxOre: Infinity,
                 codename: `${pick(codenamePrefixes)}-${String(i + 1).padStart(2, "0")}`
             };
         }
@@ -1852,7 +2036,7 @@
                 y: station.y + rand(-40, 40),
                 baseSpeed: 0.75,
                 radius: 22,
-                range: DRONE_SHIP_RANGE,
+                baseRange: DRONE_SHIP_RANGE,
                 target: null,
                 targetX: station.x,
                 targetY: station.y,
@@ -1922,15 +2106,15 @@
             },
             shipSpeed: {
                 level: 0,
-                cap: 5
+                cap: 10
             },
             miningSpeed: {
                 level: 0,
-                cap: 5
+                cap: 10
             },
             cargoCapacity: {
                 level: 0,
-                cap: 5
+                cap: 10
             },
             droneShipSchematic: {
                 level: 0,
@@ -1942,11 +2126,27 @@
             },
             siphoningSpeed: {
                 level: 0,
-                cap: 6
+                cap: 10
             },
             siphonCargo: {
                 level: 0,
-                cap: 6
+                cap: 10
+            },
+            droneStrength: {
+                level: 0,
+                cap: 10
+            },
+            droneRange: {
+                level: 0,
+                cap: 5
+            },
+            wreckQuality: {
+                level: 0,
+                cap: 10
+            },
+            wreckHaulingSpeed: {
+                level: 0,
+                cap: 5
             }
         };
 
@@ -1963,6 +2163,24 @@
         }
 
         let automaticPulseTimer = 0;
+
+        function getDroneStrengthCost() {
+            return Math.floor(250 * Math.pow(2, upgrades.droneStrength.level));
+        }
+
+        function getDroneRangeCost() {
+            return Math.floor(300 * Math.pow(2, upgrades.droneRange.level));
+        }
+
+        function getDroneChunksPerShot() {
+            return 1 + upgrades.droneStrength.level * DRONE_STRENGTH_UPGRADE_AMOUNT;
+        }
+
+        function getEffectiveDroneCarrierRange(carrier) {
+            const baseRange = carrier.baseRange ?? carrier.range ?? DRONE_SHIP_RANGE;
+
+            return baseRange + upgrades.droneRange.level * DRONE_RANGE_UPGRADE_AMOUNT;
+        }
 
         function getAutomaticPulseCost() {
             return Math.floor(Math.pow(2, upgrades.automaticPulse.level) * 50);
@@ -2002,7 +2220,7 @@
         }
 
         function getLaserSpeedCost() {
-            return Math.floor(Math.pow(3, upgrades.laserSpeed.level) * 100);
+            return Math.floor(Math.pow(3, upgrades.laserSpeed.level) * 1000);
         }
 
         function getLaserCooldownMax() {
@@ -2326,10 +2544,17 @@
                         const cost = item.getCost ? item.getCost() : item.cost;
                         const canBuy = item.canBuy ? item.canBuy() : true;
 
-                        if (canBuy && canAffordCost(cost)) {
-                            if (spendCost(cost)) {
-                                item.buy();
-                            }
+                        if (!canBuy || !canAffordCost(cost)) {
+                            return;
+                        }
+
+                        if (item.opensScreen) {
+                            item.buy();
+                            return;
+                        }
+
+                        if (spendCost(cost)) {
+                            item.buy();
                         }
 
                         return;
@@ -2705,14 +2930,23 @@
             );
         }
 
+        function isInSmallShipyardFleetRange(target) {
+            const shipyard = getModuleById("smallShipyard");
+            if (!shipyard) return false;
+
+            return isInModuleRange(shipyard, target);
+        }
+
         function isValidMiningShipTarget(ship, asteroid) {
             if (!asteroid || asteroid.ore <= 0) return false;
+            if (!isInSmallShipyardFleetRange(asteroid)) return false;
 
             return !isShipTargetClaimedByOther(ship, asteroid, "miningFrigate");
         }
 
         function isValidSalvageShipTarget(ship, wreck) {
             if (!wreck || wreck.fading || wreck.metal <= 0) return false;
+            if (!isInSmallShipyardFleetRange(wreck)) return false;
 
             return !isShipTargetClaimedByOther(ship, wreck, "salvageShip");
         }
@@ -2770,7 +3004,8 @@
         }
 
         function isTargetInsideCarrierRange(carrier, target) {
-            return distSq(carrier, target) <= carrier.range * carrier.range;
+            const range = getEffectiveDroneCarrierRange(carrier);
+            return distSq(carrier, target) <= range * range;
         }
 
         function fireDroneLaser(carrier, drone, target) {
@@ -2786,7 +3021,12 @@
                 noSpawn: true
             });
 
-            spawnFloatingChunk(target);
+            const chunks = getDroneChunksPerShot();
+
+            for (let i = 0; i < chunks; i++) {
+                if (getTargetResourceAmount(target) <= 0) break;
+                spawnFloatingChunk(target);
+            }
         }
 
         function moveToward(obj, tx, ty, speed) {
@@ -3072,8 +3312,13 @@
         function getPreferredCarrierTargets(carrier) {
             const salvagePriority = droneCarrierPrefersSalvage(carrier);
 
-            const wreckTargets = getActiveWrecks().filter(isActiveWreckTarget);
-            const asteroidTargets = asteroids.filter(isActiveAsteroidTarget);
+            const wreckTargets = getActiveWrecks()
+                .filter(isActiveWreckTarget)
+                .filter(isInSmallShipyardFleetRange);
+
+            const asteroidTargets = asteroids
+                .filter(isActiveAsteroidTarget)
+                .filter(isInSmallShipyardFleetRange);
 
             const gravWrecks = preferGravPulseTargets(wreckTargets);
             const gravAsteroids = preferGravPulseTargets(asteroidTargets);
@@ -3094,12 +3339,14 @@
             return gravWrecks;
         }
 
-        function getCarrierCoverageScoreAt(x, y, salvagePriority) {
+        function getCarrierCoverageScoreAt(carrier, x, y, salvagePriority) {
             let score = 0;
-            const rangeSq = DRONE_SHIP_RANGE * DRONE_SHIP_RANGE;
+            const range = getEffectiveDroneCarrierRange(carrier);
+            const rangeSq = range * range;
 
             for (const asteroid of asteroids) {
                 if (!isActiveAsteroidTarget(asteroid)) continue;
+                if (!isInSmallShipyardFleetRange(asteroid)) continue;
 
                 const dx = asteroid.x - x;
                 const dy = asteroid.y - y;
@@ -3109,7 +3356,6 @@
 
                     score += salvagePriority ? 1 : 5;
 
-                    // Big bonus because chunks created here can be collected.
                     if (insideGrav) {
                         score += salvagePriority ? 4 : 20;
                     }
@@ -3118,6 +3364,7 @@
 
             for (const wreck of getActiveWrecks()) {
                 if (!isActiveWreckTarget(wreck)) continue;
+                if (!isInSmallShipyardFleetRange(wreck)) continue;
 
                 const dx = wreck.x - x;
                 const dy = wreck.y - y;
@@ -3127,7 +3374,6 @@
 
                     score += salvagePriority ? 8 : 2;
 
-                    // Big bonus because metal chunks created here can be collected.
                     if (insideGrav) {
                         score += salvagePriority ? 32 : 8;
                     }
@@ -3159,8 +3405,10 @@
                 station.x - target.x
             );
 
+            const carrierRange = getEffectiveDroneCarrierRange(carrier);
+
             const parkingDist = Math.min(
-                DRONE_SHIP_RANGE * 0.72,
+                carrierRange * 0.72,
                 target.radius + 115
             );
 
@@ -3192,6 +3440,7 @@
             const salvagePriority = droneCarrierPrefersSalvage(carrier);
 
             let score = getCarrierCoverageScoreAt(
+                carrier,
                 candidate.x,
                 candidate.y,
                 salvagePriority
@@ -3240,7 +3489,13 @@
         }
 
         function isTargetInsideCarrierRange(carrier, target) {
-            return distSq(carrier, target) <= carrier.range * carrier.range;
+            if (!carrier || !target) return false;
+
+            const range = getEffectiveDroneCarrierRange(carrier);
+
+            if (!Number.isFinite(range) || range <= 0) return false;
+
+            return distSq(carrier, target) <= range * range;
         }
 
         function getDroneTargetsForType(carrier, droneType) {
@@ -3250,12 +3505,14 @@
                 targets = getActiveWrecks()
                     .filter(w =>
                         isActiveWreckTarget(w) &&
+                        isInSmallShipyardFleetRange(w) &&
                         isTargetInsideCarrierRange(carrier, w)
                     );
             } else {
                 targets = asteroids
                     .filter(a =>
                         isActiveAsteroidTarget(a) &&
+                        isInSmallShipyardFleetRange(a) &&
                         isTargetInsideCarrierRange(carrier, a)
                     );
             }
@@ -5504,7 +5761,7 @@
                 ctx.lineWidth = 1;
                 ctx.setLineDash([8, 8]);
                 ctx.beginPath();
-                ctx.arc(ship.x, ship.y, ship.range, 0, Math.PI * 2);
+                ctx.arc(ship.x, ship.y, getEffectiveDroneCarrierRange(ship), 0, Math.PI * 2);
                 ctx.stroke();
                 ctx.restore();
             }
@@ -5783,12 +6040,52 @@
             ctx.fillRect(0, 0, W, H);
         }
 
+        function drawSalvageEtaHud(x, y) {
+            if (!salvagingLicenseUnlocked) return y;
+            if (salvageSlots.length <= 0) return y;
+
+            const rows = getSalvageHudRows();
+            if (rows.length <= 0) return y;
+
+            const lineH = 16;
+
+            ctx.save();
+
+            ctx.font = "12px monospace";
+            ctx.textAlign = "left";
+            ctx.textBaseline = "top";
+            ctx.shadowColor = GREEN;
+            ctx.shadowBlur = 8;
+
+            ctx.fillStyle = "rgba(80,255,130,0.65)";
+            ctx.fillText("SALVAGE OPS", x, y);
+
+            let rowY = y + 18;
+
+            for (const row of rows) {
+                ctx.fillStyle = "rgba(80,255,130,0.45)";
+                ctx.fillText(row.label, x, rowY);
+
+                ctx.fillStyle = GREEN;
+                ctx.fillText(row.status, x + 74, rowY);
+
+                rowY += lineH;
+            }
+
+            ctx.restore();
+
+            return rowY + 6;
+        }
+
         function drawHud() {
             const RESOURCES_OFFSET_Y = 450;
 
             drawText("DEEP SPACE EXTRACTION COMMAND", 24, 28);
             drawText("SECTOR: KAPPA-9 / STATUS: ACTIVE", 24, 46, 0.75);
             drawText(`FLEET: ${ships.length} UNITS`, 24, 64, 0.75);
+
+            drawSalvageEtaHud(24, 150);
+
             drawText(`ORE: ${resources.ore}`, 24, RESOURCES_OFFSET_Y + 82, 1.0);
             if (hasDiscoveredScience) drawText(`SCIENCE: ${resources.science}`, 24, RESOURCES_OFFSET_Y + 100, 1.0);
             if (hasDiscoveredMetal) drawText(`METAL: ${resources.metal}`, 24, RESOURCES_OFFSET_Y + 118, 1.0);
