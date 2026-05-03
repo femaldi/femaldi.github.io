@@ -38,6 +38,9 @@
         const WORLD_W = 6500;
         const WORLD_H = 6500;
 
+        const CHUNK_RENDER_BUCKET_SIZE = 80;
+        const MAX_RENDERED_CHUNKS_PER_BUCKET = 100;
+
         const camera = {
             x: WORLD_W / 2,
             y: WORLD_H / 2,
@@ -356,15 +359,29 @@
             },
             {
                 amount: 100000,
-                label: "QUOTA III",
+                label: "TAXES",
                 unlocked: false,
+                onUnlock: () => {
+                    unlockTaxes();
+                },
                 message: {
-                    title: "INCOMING MESSAGE // QUOTA VERIFIED",
-                    from: "DEBT-CLAIM AUTHORITY",
+                    title: "INCOMING MESSAGE // TAXATION NOTICE",
+                    from: "INTERSTELLAR REQUISITION SYNDICATE",
                     body: [
                         "Quota milestone reached: 100.000 total ore units acquired.",
                         "",
-                        "Your station remains under review for expanded extraction permissions."
+                        "Congratulations, Administrator.",
+                        "",
+                        "Your station's continued growth, extraction performance, and logistical expansion have been formally noticed by the Interstellar Requisition Syndicate.",
+                        "",
+                        "As a result, your operation has been reclassified as a taxable industrial entity.",
+                        "",
+                        "A Syndicate tax collector will now visit the station every 3 minutes to collect assessed ore obligations.",
+                        "",
+                        "The first 100.000 ore units produced per cycle are exempt.",
+                        "All production beyond that amount is subject to immediate taxation.",
+                        "",
+                        "This policy exists for administrative, stabilizing, regulatory, historical, procedural, and other important reasons."
                     ]
                 }
             },
@@ -383,6 +400,113 @@
                 }
             }
         ];
+
+        function unlockTaxes() {
+            taxesUnlocked = true;
+            taxCycleTimer = TAX_CYCLE_FRAMES;
+            oreMinedThisTaxCycle = 0;
+        }
+
+        function getTaxableOreForCycle() {
+            return Math.max(0, oreMinedThisTaxCycle - TAX_FREE_ORE_PER_CYCLE);
+        }
+
+        function getTaxDueForCycle() {
+            return Math.floor(getTaxableOreForCycle() * TAX_RATE);
+        }
+
+        function getTaxCycleProgress() {
+            if (!taxesUnlocked) return 0;
+            return 1 - taxCycleTimer / TAX_CYCLE_FRAMES;
+        }
+
+        function spawnTaxCollector(taxDue, oreMined, taxableOre) {
+            const edge = Math.floor(rand(0, 4));
+            let x, y;
+
+            if (edge === 0) {
+                x = rand(0, WORLD_W);
+                y = -120;
+            } else if (edge === 1) {
+                x = WORLD_W + 120;
+                y = rand(0, WORLD_H);
+            } else if (edge === 2) {
+                x = rand(0, WORLD_W);
+                y = WORLD_H + 120;
+            } else {
+                x = -120;
+                y = rand(0, WORLD_H);
+            }
+
+            taxCollectors.push({
+                x,
+                y,
+                exitX: x,
+                exitY: y,
+                speed: 2.4,
+                state: "inbound",
+                taxDue,
+                oreMined,
+                taxableOre,
+                collected: 0,
+                angle: 0,
+                codename: `TAX-${String(frameCount % 10000).padStart(4, "0")}`
+            });
+        }
+
+        function resolveTaxCollection(collector) {
+            const paid = Math.min(resources.ore, collector.taxDue);
+
+            resources.ore -= paid;
+
+            // Taxes reduce effective debt repayment progress.
+            // This is intentionally based on the amount actually collected,
+            // not the theoretical tax due.
+            totalOreAcquired = Math.max(0, totalOreAcquired - paid);
+
+            collector.collected = paid;
+
+            lastTaxBill = {
+                oreMined: collector.oreMined,
+                exemptOre: Math.min(collector.oreMined, TAX_FREE_ORE_PER_CYCLE),
+                taxableOre: collector.taxableOre,
+                taxDue: collector.taxDue,
+                paid,
+                unpaid: collector.taxDue - paid,
+                debtDeducted: paid,
+                frame: frameCount
+            };
+
+            if (
+                !lucrativeLiberationEventUnlocked &&
+                collector.taxableOre > 0 &&
+                paid > 0
+            ) {
+                triggerLucrativeLiberationArrival();
+            }
+        }
+
+        function beginTaxCollectionCycle() {
+            const taxableOre = getTaxableOreForCycle();
+            const taxDue = getTaxDueForCycle();
+
+            if (taxDue > 0) {
+                spawnTaxCollector(taxDue, oreMinedThisTaxCycle, taxableOre);
+            } else {
+                lastTaxBill = {
+                    oreMined: oreMinedThisTaxCycle,
+                    exemptOre: oreMinedThisTaxCycle,
+                    taxableOre: 0,
+                    taxDue: 0,
+                    paid: 0,
+                    unpaid: 0,
+                    frame: frameCount
+                };
+            }
+
+            oreMinedThisTaxCycle = 0;
+            taxCycleTimer = TAX_CYCLE_FRAMES;
+        }
 
         function checkOreQuotas() {
             for (const quota of oreQuotas) {
@@ -418,7 +542,14 @@
             }
 
             if (type === "ore") {
+                const wasTaxing = taxesUnlocked;
+
                 totalOreAcquired += amount;
+
+                if (wasTaxing && amount > 0) {
+                    oreMinedThisTaxCycle += amount;
+                }
+
                 checkOreQuotas();
             }
         }
@@ -578,6 +709,25 @@
         const TRANSPORT_PARKING_SEPARATION = 220;
         const TRANSPORT_PARKING_RING_GAP = 110;
 
+        const TAX_CYCLE_FRAMES = 60 * 60 * 3; // 3 minutes at 60fps
+        const TAX_FREE_ORE_PER_CYCLE = 100000;
+        const TAX_RATE = 0.95;
+
+        let taxesUnlocked = false;
+        let taxCycleTimer = 0;
+        let oreMinedThisTaxCycle = 0;
+
+        let lastTaxBill = null;
+        const taxCollectors = [];
+
+        let totalTaxesPaid = 0;
+
+        let lucrativeLiberationShip = null;
+        let lucrativeLiberationEventUnlocked = false;
+        let lucrativeLiberationMessageSent = false;
+
+        let runEndStats = null;
+
         function getTransportShipCost() {
             return {
                 metal: Math.floor(2500 * Math.pow(1.9, countShipsByKind("transportShip")))
@@ -735,6 +885,61 @@
 
             ship.state = "hyperlaneEntry";
             return true;
+        }
+
+        function updateTaxSystem() {
+            if (!taxesUnlocked) return;
+
+            taxCycleTimer--;
+
+            if (taxCycleTimer <= 0) {
+                beginTaxCollectionCycle();
+            }
+
+            updateTaxCollectors();
+        }
+
+        function updateTaxCollectors() {
+            for (let i = taxCollectors.length - 1; i >= 0; i--) {
+                const collector = taxCollectors[i];
+
+                if (collector.state === "inbound") {
+                    const dx = station.x - collector.x;
+                    const dy = station.y - collector.y;
+                    collector.angle = Math.atan2(dy, dx);
+
+                    const arrived = moveToward(
+                        collector,
+                        station.x,
+                        station.y,
+                        collector.speed
+                    );
+
+                    if (arrived) {
+                        resolveTaxCollection(collector);
+                        collector.state = "outbound";
+                    }
+
+                    continue;
+                }
+
+                if (collector.state === "outbound") {
+                    const dx = collector.exitX - collector.x;
+                    const dy = collector.exitY - collector.y;
+                    collector.angle = Math.atan2(dy, dx);
+
+                    const left = moveToward(
+                        collector,
+                        collector.exitX,
+                        collector.exitY,
+                        collector.speed * 1.4
+                    );
+
+                    if (left) {
+                        taxCollectors.splice(i, 1);
+                    }
+                }
+            }
         }
 
         function updateShipHyperlaneTravel(ship) {
@@ -1384,6 +1589,119 @@
             startSalvageHauler(slot);
         }
 
+        function getHoveredLucrativeLiberationShip() {
+            if (!lucrativeLiberationShip) return null;
+            if (lucrativeLiberationShip.state !== "parked") return null;
+
+            if (pointInModule(mouseX, mouseY, lucrativeLiberationShip)) {
+                return lucrativeLiberationShip;
+            }
+
+            return null;
+        }
+
+        function getLucrativeLiberationParkingSpot() {
+            return {
+                x: station.x - 150,
+                y: station.y - 150
+            };
+        }
+
+        function triggerLucrativeLiberationArrival() {
+            if (lucrativeLiberationEventUnlocked) return;
+
+            lucrativeLiberationEventUnlocked = true;
+
+            const edge = Math.floor(rand(0, 4));
+            let x, y;
+
+            if (edge === 0) {
+                x = rand(0, WORLD_W);
+                y = -160;
+            } else if (edge === 1) {
+                x = WORLD_W + 160;
+                y = rand(0, WORLD_H);
+            } else if (edge === 2) {
+                x = rand(0, WORLD_W);
+                y = WORLD_H + 160;
+            } else {
+                x = -160;
+                y = rand(0, WORLD_H);
+            }
+
+            const parking = getLucrativeLiberationParkingSpot();
+
+            lucrativeLiberationShip = {
+                type: "menu",
+                x,
+                y,
+                targetX: parking.x,
+                targetY: parking.y,
+                radius: 42,
+                speed: 2.0,
+                state: "inbound",
+                angle: 0,
+                codename: "LLC-LIBERTY",
+                menuTitle: "LUCRATIVE LIBERATION COALLITION",
+                items: [
+                    {
+                        label: "Liberty Awaits",
+                        cost: {},
+                        description: () =>
+                            "Ends this run. Future implementation: prestige / ascension mechanic for tax attenuation methods.",
+                        canBuy: () => true,
+                        buy: () => {
+                            endRunWithLiberty();
+                        }
+                    }
+                ]
+            };
+        }
+
+        function updateLucrativeLiberationShip() {
+            if (!lucrativeLiberationShip) return;
+            if (lucrativeLiberationShip.state === "parked") return;
+
+            const ship = lucrativeLiberationShip;
+
+            const dx = ship.targetX - ship.x;
+            const dy = ship.targetY - ship.y;
+            ship.angle = Math.atan2(dy, dx);
+
+            const arrived = moveToward(
+                ship,
+                ship.targetX,
+                ship.targetY,
+                ship.speed
+            );
+
+            if (arrived) {
+                ship.state = "parked";
+
+                if (!lucrativeLiberationMessageSent) {
+                    lucrativeLiberationMessageSent = true;
+
+                    queueIncomingMessage({
+                        title: "INCOMING MESSAGE // PRIVATE CHANNEL",
+                        from: "LUCRATIVE LIBERATION COALLITION",
+                        body: [
+                            "Station Administrator.",
+                            "",
+                            "We observed the recent collection event.",
+                            "",
+                            "We represent the Lucrative Liberation Coallition, an independent consultancy specializing in fiscal flexibility, requisition mitigation, and legally-adjacent liberation strategies.",
+                            "",
+                            "In the future, we may provide methods to attenuate taxation impacts.",
+                            "",
+                            "For now, consider this an invitation.",
+                            "",
+                            "Liberty awaits."
+                        ]
+                    });
+                }
+            }
+        }
+
         function findWreckParkingSpot() {
             for (let attempt = 0; attempt < 500; attempt++) {
                 const angle = Math.random() * Math.PI * 2;
@@ -1702,6 +2020,12 @@
 
             if (module) {
                 return { type: "module", object: module };
+            }
+
+            const liberationShip = getHoveredLucrativeLiberationShip();
+
+            if (liberationShip) {
+                return { type: "liberationShip", object: liberationShip };
             }
 
             const droneShip = getHoveredDroneShip();
@@ -3324,6 +3648,9 @@
 
             const hoveredDroneShip = getHoveredDroneShip();
             if (hoveredDroneShip && hoveredDroneShip.type === "menu") return hoveredDroneShip;
+
+            const hoveredLiberationShip = getHoveredLucrativeLiberationShip();
+            if (hoveredLiberationShip && hoveredLiberationShip.type === "menu") return hoveredLiberationShip;
 
             return null;
         }
@@ -5443,7 +5770,7 @@
             if (!activeIncomingMessage) return;
 
             const boxW = 760;
-            const boxH = 420;
+            const boxH = 600;
             const x = W / 2 - boxW / 2;
             const y = H / 2 - boxH / 2;
 
@@ -5825,12 +6152,36 @@
             if (floatingOre.length <= 0) return;
 
             // Only draw particles visible in the current camera view.
-            // Padding keeps glowy particles from popping at screen edges.
             const pad = 40 / camera.zoom;
             const left = camera.x - W / 2 / camera.zoom - pad;
             const right = camera.x + W / 2 / camera.zoom + pad;
             const top = camera.y - H / 2 / camera.zoom - pad;
             const bottom = camera.y + H / 2 / camera.zoom + pad;
+
+            const renderedChunks = [];
+            const bucketCounts = new Map();
+
+            for (const ore of floatingOre) {
+                if (
+                    ore.x < left || ore.x > right ||
+                    ore.y < top || ore.y > bottom
+                ) {
+                    continue;
+                }
+
+                const bx = Math.floor(ore.x / CHUNK_RENDER_BUCKET_SIZE);
+                const by = Math.floor(ore.y / CHUNK_RENDER_BUCKET_SIZE);
+                const key = `${bx},${by}`;
+
+                const count = bucketCounts.get(key) || 0;
+
+                if (count >= MAX_RENDERED_CHUNKS_PER_BUCKET) {
+                    continue;
+                }
+
+                bucketCounts.set(key, count + 1);
+                renderedChunks.push(ore);
+            }
 
             ctx.save();
 
@@ -5840,18 +6191,11 @@
             ctx.shadowColor = GREEN;
             ctx.shadowBlur = 10;
 
-            // ---- ORE CIRCLES ----
+            // ---- ORE / RICH ORE CIRCLES ----
             ctx.beginPath();
 
-            for (const ore of floatingOre) {
+            for (const ore of renderedChunks) {
                 if (ore.resourceType === "metal") continue;
-
-                if (
-                    ore.x < left || ore.x > right ||
-                    ore.y < top || ore.y > bottom
-                ) {
-                    continue;
-                }
 
                 ctx.moveTo(ore.x + 3, ore.y);
                 ctx.arc(ore.x, ore.y, 3, 0, Math.PI * 2);
@@ -5866,15 +6210,8 @@
             const size = 6;
             const half = size / 2;
 
-            for (const ore of floatingOre) {
+            for (const ore of renderedChunks) {
                 if (ore.resourceType !== "metal") continue;
-
-                if (
-                    ore.x < left || ore.x > right ||
-                    ore.y < top || ore.y > bottom
-                ) {
-                    continue;
-                }
 
                 ctx.rect(ore.x - half, ore.y - half, size, size);
             }
@@ -6581,6 +6918,120 @@
 
             if (observedBy.length > 0) {
                 drawText(`OBSERVED`, body.x - 42, body.y + body.radius + 75, 0.85);
+            }
+        }
+
+        function drawLucrativeLiberationShip() {
+            if (!lucrativeLiberationShip) return;
+
+            const ship = lucrativeLiberationShip;
+            const hovered = getHoveredTarget()?.object === ship;
+
+            ctx.save();
+            ctx.translate(ship.x, ship.y);
+            ctx.rotate(ship.angle);
+
+            ctx.strokeStyle = hovered
+                ? "rgba(180,255,210,0.95)"
+                : GREEN;
+
+            ctx.fillStyle = hovered
+                ? "rgba(80,255,130,0.20)"
+                : "rgba(80,255,130,0.10)";
+
+            ctx.lineWidth = hovered ? 3 : 2;
+            ctx.shadowColor = GREEN;
+            ctx.shadowBlur = hovered ? 22 : 14;
+
+            // Sleek "consultancy" courier hull
+            ctx.beginPath();
+            ctx.moveTo(34, 0);
+            ctx.lineTo(8, -16);
+            ctx.lineTo(-28, -12);
+            ctx.lineTo(-18, 0);
+            ctx.lineTo(-28, 12);
+            ctx.lineTo(8, 16);
+            ctx.closePath();
+            ctx.fill();
+            ctx.stroke();
+
+            // Central ledger / contract chamber
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.rect(-8, -8, 18, 16);
+            ctx.stroke();
+
+            // Antenna fins
+            ctx.beginPath();
+            ctx.moveTo(-10, -16);
+            ctx.lineTo(-18, -28);
+            ctx.moveTo(-10, 16);
+            ctx.lineTo(-18, 28);
+            ctx.stroke();
+
+            ctx.restore();
+
+            drawText(ship.codename, ship.x + 18, ship.y - 22, 0.75);
+
+            if (ship.state === "inbound") {
+                drawText("INBOUND", ship.x + 18, ship.y - 8, 0.6);
+            } else {
+                drawText("TAX CONSULTANCY", ship.x + 18, ship.y - 8, 0.6);
+            }
+        }
+
+        function drawTaxCollectors() {
+            for (const collector of taxCollectors) {
+                ctx.save();
+                ctx.translate(collector.x, collector.y);
+                ctx.rotate(collector.angle);
+
+                ctx.strokeStyle = GREEN;
+                ctx.fillStyle = "rgba(80,255,130,0.12)";
+                ctx.lineWidth = 2;
+                ctx.shadowColor = GREEN;
+                ctx.shadowBlur = 12;
+
+                // Bureaucratic wedge / collector craft
+                ctx.beginPath();
+                ctx.rect(-18, -10, 30, 20);
+                ctx.fill();
+                ctx.stroke();
+
+                ctx.beginPath();
+                ctx.moveTo(12, -10);
+                ctx.lineTo(25, 0);
+                ctx.lineTo(12, 10);
+                ctx.stroke();
+
+                // little "ledger" antenna
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.moveTo(-6, -10);
+                ctx.lineTo(-6, -22);
+                ctx.moveTo(-12, -18);
+                ctx.lineTo(0, -18);
+                ctx.stroke();
+
+                ctx.restore();
+
+                drawText(collector.codename, collector.x + 12, collector.y - 18, 0.65);
+
+                if (collector.state === "inbound") {
+                    drawText(
+                        `TAX DUE:${collector.taxDue.toLocaleString("de-DE")}`,
+                        collector.x + 12,
+                        collector.y - 4,
+                        0.6
+                    );
+                } else {
+                    drawText(
+                        `COLLECTED:${collector.collected.toLocaleString("de-DE")}`,
+                        collector.x + 12,
+                        collector.y - 4,
+                        0.6
+                    );
+                }
             }
         }
 
@@ -7586,14 +8037,74 @@
             return rowY + 6;
         }
 
+        function drawTaxHud(x, y) {
+            if (!taxesUnlocked) return y;
+
+            ctx.save();
+
+            ctx.font = "12px monospace";
+            ctx.textAlign = "left";
+            ctx.textBaseline = "top";
+            ctx.shadowColor = GREEN;
+            ctx.shadowBlur = 8;
+
+            ctx.fillStyle = "rgba(80,255,130,0.65)";
+            ctx.fillText("TAX AUTHORITY", x, y);
+
+            let rowY = y + 18;
+
+            ctx.fillStyle = GREEN;
+            ctx.fillText(
+                `NEXT COLLECTION: ${formatEtaFrames(taxCycleTimer)}`,
+                x,
+                rowY
+            );
+            rowY += 16;
+
+            ctx.fillText(
+                `CYCLE ORE: ${Math.floor(oreMinedThisTaxCycle).toLocaleString("de-DE")}`,
+                x,
+                rowY
+            );
+            rowY += 16;
+
+            const taxable = getTaxableOreForCycle();
+            const projectedTax = getTaxDueForCycle();
+
+            ctx.fillStyle = taxable > 0
+                ? "rgba(180,255,210,0.95)"
+                : "rgba(80,255,130,0.65)";
+
+            ctx.fillText(
+                `PROJECTED TAX: ${projectedTax.toLocaleString("de-DE")}`,
+                x,
+                rowY
+            );
+            rowY += 16;
+
+            if (lastTaxBill) {
+                ctx.fillStyle = "rgba(80,255,130,0.55)";
+                ctx.fillText(
+                    `LAST PAID: ${lastTaxBill.paid.toLocaleString("de-DE")}`,
+                    x,
+                    rowY
+                );
+                rowY += 16;
+            }
+
+            ctx.restore();
+
+            return rowY + 6;
+        }
+
         function drawHud() {
             const RESOURCES_OFFSET_Y = 900;
 
             drawText("DEEP SPACE EXTRACTION COMMAND", 24, 28);
             drawText("SECTOR: KAPPA-9 / STATUS: ACTIVE", 24, 46, 0.75);
-            drawFleetHud(24, 46 + 18);
-
-            drawSalvageEtaHud(24, 150);
+            drawFleetHud(24, 64 + 18);
+            drawSalvageEtaHud(24, 250);
+            drawTaxHud(24, 400);
 
             drawText(`ORE: ${resources.ore}`, 24, RESOURCES_OFFSET_Y + 82, 1.0);
             if (hasDiscoveredScience) drawText(`SCIENCE: ${resources.science}`, 24, RESOURCES_OFFSET_Y + 100, 1.0);
@@ -7606,9 +8117,9 @@
                 const laser = getModuleById("stationMiningLaser");
 
                 if (laser && !isInModuleRange(laser, hovered.object)) {
-                    drawText("TARGET OUT OF LASER RANGE", 24, 132, 0.8);
+                    drawText("TARGET OUT OF LASER RANGE", 24, 64, 0.8);
                 } else {
-                    drawText(`TARGET LOCK: ${hovered.object.codename} //  ASTEROID: ${isRichOreTarget(hovered.object) ? "RICH ORE" : "ORE"}`, 24, 132, 0.8);
+                    drawText(`TARGET LOCK: ${hovered.object.codename} //  ASTEROID: ${isRichOreTarget(hovered.object) ? "RICH ORE" : "ORE"}`, 24, 64, 0.8);
                 }
             }
 
@@ -7616,14 +8127,14 @@
                 const laser = getModuleById("stationMiningLaser");
 
                 if (laser && !isInModuleRange(laser, hovered.object)) {
-                    drawText("WRECK OUT OF LASER RANGE", 24, 132, 0.8);
+                    drawText("WRECK OUT OF LASER RANGE", 24, 64, 0.8);
                 } else {
-                    drawText(`SALVAGE LOCK: ${hovered.object.codename} // WRECK: METAL`, 24, 132, 0.8);
+                    drawText(`SALVAGE LOCK: ${hovered.object.codename} // WRECK: METAL`, 24, 64, 0.8);
                 }
             }
 
             if (hovered?.type === "module") {
-                drawText(`MODULE LOCK: ${hovered.object.codename}`, 24, 132, 0.8);
+                drawText(`MODULE LOCK: ${hovered.object.codename}`, 24, 64, 0.8);
             }
 
             if (hovered?.type === "droneShip") {
@@ -7631,11 +8142,149 @@
                 drawText(
                     `DRONE SHIP: ${hovered.object.codename} // M:${mining} S:${salvaging}`,
                     24,
-                    132,
+                    64,
                     0.8
                 );
             }
 
+        }
+
+        function drawRunEndedScreen() {
+            ctx.save();
+
+            ctx.fillStyle = "rgba(0,0,0,0.86)";
+            ctx.fillRect(0, 0, W, H);
+
+            ctx.shadowColor = GREEN;
+            ctx.shadowBlur = 18;
+            ctx.strokeStyle = GREEN;
+            ctx.fillStyle = "rgba(0,20,0,0.94)";
+            ctx.lineWidth = 2;
+
+            const boxW = 820;
+            const boxH = 620;
+            const x = W / 2 - boxW / 2;
+            const y = H / 2 - boxH / 2;
+
+            ctx.fillRect(x, y, boxW, boxH);
+            ctx.strokeRect(x, y, boxW, boxH);
+
+            ctx.strokeStyle = "rgba(80,255,130,0.28)";
+            ctx.strokeRect(x + 14, y + 14, boxW - 28, boxH - 28);
+
+            ctx.fillStyle = GREEN;
+            ctx.textAlign = "center";
+            ctx.textBaseline = "top";
+
+            ctx.font = "30px monospace";
+            ctx.fillText("LIBERTY AWAITS", W / 2, y + 36);
+
+            ctx.font = "14px monospace";
+            ctx.globalAlpha = 0.75;
+            ctx.fillText("RUN TERMINATED // PRESTIGE MECHANIC PLACEHOLDER", W / 2, y + 78);
+            ctx.globalAlpha = 1;
+
+            const stats = runEndStats || {};
+            const rows = [
+                ["Runtime", formatRunTimeFromFrames(stats.durationFrames || 0)],
+                ["Debt repayment progress", `${(stats.debtProgress || 0).toLocaleString("de-DE")} ORE`],
+                ["Ore stockpile", `${(stats.oreStockpile || 0).toLocaleString("de-DE")} ORE`],
+                ["Science", `${(stats.science || 0).toLocaleString("de-DE")}`],
+                ["Metal", `${(stats.metal || 0).toLocaleString("de-DE")}`],
+                ["Helion", `${(stats.helion || 0).toLocaleString("de-DE")}`],
+                ["Taxes paid", `${(stats.taxesPaid || 0).toLocaleString("de-DE")} ORE`],
+                ["Ships built", `${stats.shipsBuilt || 0}`],
+                ["Hyperlanes built", `${stats.hyperlanesBuilt || 0}`],
+                ["Salvage rights", `${stats.salvageRights || 0}`]
+            ];
+
+            ctx.textAlign = "left";
+            ctx.font = "15px monospace";
+
+            let rowY = y + 130;
+
+            for (const [label, value] of rows) {
+                ctx.fillStyle = "rgba(80,255,130,0.65)";
+                ctx.fillText(label, x + 70, rowY);
+
+                ctx.fillStyle = GREEN;
+                ctx.fillText(value, x + 390, rowY);
+
+                rowY += 28;
+            }
+
+            rowY += 12;
+
+            ctx.fillStyle = "rgba(80,255,130,0.65)";
+            ctx.fillText("Fleet breakdown", x + 70, rowY);
+            rowY += 26;
+
+            const fleet = stats.fleet || {};
+            const fleetRows = Object.entries(fleet);
+
+            if (fleetRows.length <= 0) {
+                ctx.fillStyle = GREEN;
+                ctx.fillText("No ships recorded", x + 90, rowY);
+            } else {
+                for (const [kind, count] of fleetRows) {
+                    ctx.fillStyle = GREEN;
+                    ctx.fillText(`${kind}: ${count}`, x + 90, rowY);
+                    rowY += 22;
+                }
+            }
+
+            ctx.textAlign = "center";
+            ctx.globalAlpha = 0.7;
+            ctx.font = "13px monospace";
+            ctx.fillText("Future implementation: prestige mechanics", W / 2, y + boxH - 48);
+            ctx.globalAlpha = 1;
+
+            ctx.restore();
+        }
+
+        function formatRunTimeFromFrames(frames) {
+            const totalSeconds = Math.floor(frames / 60);
+            const minutes = Math.floor(totalSeconds / 60);
+            const seconds = totalSeconds % 60;
+
+            return `${minutes}:${String(seconds).padStart(2, "0")}`;
+        }
+
+        function getFleetRunStats() {
+            const stats = {};
+
+            for (const ship of ships) {
+                const kind = getShipKind ? getShipKind(ship) : (ship.kind || "miningFrigate");
+                stats[kind] = (stats[kind] || 0) + 1;
+            }
+
+            return stats;
+        }
+
+        function endRunWithLiberty() {
+            runEndStats = {
+                durationFrames: frameCount,
+                debtProgress: Math.floor(totalOreAcquired),
+                oreStockpile: Math.floor(resources.ore || 0),
+                science: Math.floor(resources.science || 0),
+                metal: Math.floor(resources.metal || 0),
+                helion: Math.floor(resources.helion || 0),
+                taxesPaid: Math.floor(totalTaxesPaid),
+                shipsBuilt: ships.length,
+                fleet: getFleetRunStats(),
+                hyperlanesBuilt: hyperlanes?.length || 0,
+                salvageRights: salvageSlots?.length || 0,
+                taxCyclesSurvived: lastTaxBill ? Math.floor(frameCount / TAX_CYCLE_FRAMES) : 0
+            };
+
+            activeMenu = null;
+            activeIncomingMessage = null;
+
+            if (typeof clearFollowedShip === "function") {
+                clearFollowedShip();
+            }
+
+            gameState = "runEnded";
         }
 
         function loop() {
@@ -7643,6 +8292,12 @@
 
             if (gameState === "start") {
                 drawStartScreen();
+                requestAnimationFrame(loop);
+                return;
+            }
+
+            if (gameState === "runEnded") {
+                drawRunEndedScreen();
                 requestAnimationFrame(loop);
                 return;
             }
@@ -7668,6 +8323,8 @@
             updateScienceProduction();
             updateScienceProbes();
             updateSalvage();
+            updateTaxSystem();
+            updateLucrativeLiberationShip();
             ships.forEach(updateShip);
             updateCameraFollow();
 
@@ -7680,6 +8337,8 @@
             celestialBodies.forEach(drawCelestialBody);
             scienceProbes.forEach(drawScienceProbe);
             drawSalvage();
+            drawTaxCollectors();
+            drawLucrativeLiberationShip();
 
             drawObservationLinks();
             drawLaserBeams();
