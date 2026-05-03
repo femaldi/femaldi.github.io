@@ -5614,8 +5614,11 @@
             ctx.restore();
 
             drawText(a.codename, a.x - 28, a.y - 60, 0.85);
-            drawText(`ORE:${a.ore}`, a.x - 22, a.y + 60, 0.65);
+            if (a.ore != Infinity) { 
+                drawText(`ORE:${a.ore}`, a.x - 22, a.y + 60, 0.65);
+            }
         }
+
 
         function drawScienceProbe(probe) {
             ctx.save();
@@ -6180,7 +6183,7 @@
         }
 
         function drawHud() {
-            const RESOURCES_OFFSET_Y = 450;
+            const RESOURCES_OFFSET_Y = 900;
 
             drawText("DEEP SPACE EXTRACTION COMMAND", 24, 28);
             drawText("SECTOR: KAPPA-9 / STATUS: ACTIVE", 24, 46, 0.75);
@@ -6191,7 +6194,7 @@
             drawText(`ORE: ${resources.ore}`, 24, RESOURCES_OFFSET_Y + 82, 1.0);
             if (hasDiscoveredScience) drawText(`SCIENCE: ${resources.science}`, 24, RESOURCES_OFFSET_Y + 100, 1.0);
             if (hasDiscoveredMetal) drawText(`METAL: ${resources.metal}`, 24, RESOURCES_OFFSET_Y + 118, 1.0);
-            if (hasDiscoveredHelion) drawText(`HELION: ${Math.floor(resources.helion).toLocaleString("de-DE")}`, 24, RESOURCES_OFFSET_Y + 130, 0.8);
+            if (hasDiscoveredHelion) drawText(`HELION: ${Math.floor(resources.helion).toLocaleString("de-DE")}`, 24, RESOURCES_OFFSET_Y + 136, 1.0);
 
             const hovered = getHoveredTarget();
 
