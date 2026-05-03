@@ -503,6 +503,35 @@
         const SALVAGE_COOLDOWN_REDUCTION = 0.20;
         const SALVAGE_WRECK_COOLDOWN_MIN = 60 * 15; // 15 seconds
 
+        const RICH_ORE_VALUE_MULTIPLIER = 10;
+
+        function isRichOreTarget(target) {
+            return target?.resourceType === "richOre";
+        }
+
+        function getCargoResourceTypeFromTarget(target) {
+            if (target?.resourceType === "metal") return "metal";
+            if (target?.resourceType === "richOre") return "richOre";
+            return "ore";
+        }
+
+        function depositCargoResource(resourceType, amount) {
+            if (amount <= 0) return;
+
+            if (resourceType === "richOre") {
+                addResource("ore", amount * RICH_ORE_VALUE_MULTIPLIER);
+                return;
+            }
+
+            addResource(resourceType || "ore", amount);
+        }
+
+        function getCargoResourceLabel(resourceType) {
+            if (resourceType === "richOre") return "RICH ORE";
+            if (resourceType === "metal") return "METAL";
+            return "ORE";
+        }
+
         const DRONE_SHIP_RANGE = 250;
         const DRONE_LASER_INTERVAL = 42;
         const DRONE_ORBIT_SPEED = 0.045;
@@ -1703,14 +1732,17 @@
                     });
                 }
 
+                const ore = Infinity; // Math.floor(rand(800, 12000));
+
                 asteroids.push({
                     x,
                     y,
                     radius,
                     verts,
-                    ore: Math.floor(rand(800, 12000)),
-                    maxOre: 12000,
-                    codename: `${body.codename}-BELT-${String(spawned + 1).padStart(2, "0")}`
+                    ore,
+                    maxOre: ore,
+                    resourceType: "richOre",
+                    codename: `${body.codename}-RICH-${String(spawned + 1).padStart(2, "0")}`
                 });
 
                 spawned++;
@@ -2078,6 +2110,7 @@
                 y: station.y + rand(-30, 30),
                 baseSpeed: 1,
                 cargo: 0,
+                cargoResourceType: "ore",
                 baseCargoMax: 25,
                 miningTimer: 0,
                 target: null,
@@ -2093,6 +2126,7 @@
                 y: station.y + rand(-34, 34),
                 baseSpeed: 0.95,
                 cargo: 0,
+                cargoResourceType: "metal",
                 baseCargoMax: 20,
                 miningTimer: 0,
                 target: null,
@@ -2384,14 +2418,18 @@
 
             target.ore--;
 
+            const chunkResourceType = isRichOreTarget(target) ? "richOre" : "ore";
+
             floatingOre.push({
                 x: target.x + rand(-target.radius * 0.35, target.radius * 0.35),
                 y: target.y + rand(-target.radius * 0.35, target.radius * 0.35),
                 vx: rand(-0.35, 0.35),
                 vy: rand(-0.35, 0.35),
                 pull: false,
-                resourceType: "ore",
-                codename: `ORE-${Math.floor(rand(100, 999))}`
+                resourceType: chunkResourceType,
+                codename: chunkResourceType === "richOre"
+                    ? `RICH-${Math.floor(rand(100, 999))}`
+                    : `ORE-${Math.floor(rand(100, 999))}`
             });
         }
 
@@ -3181,7 +3219,7 @@
                     const d = Math.hypot(dx, dy);
 
                     if (d < 12) {
-                        addResource(ore.resourceType || "ore", 1);
+                        depositCargoResource(ore.resourceType || "ore", 1);
                         queueOreGatherSound();
                         // playSound("oreGather", {
                         //     volume: 0.22,
@@ -3312,6 +3350,10 @@
                         getEffectiveCargoMax(ship) - ship.cargo
                     );
 
+                    if (ship.cargo <= 0) {
+                        ship.cargoResourceType = getCargoResourceTypeFromTarget(ship.target);
+                    }
+
                     reduceTargetResource(ship.target, mined);
                     ship.cargo += mined;
                 }
@@ -3329,11 +3371,12 @@
             if (ship.state === "returning") {
                 if (moveToward(ship, station.x, station.y, getEffectiveShipSpeed(ship) * 0.85)) {
                     if (ship.cargo > 0) {
-                        addResource(resourceType, ship.cargo);
+                        depositCargoResource(ship.cargoResourceType || resourceType, ship.cargo);
                         queueOreGatherSound();
                     }
 
                     ship.cargo = 0;
+                    ship.cargoResourceType = resourceType;
                     ship.target = null;
                     ship.state = "seeking";
                 }
@@ -5589,10 +5632,12 @@
 
         function drawAsteroid(a) {
             const hovered = getHoveredTarget()?.object === a;
+            const isRich = isRichOreTarget(a);
 
             ctx.save();
             ctx.translate(a.x, a.y);
 
+            // Keep regular asteroid appearance exactly as before
             ctx.strokeStyle = hovered
                 ? "rgba(120,255,160,0.9)"
                 : a.ore > 0
@@ -5603,6 +5648,7 @@
             ctx.shadowColor = GREEN;
             ctx.shadowBlur = hovered ? 16 : a.ore > 0 ? 5 : 0;
 
+            // Main asteroid outline
             ctx.beginPath();
             a.verts.forEach((p, i) => {
                 if (i === 0) ctx.moveTo(p.x, p.y);
@@ -5611,11 +5657,49 @@
             ctx.closePath();
             ctx.stroke();
 
+            // Extra visuals ONLY for rich ore asteroids
+            if (isRich && a.ore > 0) {
+                // Rebuild path so we can clip the internal pattern to the asteroid shape
+                ctx.beginPath();
+                a.verts.forEach((p, i) => {
+                    if (i === 0) ctx.moveTo(p.x, p.y);
+                    else ctx.lineTo(p.x, p.y);
+                });
+                ctx.closePath();
+
+                ctx.save();
+                ctx.clip();
+
+                // Lean diagonal stripe pattern
+                ctx.strokeStyle = hovered
+                    ? "rgba(180,255,210,0.45)"
+                    : "rgba(120,255,170,0.28)";
+                ctx.lineWidth = 1;
+                ctx.shadowBlur = 0;
+
+                const span = a.radius * 2.6;
+                const spacing = 8;
+
+                for (let x = -span; x <= span; x += spacing) {
+                    ctx.beginPath();
+                    ctx.moveTo(x, -span);
+                    ctx.lineTo(x + span, span);
+                    ctx.stroke();
+                }
+
+                ctx.restore();
+            }
+
             ctx.restore();
 
             drawText(a.codename, a.x - 28, a.y - 60, 0.85);
-            if (a.ore != Infinity) { 
-                drawText(`ORE:${a.ore}`, a.x - 22, a.y + 60, 0.65);
+
+            if (a.ore != Infinity) {
+                if (isRich) {
+                    drawText(`RICH ORE:${a.ore}`, a.x - 34, a.y + 60, 0.65);
+                } else {
+                    drawText(`ORE:${a.ore}`, a.x - 22, a.y + 60, 0.65);
+                }
             }
         }
 
@@ -5938,8 +6022,20 @@
 
                 drawText(`${stateLabel} HELION:${ship.cargo}/${getEffectiveCargoMax(ship)}`, ship.x + 18, ship.y + 6, 0.65);
             } else {
-                const resourceLabel = isSalvageShip ? "METAL" : "ORE";
-                drawText(`${ship.state.toUpperCase()} ${resourceLabel}:${ship.cargo}/${getEffectiveCargoMax(ship)}`, ship.x + 10, ship.y + 4, 0.65);
+                const resourceLabel = getCargoResourceLabel(
+                    ship.cargo > 0
+                        ? ship.cargoResourceType
+                        : isSalvageShip
+                            ? "metal"
+                            : "ore"
+                );
+
+                drawText(
+                    `${ship.state.toUpperCase()} ${resourceLabel}:${ship.cargo}/${getEffectiveCargoMax(ship)}`,
+                    ship.x + 10,
+                    ship.y + 4,
+                    0.65
+                );
             }
 
             if (ship.state === "hyperlaneEntry" && ship.hyperlane) {
@@ -6204,7 +6300,7 @@
                 if (laser && !isInModuleRange(laser, hovered.object)) {
                     drawText("TARGET OUT OF LASER RANGE", 24, 132, 0.8);
                 } else {
-                    drawText(`TARGET LOCK: ${hovered.object.codename} //  ASTEROID: ORE`, 24, 132, 0.8);
+                    drawText(`TARGET LOCK: ${hovered.object.codename} //  ASTEROID: ${isRichOreTarget(hovered.object) ? "RICH ORE" : "ORE"}`, 24, 132, 0.8);
                 }
             }
 
