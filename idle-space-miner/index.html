@@ -568,6 +568,39 @@
             }
         }
 
+        const TRANSPORT_SHIP_BASE_SPEED = 0.55;
+        const TRANSPORT_SHIP_SLOT_BASE = 4;
+        const TRANSPORT_SHIP_CARGO_BASE = 50000; // stored as final ORE value
+        const TRANSPORT_SITE_STANDOFF = 100;
+        const TRANSPORT_DEPLOY_RANGE = 500;
+        const TRANSPORT_DOCK_DISTANCE = 34;
+
+        function getTransportShipCost() {
+            return {
+                metal: Math.floor(2500 * Math.pow(1.9, countShipsByKind("transportShip")))
+            };
+        }
+
+        function getEffectiveTransportShipSlots(ship) {
+            return ship.baseShipSlots ?? TRANSPORT_SHIP_SLOT_BASE;
+        }
+
+        function getEffectiveTransportCargoMax(ship) {
+            return ship.baseCargoMax ?? TRANSPORT_SHIP_CARGO_BASE;
+        }
+
+        function isTransportShip(ship) {
+            return ship?.kind === "transportShip";
+        }
+
+        function getTransportCargoLabel(ship) {
+            return `${Math.floor(ship.cargo)}/${getEffectiveTransportCargoMax(ship)} ORE`;
+        }
+
+        const TRANSPORT_GRAV_RANGE = 700;
+        const TRANSPORT_GRAV_INTERVAL = 90;
+        const TRANSPORT_GRAV_PULLS_ORE_ONLY = true;
+
         const SHIP_STANDBY_RETRY_INTERVAL = 75;
         const SHIP_STANDBY_RING_SIZE = 8;
         const SHIP_STANDBY_BASE_RADIUS = 82;
@@ -590,6 +623,166 @@
         const hyperlanes = [];
 
         let activeHyperlaneScreen = false;
+
+        function getBestHyperlaneRouteToPoint(ship, destinationPoint, afterState) {
+            if (!canShipUseHyperlane(ship)) return null;
+            if (hyperlanes.length <= 0) return null;
+            if (!destinationPoint) return null;
+
+            const speed = getEffectiveShipSpeed(ship);
+            const normalTime = estimateTravelTime(ship, destinationPoint, speed);
+
+            let bestRoute = null;
+            let bestTime = normalTime;
+
+            for (const lane of hyperlanes) {
+                const endpoints = getHyperlaneEndpoints(lane);
+
+                // Outbound direction:
+                // station-side gate -> destination-side gate
+                const timeToEntry = estimateTravelTime(ship, endpoints.from, speed);
+                const laneTime = estimateTravelTime(
+                    endpoints.from,
+                    endpoints.to,
+                    HYPERLANE_TRAVEL_SPEED
+                );
+                const timeAfterExit = estimateTravelTime(
+                    endpoints.to,
+                    destinationPoint,
+                    speed
+                );
+
+                const totalTime = timeToEntry + laneTime + timeAfterExit;
+
+                if (totalTime < bestTime) {
+                    bestTime = totalTime;
+                    bestRoute = {
+                        lane,
+                        from: endpoints.from,
+                        to: endpoints.to,
+                        afterState
+                    };
+                }
+            }
+
+            return bestRoute;
+        }
+
+        function getBestHyperlaneRouteBackToStation(ship, dockPoint, afterState) {
+            if (!canShipUseHyperlane(ship)) return null;
+            if (hyperlanes.length <= 0) return null;
+            if (!dockPoint) return null;
+
+            const speed = getEffectiveShipSpeed(ship);
+            const normalTime = estimateTravelTime(ship, dockPoint, speed);
+
+            let bestRoute = null;
+            let bestTime = normalTime;
+
+            for (const lane of hyperlanes) {
+                const endpoints = getHyperlaneEndpoints(lane);
+
+                // Return direction:
+                // destination-side gate -> station-side gate
+                const timeToEntry = estimateTravelTime(ship, endpoints.to, speed);
+                const laneTime = estimateTravelTime(
+                    endpoints.to,
+                    endpoints.from,
+                    HYPERLANE_TRAVEL_SPEED
+                );
+                const timeAfterExit = estimateTravelTime(
+                    endpoints.from,
+                    dockPoint,
+                    speed
+                );
+
+                const totalTime = timeToEntry + laneTime + timeAfterExit;
+
+                if (totalTime < bestTime) {
+                    bestTime = totalTime;
+                    bestRoute = {
+                        lane,
+                        from: endpoints.to,
+                        to: endpoints.from,
+                        afterState
+                    };
+                }
+            }
+
+            return bestRoute;
+        }
+
+        function startShipHyperlaneTravel(ship, route) {
+            if (!route) return false;
+
+            const cost = getHyperlaneUseCostForShip(ship);
+
+            if (!Number.isFinite(cost)) return false;
+
+            if (!spendResource("helion", cost)) {
+                return false;
+            }
+
+            ship.hyperlane = {
+                lane: route.lane,
+                from: route.from,
+                to: route.to,
+                afterState: route.afterState
+            };
+
+            ship.state = "hyperlaneEntry";
+            return true;
+        }
+
+        function updateShipHyperlaneTravel(ship) {
+            if (!ship.hyperlane) {
+                ship.state = "seeking";
+                return;
+            }
+
+            if (ship.state === "hyperlaneEntry") {
+                const arrived = moveToward(
+                    ship,
+                    ship.hyperlane.from.x,
+                    ship.hyperlane.from.y,
+                    getEffectiveShipSpeed(ship)
+                );
+
+                if (arrived) {
+                    ship.state = "hyperlaneTravel";
+                }
+
+                return;
+            }
+
+            if (ship.state === "hyperlaneTravel") {
+                const arrived = moveToward(
+                    ship,
+                    ship.hyperlane.to.x,
+                    ship.hyperlane.to.y,
+                    HYPERLANE_TRAVEL_SPEED
+                );
+
+                if (arrived) {
+                    const afterState = ship.hyperlane.afterState;
+                    ship.hyperlane = null;
+                    ship.state = afterState;
+                }
+            }
+        }
+
+        function getHyperlaneUseCostForShip(ship) {
+            const kind = ship.kind || "miningFrigate";
+
+            if (kind === "starSiphoner") return HYPERLANE_SIPHONER_COST;
+            if (kind === "transportShip") return HYPERLANE_SIPHONER_COST;
+
+            return Infinity;
+        }
+
+        function canShipUseHyperlane(ship) {
+            return getResourceAmount("helion") >= getHyperlaneUseCostForShip(ship);
+        }
 
         function countShipsByKind(kind) {
             return ships.filter(s => (s.kind || "miningFrigate") === kind).length;
@@ -1019,7 +1212,17 @@
                         buy: () => {
                             upgrades.siphonCargo.level++;
                         }
-                    }
+                    },
+                    {
+                        label: "Transport Ship",
+                        getCost: () => getTransportShipCost(),
+                        description: () =>
+                            `Builds a heavy logistics carrier. Slots: ${TRANSPORT_SHIP_SLOT_BASE}. Cargo: ${TRANSPORT_SHIP_CARGO_BASE} ORE. Carries Mining Frigates and Drone Ships to remote rich-ore belts.`,
+                        canBuy: () => true,
+                        buy: () => {
+                            ships.push(makeTransportShip(countShipsByKind("transportShip")));
+                        }
+                    },
                 ]
             },
 
@@ -1742,6 +1945,7 @@
                     ore,
                     maxOre: ore,
                     resourceType: "richOre",
+                    beltParent: body,
                     codename: `${body.codename}-RICH-${String(spawned + 1).padStart(2, "0")}`
                 });
 
@@ -1855,6 +2059,10 @@
                 return ship.baseSpeed ?? STAR_SIPHONER_BASE_SPEED;
             }
 
+            if (kind === "transportShip") {
+                return ship.baseSpeed ?? TRANSPORT_SHIP_BASE_SPEED;
+            }
+
             const baseSpeed = ship.baseSpeed ?? getEffectiveShipSpeed(ship) ?? 1;
 
             return baseSpeed * getShipSpeedMultiplier();
@@ -1866,6 +2074,10 @@
             // Helion Siphoners use Large Shipyard cargo upgrades only.
             if (kind === "starSiphoner") {
                 return getStarSiphonerCargoMax();
+            }
+
+            if (kind === "transportShip") {
+                return getEffectiveTransportCargoMax(ship);
             }
 
             // Drone carriers do not carry resources.
@@ -2087,6 +2299,228 @@
 
         function canUseHyperlane() {
             return getResourceAmount("helion") >= HYPERLANE_SIPHONER_COST;
+        }
+
+        function makeTransportShip(i) {
+            return {
+                kind: "transportShip",
+                x: station.x + rand(-50, 50),
+                y: station.y + rand(-50, 50),
+                baseSpeed: TRANSPORT_SHIP_BASE_SPEED,
+                baseCargoMax: TRANSPORT_SHIP_CARGO_BASE,
+                baseShipSlots: TRANSPORT_SHIP_SLOT_BASE,
+
+                cargo: 0,
+                targetSite: null,
+                targetX: station.x,
+                targetY: station.y,
+
+                state: "seekingSite",
+
+                gravTimer: 0,
+                passengerSerial: 0,
+
+                codename: `TRANSPORT-${String(i + 1).padStart(2, "0")}`
+            };
+        }
+
+        function getRichAsteroidsForSite(site) {
+            return asteroids.filter(a =>
+                a.beltParent === site &&
+                isRichOreTarget(a) &&
+                a.ore > 0
+            );
+        }
+
+        function isTransportMiningSiteActive(site) {
+            return !!site && getRichAsteroidsForSite(site).length > 0;
+        }
+
+        function getTransportMiningSites() {
+            return celestialBodies.filter(body =>
+                body.hasAsteroidBelt &&
+                isTransportMiningSiteActive(body)
+            );
+        }
+
+        function getTransportSiteOreValue(site) {
+            return getRichAsteroidsForSite(site)
+                .reduce((sum, a) => sum + a.ore * RICH_ORE_VALUE_MULTIPLIER, 0);
+        }
+
+        function chooseTransportMiningSite(transport) {
+            const sites = getTransportMiningSites();
+
+            if (!sites.length) return null;
+
+            sites.sort((a, b) => {
+                const valueDiff = getTransportSiteOreValue(b) - getTransportSiteOreValue(a);
+                if (valueDiff !== 0) return valueDiff;
+
+                return distSq(transport, a) - distSq(transport, b);
+            });
+
+            return sites[0];
+        }
+
+        function getTransportParkingPointForSite(transport, site) {
+            const dx = station.x - site.x;
+            const dy = station.y - site.y;
+            const d = Math.hypot(dx, dy) || 1;
+
+            return {
+                x: site.x + dx / d * (site.radius + TRANSPORT_SITE_STANDOFF),
+                y: site.y + dy / d * (site.radius + TRANSPORT_SITE_STANDOFF)
+            };
+        }
+
+        function isTargetInsideTransportRange(transport, target) {
+            if (!transport || !target) return false;
+
+            return distSq(transport, target) <= TRANSPORT_DEPLOY_RANGE * TRANSPORT_DEPLOY_RANGE;
+        }
+
+        function isTargetUsableByTransport(transport, target) {
+            if (!isTransportShip(transport)) return false;
+            if (transport.state !== "deployed" && transport.state !== "recallingShips") return false;
+            if (!isRichOreTarget(target)) return false;
+            if (target.ore <= 0) return false;
+            if (target.beltParent !== transport.targetSite) return false;
+            if (!isTargetInsideTransportRange(transport, target)) return false;
+
+            return true;
+        }
+
+        function getFinalOreValueForCargo(resourceType, amount) {
+            if (resourceType === "richOre") {
+                return amount * RICH_ORE_VALUE_MULTIPLIER;
+            }
+
+            if (resourceType === "ore") {
+                return amount;
+            }
+
+            return 0;
+        }
+
+        function addCargoToTransport(transport, resourceType, amount) {
+            if (!isTransportShip(transport)) return false;
+            if (amount <= 0) return false;
+
+            const value = getFinalOreValueForCargo(resourceType, amount);
+            if (value <= 0) return false;
+
+            const cargoMax = getEffectiveTransportCargoMax(transport);
+            const space = cargoMax - transport.cargo;
+
+            if (space <= 0) return false;
+
+            transport.cargo += Math.min(space, value);
+            return true;
+        }
+
+        function isTransportCargoFull(transport) {
+            return transport.cargo >= getEffectiveTransportCargoMax(transport);
+        }
+
+        function depositTransportCargoAtStation(transport) {
+            if (transport.cargo <= 0) return;
+
+            addResource("ore", Math.floor(transport.cargo));
+            transport.cargo = 0;
+        }
+
+        function canShipBeCarriedByTransport(ship) {
+            const kind = ship.kind || "miningFrigate";
+
+            if (kind !== "miningFrigate" && kind !== "droneCarrier") {
+                return false;
+            }
+
+            if (ship.assignedTransport) return false;
+            if (ship.carriedBy) return false;
+
+            if (kind === "miningFrigate" && ship.cargo > 0) {
+                return false;
+            }
+
+            if (kind === "droneCarrier") {
+                const miningDroneCount = ship.drones.filter(d =>
+                    d.droneType === "mining"
+                ).length;
+
+                if (miningDroneCount <= 0) {
+                    return false;
+                }
+
+                if (getDroneCarrierOperationMode(ship) === "salvaging") {
+                    return false;
+                }
+            }
+
+            return (
+                ship.state === "idle" ||
+                ship.state === "standby" ||
+                ship.state === "seeking" ||
+                ship.state === "deployed"
+            );
+        }
+
+        function getTransportPassengers(transport) {
+            return ships.filter(s => s.assignedTransport === transport);
+        }
+
+        function getTransportCarriedPassengers(transport) {
+            return ships.filter(s => s.carriedBy === transport);
+        }
+
+        function hasTransportFreeSlot(transport) {
+            return getTransportPassengers(transport).length < getEffectiveTransportShipSlots(transport);
+        }
+
+        function getAvailableShipsForTransport(transport) {
+            return ships.filter(s => canShipBeCarriedByTransport(s));
+        }
+
+        function assignShipToTransport(ship, transport) {
+            ship.assignedTransport = transport;
+            ship.transportPassengerIndex = transport.passengerSerial++;
+            ship.carriedBy = null;
+            ship.target = null;
+            ship.targetX = transport.x;
+            ship.targetY = transport.y;
+            ship.state = "joiningTransport";
+
+            if ((ship.kind || "miningFrigate") === "droneCarrier") {
+                ship.forceRedeploy = false;
+
+                for (const drone of ship.drones) {
+                    drone.target = null;
+                }
+            }
+        }
+
+        function callShipsToTransport(transport) {
+            while (hasTransportFreeSlot(transport)) {
+                const available = getAvailableShipsForTransport(transport);
+
+                if (!available.length) break;
+
+                available.sort((a, b) => distSq(transport, a) - distSq(transport, b));
+
+                assignShipToTransport(available[0], transport);
+            }
+        }
+
+        function transportHasNoMoreJoinableShips(transport) {
+            return !hasTransportFreeSlot(transport) || getAvailableShipsForTransport(transport).length <= 0;
+        }
+
+        function allTransportPassengersCarried(transport) {
+            const passengers = getTransportPassengers(transport);
+            if (passengers.length <= 0) return true;
+
+            return passengers.every(s => s.carriedBy === transport);
         }
 
         function makeStarSiphoner(i) {
@@ -3063,6 +3497,12 @@
 
         function isValidMiningShipTarget(ship, asteroid) {
             if (!asteroid || asteroid.ore <= 0) return false;
+
+            if (ship.assignedTransport) {
+                return isTargetUsableByTransport(ship.assignedTransport, asteroid) &&
+                    !isShipTargetClaimedByOther(ship, asteroid, "miningFrigate");
+            }
+
             if (!isInSmallShipyardFleetRange(asteroid)) return false;
 
             return !isShipTargetClaimedByOther(ship, asteroid, "miningFrigate");
@@ -3076,6 +3516,20 @@
         }
 
         function chooseAsteroid(ship) {
+            if (ship.assignedTransport) {
+                const transport = ship.assignedTransport;
+
+                const available = asteroids.filter(a =>
+                    isTargetUsableByTransport(transport, a) &&
+                    !isShipTargetClaimedByOther(ship, a, "miningFrigate")
+                );
+
+                if (!available.length) return null;
+
+                available.sort((a, b) => distSq(ship, a) - distSq(ship, b));
+                return available[0];
+            }
+
             const available = asteroids.filter(a =>
                 isValidMiningShipTarget(ship, a)
             );
@@ -3208,6 +3662,42 @@
             ];
         }
 
+        function updateTransportGravPulse(transport) {
+            if (transport.state !== "deployed") return;
+            if (isTransportCargoFull(transport)) return;
+
+            transport.gravTimer++;
+
+            if (transport.gravTimer < TRANSPORT_GRAV_INTERVAL) return;
+
+            transport.gravTimer = 0;
+
+            gravityPulses.push({
+                x: transport.x,
+                y: transport.y,
+                r: 20,
+                life: 28
+            });
+
+            for (const chunk of floatingOre) {
+                if (TRANSPORT_GRAV_PULLS_ORE_ONLY) {
+                    const type = chunk.resourceType || "ore";
+
+                    if (type !== "ore" && type !== "richOre") {
+                        continue;
+                    }
+                }
+
+                const dx = chunk.x - transport.x;
+                const dy = chunk.y - transport.y;
+
+                if (dx * dx + dy * dy <= TRANSPORT_GRAV_RANGE * TRANSPORT_GRAV_RANGE) {
+                    chunk.pull = true;
+                    chunk.pullTarget = transport;
+                }
+            }
+        }
+
         function updateFloatingOre() {
             for (let i = floatingOre.length - 1; i >= 0; i--) {
                 const ore = floatingOre[i];
@@ -3219,7 +3709,26 @@
                     const d = Math.hypot(dx, dy);
 
                     if (d < 12) {
-                        depositCargoResource(ore.resourceType || "ore", 1);
+                        const pullTarget = ore.pullTarget || station;
+
+                        let collected = false;
+
+                        if (isTransportShip(pullTarget)) {
+                            collected = addCargoToTransport(
+                                pullTarget,
+                                ore.resourceType || "ore",
+                                1
+                            );
+                        } else {
+                            depositCargoResource(ore.resourceType || "ore", 1);
+                            collected = true;
+                        }
+
+                        if (!collected) {
+                            ore.pull = false;
+                            ore.pullTarget = null;
+                            continue;
+                        }
                         queueOreGatherSound();
                         // playSound("oreGather", {
                         //     volume: 0.22,
@@ -3369,18 +3878,38 @@
             }
 
             if (ship.state === "returning") {
-                if (moveToward(ship, station.x, station.y, getEffectiveShipSpeed(ship) * 0.85)) {
+                const homeBase = ship.assignedTransport || station;
+                const speed = getEffectiveShipSpeed(ship);
+
+                if (moveToward(ship, homeBase.x, homeBase.y, speed * 0.85)) {
                     if (ship.cargo > 0) {
-                        depositCargoResource(ship.cargoResourceType || resourceType, ship.cargo);
+                        if (isTransportShip(homeBase)) {
+                            addCargoToTransport(
+                                homeBase,
+                                ship.cargoResourceType || resourceType,
+                                ship.cargo
+                            );
+                        } else {
+                            depositCargoResource(ship.cargoResourceType || resourceType, ship.cargo);
+                        }
+
                         queueOreGatherSound();
                     }
 
                     ship.cargo = 0;
                     ship.cargoResourceType = resourceType;
                     ship.target = null;
-                    ship.state = "seeking";
+                    ship.state = ship.assignedTransport ? "seeking" : "seeking";
                 }
             }
+        }
+
+        function isTargetInsideCarrierLogisticsRange(carrier, target) {
+            if (carrier.assignedTransport) {
+                return isTargetUsableByTransport(carrier.assignedTransport, target);
+            }
+
+            return isInSmallShipyardFleetRange(target);
         }
 
         function isActiveAsteroidTarget(target) {
@@ -3448,16 +3977,21 @@
             const mode = getDroneCarrierOperationMode(carrier);
             const salvagePriority = droneCarrierPrefersSalvage(carrier);
 
-            const wreckTargets = getActiveWrecks()
+            let wreckTargets = getActiveWrecks()
                 .filter(isActiveWreckTarget)
-                .filter(isInSmallShipyardFleetRange);
+                .filter(w => isTargetInsideCarrierLogisticsRange(carrier, w));
 
-            const asteroidTargets = asteroids
+            let asteroidTargets = asteroids
                 .filter(isActiveAsteroidTarget)
-                .filter(isInSmallShipyardFleetRange);
+                .filter(a => isTargetInsideCarrierLogisticsRange(carrier, a));
 
-            const gravWrecks = preferGravPulseTargets(wreckTargets);
-            const gravAsteroids = preferGravPulseTargets(asteroidTargets);
+            const gravWrecks = carrier.assignedTransport
+                ? wreckTargets
+                : preferGravPulseTargets(wreckTargets);
+
+            const gravAsteroids = carrier.assignedTransport
+                ? asteroidTargets
+                : preferGravPulseTargets(asteroidTargets);
 
             if (mode === "salvaging") {
                 return wreckTargets.length > 0 ? gravWrecks : gravAsteroids;
@@ -3467,7 +4001,6 @@
                 return asteroidTargets.length > 0 ? gravAsteroids : gravWrecks;
             }
 
-            // Mixed mode.
             if (salvagePriority && wreckTargets.length > 0) {
                 return gravWrecks;
             }
@@ -3638,23 +4171,72 @@
             return distSq(carrier, target) <= range * range;
         }
 
+        function isTargetInsideRangeFromPoint(x, y, target, range) {
+            if (!target) return false;
+
+            const dx = target.x - x;
+            const dy = target.y - y;
+
+            return dx * dx + dy * dy <= range * range;
+        }
+
+        function isTargetInsideCarrierLogisticsRange(carrier, target) {
+            // Normal Drone Ships are limited by Small Shipyard fleet range.
+            if (!carrier.assignedTransport) {
+                return isInSmallShipyardFleetRange(target);
+            }
+
+            // Transport-assigned Drone Ships are limited by the Transport Ship instead.
+            return isTargetUsableByTransport(carrier.assignedTransport, target);
+        }
+
+        function canDroneCarrierUseTargetFromPoint(carrier, x, y, target, droneType) {
+            if (!carrier || !target) return false;
+
+            if (droneType === "salvaging") {
+                if (!isActiveWreckTarget(target)) return false;
+            } else {
+                if (!isActiveAsteroidTarget(target)) return false;
+            }
+
+            if (!isTargetInsideCarrierLogisticsRange(carrier, target)) return false;
+
+            const range = getEffectiveDroneCarrierRange(carrier);
+
+            if (!Number.isFinite(range) || range <= 0) return false;
+
+            return isTargetInsideRangeFromPoint(x, y, target, range);
+        }
+
+        function canDroneCarrierUseTarget(carrier, target, droneType) {
+            return canDroneCarrierUseTargetFromPoint(
+                carrier,
+                carrier.x,
+                carrier.y,
+                target,
+                droneType
+            );
+        }
+
         function getDroneTargetsForType(carrier, droneType) {
             let targets;
 
             if (droneType === "salvaging") {
                 targets = getActiveWrecks()
                     .filter(w =>
-                        isActiveWreckTarget(w) &&
-                        isInSmallShipyardFleetRange(w) &&
-                        isTargetInsideCarrierRange(carrier, w)
+                        canDroneCarrierUseTarget(carrier, w, "salvaging")
                     );
             } else {
                 targets = asteroids
                     .filter(a =>
-                        isActiveAsteroidTarget(a) &&
-                        isInSmallShipyardFleetRange(a) &&
-                        isTargetInsideCarrierRange(carrier, a)
+                        canDroneCarrierUseTarget(carrier, a, "mining")
                     );
+            }
+
+            // If this carrier belongs to a Transport Ship, do NOT prioritize station Grav Pulse.
+            // The Transport Ship has its own internal Grav Pulse.
+            if (carrier.assignedTransport) {
+                return targets;
             }
 
             return preferGravPulseTargets(targets);
@@ -3709,6 +4291,107 @@
             });
 
             return targets[0];
+        }
+
+        function updateAssignedShipDocking(ship) {
+            const transport = ship.assignedTransport;
+            if (!transport) return false;
+
+            if (
+                transport.state !== "gatheringShips" &&
+                transport.state !== "recallingShips"
+            ) {
+                return false;
+            }
+
+            if (ship.carriedBy === transport) {
+                ship.x = transport.x;
+                ship.y = transport.y;
+                return true;
+            }
+
+            ship.target = null;
+            ship.targetX = transport.x;
+            ship.targetY = transport.y;
+
+            if ((ship.kind || "miningFrigate") === "droneCarrier") {
+                ship.forceRedeploy = false;
+
+                for (const drone of ship.drones) {
+                    drone.target = null;
+                    drone.x = ship.x;
+                    drone.y = ship.y;
+                }
+            }
+
+            if (moveToward(ship, transport.x, transport.y, getEffectiveShipSpeed(ship))) {
+                if (ship.cargo > 0) {
+                    addCargoToTransport(
+                        transport,
+                        ship.cargoResourceType || "ore",
+                        ship.cargo
+                    );
+
+                    ship.cargo = 0;
+                    ship.cargoResourceType = "ore";
+                }
+
+                ship.carriedBy = transport;
+                ship.state = "carried";
+                ship.x = transport.x;
+                ship.y = transport.y;
+            }
+
+            return true;
+        }
+
+        function deployTransportPassengers(transport) {
+            const passengers = getTransportCarriedPassengers(transport);
+
+            passengers.forEach((ship, i) => {
+                const angle = (i / Math.max(1, passengers.length)) * Math.PI * 2;
+                const dist = 70;
+
+                ship.carriedBy = null;
+                ship.x = transport.x + Math.cos(angle) * dist;
+                ship.y = transport.y + Math.sin(angle) * dist;
+                ship.target = null;
+                ship.targetX = undefined;
+                ship.targetY = undefined;
+
+                if ((ship.kind || "miningFrigate") === "droneCarrier") {
+                    ship.state = "seeking";
+                    ship.forceRedeploy = true;
+
+                    for (const drone of ship.drones) {
+                        drone.target = null;
+                        drone.x = ship.x;
+                        drone.y = ship.y;
+                    }
+                } else {
+                    ship.state = "seeking";
+                }
+            });
+        }
+
+        function recallTransportPassengers(transport) {
+            for (const ship of getTransportPassengers(transport)) {
+                if (ship.carriedBy === transport) continue;
+
+                ship.target = null;
+                ship.targetX = transport.x;
+                ship.targetY = transport.y;
+
+                if ((ship.kind || "miningFrigate") === "droneCarrier") {
+                    ship.forceRedeploy = false;
+
+                    for (const drone of ship.drones) {
+                        drone.target = null;
+                    }
+                }
+
+                ship.state = "joiningTransport";
+            }
         }
 
         function hasPreferredDroneTargetsInRange(carrier) {
@@ -3776,6 +4459,168 @@
             }
 
             return false;
+        }
+
+        function updateCarriedPassengersPosition(transport) {
+            for (const ship of getTransportCarriedPassengers(transport)) {
+                ship.x = transport.x;
+                ship.y = transport.y;
+            }
+        }
+
+        function updateTransportShip(transport) {
+            if (transport.state === "hyperlaneEntry" || transport.state === "hyperlaneTravel") {
+                updateShipHyperlaneTravel(transport);
+                updateCarriedPassengersPosition(transport);
+                return;
+            }
+
+            updateCarriedPassengersPosition(transport);
+
+            if (transport.state === "seekingSite") {
+                transport.targetSite = chooseTransportMiningSite(transport);
+
+                if (!transport.targetSite) {
+                    transport.state = "standby";
+                    updateShipStandbyPosition(transport);
+                    return;
+                }
+
+                transport.state = "gatheringShips";
+                return;
+            }
+
+            if (transport.state === "standby") {
+                updateShipStandbyPosition(transport);
+
+                if (frameCount % 120 === 0) {
+                    transport.state = "seekingSite";
+                }
+
+                return;
+            }
+
+            if (transport.state === "gatheringShips") {
+                callShipsToTransport(transport);
+
+                const noMoreCanJoin = transportHasNoMoreJoinableShips(transport);
+                const everyoneOnBoard = allTransportPassengersCarried(transport);
+
+                if (noMoreCanJoin && everyoneOnBoard) {
+                    if (getTransportPassengers(transport).length <= 0) {
+                        transport.state = "standby";
+                        return;
+                    }
+
+                    const p = getTransportParkingPointForSite(transport, transport.targetSite);
+                    transport.targetX = p.x;
+                    transport.targetY = p.y;
+                    transport.state = "outbound";
+                }
+
+                return;
+            }
+
+            if (transport.state === "outbound") {
+                const destinationPoint = {
+                    x: transport.targetX,
+                    y: transport.targetY
+                };
+
+                const route = getBestHyperlaneRouteToPoint(
+                    transport,
+                    destinationPoint,
+                    "outbound"
+                );
+
+                if (route && startShipHyperlaneTravel(transport, route)) {
+                    updateCarriedPassengersPosition(transport);
+                    return;
+                }
+
+                const arrived = moveToward(
+                    transport,
+                    transport.targetX,
+                    transport.targetY,
+                    getEffectiveShipSpeed(transport)
+                );
+
+                if (arrived) {
+                    transport.state = "deployed";
+                    transport.gravTimer = 0;
+                    deployTransportPassengers(transport);
+                }
+
+                return;
+            }
+
+            if (transport.state === "deployed") {
+                updateTransportGravPulse(transport);
+
+                if (
+                    isTransportCargoFull(transport) ||
+                    !isTransportMiningSiteActive(transport.targetSite)
+                ) {
+                    transport.state = "recallingShips";
+                    recallTransportPassengers(transport);
+                }
+
+                return;
+            }
+
+            if (transport.state === "recallingShips") {
+                recallTransportPassengers(transport);
+
+                if (allTransportPassengersCarried(transport)) {
+                    const dock = getLargeShipyardDockPoint();
+                    transport.targetX = dock.x;
+                    transport.targetY = dock.y;
+                    transport.state = "returning";
+                }
+
+                return;
+            }
+
+            if (transport.state === "returning") {
+                const dockPoint = {
+                    x: transport.targetX,
+                    y: transport.targetY
+                };
+
+                const route = getBestHyperlaneRouteBackToStation(
+                    transport,
+                    dockPoint,
+                    "returning"
+                );
+
+                if (route && startShipHyperlaneTravel(transport, route)) {
+                    updateCarriedPassengersPosition(transport);
+                    return;
+                }
+
+                const arrived = moveToward(
+                    transport,
+                    transport.targetX,
+                    transport.targetY,
+                    getEffectiveShipSpeed(transport)
+                );
+
+                if (arrived) {
+                    depositTransportCargoAtStation(transport);
+
+                    if (isTransportMiningSiteActive(transport.targetSite)) {
+                        const p = getTransportParkingPointForSite(transport, transport.targetSite);
+                        transport.targetX = p.x;
+                        transport.targetY = p.y;
+                        transport.state = "outbound";
+                    } else {
+                        transport.targetSite = null;
+                        transport.state = "seekingSite";
+                    }
+                }
+
+                return;
+            }
         }
 
         function updateDroneCarrierStandby(ship) {
@@ -4114,6 +4959,23 @@
 
         function updateShip(ship) {
             const kind = ship.kind || "miningFrigate";
+
+            if (ship.carriedBy) {
+                ship.x = ship.carriedBy.x;
+                ship.y = ship.carriedBy.y;
+                return;
+            }
+
+            if (kind !== "transportShip" && ship.assignedTransport) {
+                if (updateAssignedShipDocking(ship)) {
+                    return;
+                }
+            }
+
+            if (kind === "transportShip") {
+                updateTransportShip(ship);
+                return;
+            }
 
             if (kind === "salvageShip") {
                 updateCargoMiningShip(ship, chooseWreck, isValidSalvageShipTarget, "metal");
@@ -5898,6 +6760,9 @@
             const isDroneCarrier = kind === "droneCarrier";
             const isSalvageShip = kind === "salvageShip";
             const isStarSiphoner = kind === "starSiphoner";
+            const isTransport = kind === "transportShip";
+
+            if (ship.carriedBy) return;
 
             let angle = 0;
 
@@ -5956,13 +6821,15 @@
 
             ctx.strokeStyle = hovered ? "rgba(180,255,210,0.95)" : GREEN;
 
-            ctx.fillStyle = isStarSiphoner
-                            ? "rgba(80,255,130,0.18)"
-                            : isDroneCarrier
-                                ? "rgba(80,255,180,0.14)"
-                                : isSalvageShip
-                                    ? "rgba(120,255,190,0.18)"
-                                    : "rgba(0,255,90,0.12)";
+            ctx.fillStyle = isTransport
+                            ? "rgba(80,255,130,0.16)"
+                            : isStarSiphoner
+                                ? "rgba(80,255,130,0.18)"
+                                : isDroneCarrier
+                                    ? "rgba(80,255,180,0.14)"
+                                    : isSalvageShip
+                                        ? "rgba(120,255,190,0.18)"
+                                        : "rgba(0,255,90,0.12)";
 
             ctx.lineWidth = hovered ? 3 : 2;
             ctx.shadowColor = GREEN;
@@ -5970,7 +6837,9 @@
 
             ctx.beginPath();
 
-            if (isStarSiphoner) {
+            if (isTransport) {
+                drawTransportShipShape(hovered);
+            } else if (isStarSiphoner) {
                 drawStarSiphonerShape(hovered);
             } else if (isDroneCarrier) {
                 ctx.rect(-15, -11, 30, 22);
@@ -5993,6 +6862,23 @@
 
             ctx.restore();
 
+            if (isTransport && (hovered || ship.state === "deployed")) {
+                ctx.save();
+                ctx.strokeStyle = "rgba(80,255,130,0.12)";
+                ctx.setLineDash([10, 10]);
+                ctx.beginPath();
+                ctx.arc(ship.x, ship.y, TRANSPORT_DEPLOY_RANGE, 0, Math.PI * 2);
+                ctx.stroke();
+
+                ctx.strokeStyle = "rgba(120,255,170,0.10)";
+                ctx.beginPath();
+                ctx.arc(ship.x, ship.y, TRANSPORT_GRAV_RANGE, 0, Math.PI * 2);
+                ctx.stroke();
+
+                ctx.setLineDash([]);
+                ctx.restore();
+            }
+
             if (isStarSiphoner) {
                 drawHelionSiphonEffect(ship);
             }
@@ -6005,7 +6891,31 @@
 
             drawText(ship.codename, ship.x + 10, ship.y - 10);
 
-            if (isDroneCarrier) {
+            if (isTransport) {
+                const passengers = getTransportPassengers(ship).length;
+                const carried = getTransportCarriedPassengers(ship).length;
+
+                const transportStateLabel =
+                    ship.state === "hyperlaneEntry"
+                        ? "ENTERING LANE"
+                        : ship.state === "hyperlaneTravel"
+                            ? "HYPERLANE"
+                            : ship.state.toUpperCase();
+
+                drawText(
+                    `${transportStateLabel} CARGO:${getTransportCargoLabel(ship)}`,
+                    ship.x + 18,
+                    ship.y + 6,
+                    0.65
+                );
+
+                drawText(
+                    `SLOTS:${carried}/${passengers}/${getEffectiveTransportShipSlots(ship)}`,
+                    ship.x + 18,
+                    ship.y + 20,
+                    0.6
+                );
+            } else if (isDroneCarrier) {
                 const { mining, salvaging } = getDroneCarrierCounts(ship);
                 drawText(
                     `${ship.state.toUpperCase()} ${getDroneCarrierOperationModeLabel(ship)} M:${mining} S:${salvaging}`,
@@ -6077,6 +6987,60 @@
                 ctx.lineTo(ship.targetX, ship.targetY);
                 ctx.stroke();
             }
+        }
+
+        function drawTransportShipShape(hovered) {
+            // Big heavy carrier hull, top-down.
+            ctx.beginPath();
+            ctx.rect(-46, -18, 78, 36);
+            ctx.fill();
+            ctx.stroke();
+
+            // Forward command block
+            ctx.beginPath();
+            ctx.moveTo(32, -14);
+            ctx.lineTo(52, -7);
+            ctx.lineTo(58, 0);
+            ctx.lineTo(52, 7);
+            ctx.lineTo(32, 14);
+            ctx.closePath();
+            ctx.fill();
+            ctx.stroke();
+
+            // Left cargo bay
+            ctx.beginPath();
+            ctx.rect(-34, -32, 46, 10);
+            ctx.fill();
+            ctx.stroke();
+
+            // Right cargo bay
+            ctx.beginPath();
+            ctx.rect(-34, 22, 46, 10);
+            ctx.fill();
+            ctx.stroke();
+
+            // Docking spine
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(-30, 0);
+            ctx.lineTo(26, 0);
+            ctx.stroke();
+
+            // Hangar notches
+            ctx.beginPath();
+            ctx.rect(-18, -12, 16, 8);
+            ctx.rect(-18, 4, 16, 8);
+            ctx.stroke();
+
+            // Engine block
+            ctx.beginPath();
+            ctx.rect(-58, -14, 12, 28);
+            ctx.fill();
+            ctx.stroke();
+
+            ctx.fillStyle = hovered ? "rgba(180,255,210,0.95)" : GREEN;
+            ctx.fillRect(-62, -10, 3, 5);
+            ctx.fillRect(-62, 5, 3, 5);
         }
 
         function drawHelionSiphonEffect(ship) {
