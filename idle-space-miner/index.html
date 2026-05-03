@@ -6204,7 +6204,7 @@
                 if (laser && !isInModuleRange(laser, hovered.object)) {
                     drawText("TARGET OUT OF LASER RANGE", 24, 132, 0.8);
                 } else {
-                    drawText(`TARGET LOCK: ${hovered.object.codename}`, 24, 132, 0.8);
+                    drawText(`TARGET LOCK: ${hovered.object.codename} //  ASTEROID: ORE`, 24, 132, 0.8);
                 }
             }
 
@@ -6214,7 +6214,7 @@
                 if (laser && !isInModuleRange(laser, hovered.object)) {
                     drawText("WRECK OUT OF LASER RANGE", 24, 132, 0.8);
                 } else {
-                    drawText(`SALVAGE LOCK: ${hovered.object.codename}`, 24, 132, 0.8);
+                    drawText(`SALVAGE LOCK: ${hovered.object.codename} // WRECK: METAL`, 24, 132, 0.8);
                 }
             }
 
