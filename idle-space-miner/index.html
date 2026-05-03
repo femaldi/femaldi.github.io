@@ -35,8 +35,8 @@
 
         const W = 1920;
         const H = 1080;
-        const WORLD_W = 6000;
-        const WORLD_H = 6000;
+        const WORLD_W = 6500;
+        const WORLD_H = 6500;
 
         const camera = {
             x: WORLD_W / 2,
@@ -465,7 +465,7 @@
         }
 
         function getRangeUpgradeAmount(module) {
-            return module.id === "observatory" ? 500 : 250;
+            return module.id === "observatory" ? 1000 : 250;
         }
 
         function getHyperlaneBuildCost() {
@@ -479,14 +479,14 @@
             if (module.disableRangeUpgrade) return;
 
             module.rangeUpgradeLevel = module.rangeUpgradeLevel ?? 0;
-            module.rangeUpgradeCap = module.rangeUpgradeCap ?? 5;
+            module.rangeUpgradeCap = module.rangeUpgradeCap ?? 3;
 
             module.items.push({
                 label: "Module Range",
                 type: "upgrade",
                 getLevel: () => module.rangeUpgradeLevel,
                 getCap: () => module.rangeUpgradeCap,
-                description: () => "Increases module range by +250 per level, or +500 for Observatory",
+                description: () => "Increases module range by +250 per level, or +1000 for Observatory",
                 getCost: () => getRangeUpgradeCost(module),
                 isVisible: () => module.rangeUpgradeLevel < module.rangeUpgradeCap && hasDiscoveredScience,
                 canBuy: () => true,
@@ -574,6 +574,9 @@
         const TRANSPORT_SITE_STANDOFF = 100;
         const TRANSPORT_DEPLOY_RANGE = 500;
         const TRANSPORT_DOCK_DISTANCE = 34;
+        const TRANSPORT_PARKING_SAMPLES = 16;
+        const TRANSPORT_PARKING_SEPARATION = 220;
+        const TRANSPORT_PARKING_RING_GAP = 110;
 
         function getTransportShipCost() {
             return {
@@ -597,7 +600,7 @@
             return `${Math.floor(ship.cargo)}/${getEffectiveTransportCargoMax(ship)} ORE`;
         }
 
-        const TRANSPORT_GRAV_RANGE = 700;
+        //const TRANSPORT_GRAV_RANGE = 700;
         const TRANSPORT_GRAV_INTERVAL = 90;
         const TRANSPORT_GRAV_PULLS_ORE_ONLY = true;
 
@@ -1854,7 +1857,7 @@
             }
         }
 
-        const MIN_CELESTIAL_BODY_DISTANCE = 600;
+        const MIN_CELESTIAL_BODY_DISTANCE = 1200;
 
         function makeCelestialBodyAtDistance(
             type,
@@ -2016,30 +2019,30 @@
         body = makeCelestialBodyAtDistance("PLANET", "NYX-3", 800, 800, 24, 38, 2, 2);
         celestialBodies.push(body);
 
-        body = makeCelestialBodyAtDistance("PLANET", "TERA-4", 1250, 1400, 24, 38, 2, 5);
+        body = makeCelestialBodyAtDistance("PLANET", "TERA-4", 1600, 1900, 24, 38, 2, 5);
         celestialBodies.push(body);
         spawnAsteroidBeltAround(body, 6);
 
-        body = makeCelestialBodyAtDistance("PLANET", "ORION-7", 1250, 1400, 28, 44, 3, 6);
+        body = makeCelestialBodyAtDistance("PLANET", "ORION-7", 1600, 1900, 28, 44, 3, 6);
         celestialBodies.push(body);
         spawnAsteroidBeltAround(body, 8);
 
-        body = makeCelestialBodyAtDistance("PLANET", "LYRA-2", 1250, 1400, 22, 36, 2, 5);
+        body = makeCelestialBodyAtDistance("PLANET", "LYRA-2", 1600, 1900, 22, 36, 2, 5);
         celestialBodies.push(body);
         spawnAsteroidBeltAround(body, 10);
 
-        body = makeCelestialBodyAtDistance("PLANET", "VANTA-9", 1250, 1400, 30, 48, 4, 7);
+        body = makeCelestialBodyAtDistance("PLANET", "VANTA-9", 1600, 1900, 30, 48, 4, 7);
         celestialBodies.push(body);
         spawnAsteroidBeltAround(body, 12);
 
         // stars
-        body = makeCelestialBodyAtDistance("STAR", "SOLACE-C", 1600, 1900, 38, 58, 12, 24);
+        body = makeCelestialBodyAtDistance("STAR", "SOLACE-C", 2600, 2900, 38, 58, 12, 24);
         celestialBodies.push(body);
 
-        body = makeCelestialBodyAtDistance("STAR", "MERCY-D", 1600, 1900, 42, 64, 16, 28);
+        body = makeCelestialBodyAtDistance("STAR", "MERCY-D", 2600, 2900, 42, 64, 16, 28);
         celestialBodies.push(body);
 
-        body = makeCelestialBodyAtDistance("STAR", "VIGIL-E", 1600, 1900, 46, 70, 20, 32);
+        body = makeCelestialBodyAtDistance("STAR", "VIGIL-E", 2600, 2900, 46, 70, 20, 32);
         celestialBodies.push(body);
 
         function getShipSpeedMultiplier() {
@@ -2312,6 +2315,7 @@
 
                 cargo: 0,
                 targetSite: null,
+                parkingPoint: null,
                 targetX: station.x,
                 targetY: station.y,
 
@@ -2354,6 +2358,14 @@
             if (!sites.length) return null;
 
             sites.sort((a, b) => {
+                const timeA = estimateTransportTravelTimeToSite(transport, a);
+                const timeB = estimateTransportTravelTimeToSite(transport, b);
+
+                if (timeA !== timeB) {
+                    return timeA - timeB;
+                }
+
+                // Tie-breaker: richer belts first.
                 const valueDiff = getTransportSiteOreValue(b) - getTransportSiteOreValue(a);
                 if (valueDiff !== 0) return valueDiff;
 
@@ -2363,15 +2375,116 @@
             return sites[0];
         }
 
-        function getTransportParkingPointForSite(transport, site) {
-            const dx = station.x - site.x;
-            const dy = station.y - site.y;
-            const d = Math.hypot(dx, dy) || 1;
+        function isTransportReservingSiteParking(other, site) {
+            if (!isTransportShip(other)) return false;
+            if (other.targetSite !== site) return false;
 
-            return {
-                x: site.x + dx / d * (site.radius + TRANSPORT_SITE_STANDOFF),
-                y: site.y + dy / d * (site.radius + TRANSPORT_SITE_STANDOFF)
+            // Returning transports are leaving the belt, so they should not reserve a belt parking spot.
+            return (
+                other.state === "outbound" ||
+                other.state === "deployed" ||
+                other.state === "recallingShips" ||
+                (
+                    (other.state === "hyperlaneEntry" || other.state === "hyperlaneTravel") &&
+                    other.hyperlane?.afterState === "outbound"
+                )
+            );
+        }
+
+        function getOtherTransportsParkingAtSite(transport, site) {
+            return ships.filter(other =>
+                other !== transport &&
+                isTransportReservingSiteParking(other, site)
+            );
+        }
+
+        function wouldTransportParkingOverlap(transport, site, x, y) {
+            const minDistSq = TRANSPORT_PARKING_SEPARATION * TRANSPORT_PARKING_SEPARATION;
+
+            return getOtherTransportsParkingAtSite(transport, site).some(other => {
+                const ox = other.parkingPoint?.x ?? other.targetX ?? other.x;
+                const oy = other.parkingPoint?.y ?? other.targetY ?? other.y;
+
+                const dx = ox - x;
+                const dy = oy - y;
+
+                return dx * dx + dy * dy < minDistSq;
+            });
+        }
+
+        function scoreTransportParkingCandidate(transport, site, candidate, baseAngle) {
+            let score = 0;
+
+            // Prefer closer travel from the transport's current position.
+            score -= Math.sqrt(distSq(transport, candidate)) / 25;
+
+            // Prefer the station-facing side, but allow spreading if occupied.
+            let angleDelta = Math.abs(candidate.angle - baseAngle);
+            angleDelta = Math.min(angleDelta, Math.PI * 2 - angleDelta);
+            score -= angleDelta * 12;
+
+            // Prefer inner ring before outer rings.
+            score -= candidate.ring * 35;
+
+            // Hard penalty for overlapping another transport's reserved parking spot.
+            if (wouldTransportParkingOverlap(transport, site, candidate.x, candidate.y)) {
+                score -= 100000;
+            }
+
+            return score;
+        }
+
+        function getTransportParkingPointForSite(transport, site) {
+            const candidates = [];
+
+            const baseAngle = Math.atan2(
+                station.y - site.y,
+                station.x - site.x
+            );
+
+            for (let ring = 0; ring < 3; ring++) {
+                const distance =
+                    site.radius +
+                    TRANSPORT_SITE_STANDOFF +
+                    ring * TRANSPORT_PARKING_RING_GAP;
+
+                const samples = TRANSPORT_PARKING_SAMPLES + ring * 6;
+
+                for (let i = 0; i < samples; i++) {
+                    // Start from station-facing side, then rotate around the planet.
+                    const angle =
+                        baseAngle +
+                        (i / samples) * Math.PI * 2 +
+                        ring * 0.21;
+
+                    candidates.push({
+                        x: site.x + Math.cos(angle) * distance,
+                        y: site.y + Math.sin(angle) * distance,
+                        angle,
+                        ring
+                    });
+                }
+            }
+
+            candidates.sort((a, b) =>
+                scoreTransportParkingCandidate(transport, site, b, baseAngle) -
+                scoreTransportParkingCandidate(transport, site, a, baseAngle)
+            );
+
+            return candidates[0] || {
+                x: site.x + Math.cos(baseAngle) * (site.radius + TRANSPORT_SITE_STANDOFF),
+                y: site.y + Math.sin(baseAngle) * (site.radius + TRANSPORT_SITE_STANDOFF)
             };
+        }
+
+        function assignTransportParkingPoint(transport, site) {
+            const p = getTransportParkingPointForSite(transport, site);
+
+            transport.parkingPoint = p;
+            transport.targetX = p.x;
+            transport.targetY = p.y;
+
+            return p;
         }
 
         function isTargetInsideTransportRange(transport, target) {
@@ -2430,6 +2543,34 @@
             transport.cargo = 0;
         }
 
+        function estimateTransportTravelTimeToSite(transport, site) {
+            const parkingPoint = getTransportParkingPointForSite(transport, site);
+            const speed = getEffectiveShipSpeed(transport);
+
+            const normalTime = estimateTravelTime(
+                transport,
+                parkingPoint,
+                speed
+            );
+
+            const route = getBestHyperlaneRouteToPoint(
+                transport,
+                parkingPoint,
+                "outbound"
+            );
+
+            if (!route) {
+                return normalTime;
+            }
+
+            const laneTime =
+                estimateTravelTime(transport, route.from, speed) +
+                estimateTravelTime(route.from, route.to, HYPERLANE_TRAVEL_SPEED) +
+                estimateTravelTime(route.to, parkingPoint, speed);
+
+            return Math.min(normalTime, laneTime);
+        }
+
         function canShipBeCarriedByTransport(ship) {
             const kind = ship.kind || "miningFrigate";
 
@@ -2439,10 +2580,6 @@
 
             if (ship.assignedTransport) return false;
             if (ship.carriedBy) return false;
-
-            if (kind === "miningFrigate" && ship.cargo > 0) {
-                return false;
-            }
 
             if (kind === "droneCarrier") {
                 const miningDroneCount = ship.drones.filter(d =>
@@ -2462,6 +2599,9 @@
                 ship.state === "idle" ||
                 ship.state === "standby" ||
                 ship.state === "seeking" ||
+                ship.state === "outbound" ||
+                ship.state === "mining" ||
+                ship.state === "returning" ||
                 ship.state === "deployed"
             );
         }
@@ -3691,7 +3831,7 @@
                 const dx = chunk.x - transport.x;
                 const dy = chunk.y - transport.y;
 
-                if (dx * dx + dy * dy <= TRANSPORT_GRAV_RANGE * TRANSPORT_GRAV_RANGE) {
+                if (dx * dx + dy * dy <= TRANSPORT_DEPLOY_RANGE  * TRANSPORT_DEPLOY_RANGE ) {
                     chunk.pull = true;
                     chunk.pullTarget = transport;
                 }
@@ -4512,9 +4652,7 @@
                         return;
                     }
 
-                    const p = getTransportParkingPointForSite(transport, transport.targetSite);
-                    transport.targetX = p.x;
-                    transport.targetY = p.y;
+                    assignTransportParkingPoint(transport, transport.targetSite);
                     transport.state = "outbound";
                 }
 
@@ -4608,13 +4746,18 @@
                 if (arrived) {
                     depositTransportCargoAtStation(transport);
 
-                    if (isTransportMiningSiteActive(transport.targetSite)) {
-                        const p = getTransportParkingPointForSite(transport, transport.targetSite);
-                        transport.targetX = p.x;
-                        transport.targetY = p.y;
+                    // Re-evaluate every cycle.
+                    // A newly built hyperlane may make another belt more attractive.
+                    const nextSite = chooseTransportMiningSite(transport);
+
+                    if (nextSite) {
+                        transport.targetSite = nextSite;
+
+                        assignTransportParkingPoint(transport, transport.targetSite);
                         transport.state = "outbound";
                     } else {
                         transport.targetSite = null;
+                        transport.parkingPoint = null;
                         transport.state = "seekingSite";
                     }
                 }
@@ -6864,15 +7007,11 @@
 
             if (isTransport && (hovered || ship.state === "deployed")) {
                 ctx.save();
+
                 ctx.strokeStyle = "rgba(80,255,130,0.12)";
                 ctx.setLineDash([10, 10]);
                 ctx.beginPath();
                 ctx.arc(ship.x, ship.y, TRANSPORT_DEPLOY_RANGE, 0, Math.PI * 2);
-                ctx.stroke();
-
-                ctx.strokeStyle = "rgba(120,255,170,0.10)";
-                ctx.beginPath();
-                ctx.arc(ship.x, ship.y, TRANSPORT_GRAV_RANGE, 0, Math.PI * 2);
                 ctx.stroke();
 
                 ctx.setLineDash([]);
