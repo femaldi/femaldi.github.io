@@ -3079,6 +3079,7 @@
 
         canvas.addEventListener("wheel", e => {
             e.preventDefault();
+            clearFollowedShip();
             zoomCamera(e.deltaY < 0 ? 1.12 : 1 / 1.12);
         });
 
@@ -3102,6 +3103,14 @@
                 return;
             }
 
+            const fleetType = FLEET_HUD_TYPES.find(t => e.code === `Digit${t.key}`);
+
+            if (fleetType && !e.repeat) {
+                e.preventDefault();
+                cycleFleetShip(fleetType.kind);
+                return;
+            }
+
             if (e.code === "Space") {
                 e.preventDefault(); // avoid page scroll
                 centerCameraOnStation();
@@ -3121,6 +3130,16 @@
         });
 
         function updateCameraKeyboard() {
+            const movingCamera =
+                keys.KeyW ||
+                keys.KeyA ||
+                keys.KeyS ||
+                keys.KeyD;
+
+            if (movingCamera) {
+                clearFollowedShip();
+            }
+
             const speed = 14 / camera.zoom;
 
             if (keys.KeyW) camera.y -= speed;
@@ -3157,6 +3176,7 @@
             mouseDown = true;
 
             if (e.button === 2) { // RIGHT CLICK
+                clearFollowedShip();
                 isCameraDragging = true;
                 dragStartX = mouseScreenX;
                 dragStartY = mouseScreenY;
@@ -7005,6 +7025,25 @@
 
             ctx.restore();
 
+            //ship highlight
+            /*if (followedShip === ship) {
+                ctx.save();
+
+                ctx.strokeStyle = "rgba(180,255,210,0.85)";
+                ctx.lineWidth = 2;
+                ctx.shadowColor = GREEN;
+                ctx.shadowBlur = 18;
+                ctx.setLineDash([6, 6]);
+                ctx.lineDashOffset = -frameCount * 0.8;
+
+                ctx.beginPath();
+                ctx.arc(ship.x, ship.y, 34, 0, Math.PI * 2);
+                ctx.stroke();
+
+                ctx.setLineDash([]);
+                ctx.restore();
+            }*/
+
             if (isTransport && (hovered || ship.state === "deployed")) {
                 ctx.save();
 
@@ -7381,12 +7420,178 @@
             return rowY + 6;
         }
 
+        const FLEET_HUD_TYPES = [
+            { key: "1", kind: "miningFrigate", label: "MINING FRIGATES" },
+            { key: "2", kind: "salvageShip", label: "SALVAGING SHIPS" },
+            { key: "3", kind: "droneCarrier", label: "DRONE SHIPS" },
+            { key: "4", kind: "starSiphoner", label: "HELION SIPHONERS" },
+            { key: "5", kind: "transportShip", label: "TRANSPORTS" }
+        ];
+
+        let followedShip = null;
+        let lastFleetCycleKind = null;
+        let lastFleetCycleIndex = -1;
+
+        function getShipKind(ship) {
+            return ship.kind || "miningFrigate";
+        }
+
+        function getFleetShipsByKind(kind) {
+            return ships.filter(ship => getShipKind(ship) === kind);
+        }
+
+        function getSelectableFleetShipsByKind(kind) {
+            return ships.filter(ship =>
+                getShipKind(ship) === kind &&
+                !ship.carriedBy
+            );
+        }
+
+        function isShipIdleForFleetHud(ship) {
+            if (!ship) return false;
+            if (ship.carriedBy) return false;
+
+            const kind = getShipKind(ship);
+
+            if (ship.state === "idle" || ship.state === "standby") {
+                return true;
+            }
+
+            if (kind === "droneCarrier" && ship.drones?.length <= 0) {
+                return true;
+            }
+
+            if (kind === "transportShip" && ship.state === "seekingSite") {
+                return true;
+            }
+
+            return false;
+        }
+
+        function getFleetTypeStats(kind) {
+            const typeShips = getFleetShipsByKind(kind);
+
+            return {
+                total: typeShips.length,
+                idle: typeShips.filter(isShipIdleForFleetHud).length
+            };
+        }
+
+        function clearFollowedShip() {
+            followedShip = null;
+        }
+
+        function followShip(ship) {
+            if (!ship || ship.carriedBy) return;
+
+            followedShip = ship;
+            camera.x = ship.x;
+            camera.y = ship.y;
+            clampCamera();
+        }
+
+        function cycleFleetShip(kind) {
+            const candidates = getSelectableFleetShipsByKind(kind);
+
+            if (candidates.length <= 0) return;
+
+            if (lastFleetCycleKind !== kind) {
+                lastFleetCycleKind = kind;
+                lastFleetCycleIndex = -1;
+            }
+
+            lastFleetCycleIndex = (lastFleetCycleIndex + 1) % candidates.length;
+
+            followShip(candidates[lastFleetCycleIndex]);
+        }
+
+        function updateCameraFollow() {
+            if (!followedShip) return;
+
+            if (!ships.includes(followedShip) || followedShip.carriedBy) {
+                clearFollowedShip();
+                return;
+            }
+
+            camera.x = followedShip.x;
+            camera.y = followedShip.y;
+            clampCamera();
+        }
+
+        function drawFleetHud(x, y) {
+            ctx.save();
+
+            ctx.font = "12px monospace";
+            ctx.textAlign = "left";
+            ctx.textBaseline = "top";
+            ctx.shadowColor = GREEN;
+            ctx.shadowBlur = 8;
+
+            ctx.fillStyle = "rgba(80,255,130,0.65)";
+            ctx.fillText("FLEET STATUS", x, y);
+
+            let rowY = y + 18;
+
+            for (const type of FLEET_HUD_TYPES) {
+                const stats = getFleetTypeStats(type.kind);
+
+                if (stats.total <= 0) {
+                    continue;
+                }
+
+                const selected =
+                    followedShip &&
+                    getShipKind(followedShip) === type.kind;
+
+                ctx.fillStyle = selected
+                    ? "rgba(80,255,130,0.95)"
+                    : GREEN;
+
+                const marker = selected ? ">" : " ";
+
+                ctx.fillText(
+                    `${marker}[${type.key}] ${type.label}`,
+                    x,
+                    rowY
+                );
+
+                ctx.fillStyle = selected
+                    ? "rgba(80,255,130,0.95)"
+                    : "rgba(80,255,130,0.65)";
+
+                ctx.fillText(
+                    `TOTAL:${stats.total} IDLE:${stats.idle}`,
+                    x + 230,
+                    rowY
+                );
+
+                rowY += 16;
+            }
+
+            if (followedShip) {
+                rowY += 4;
+
+                ctx.fillStyle = "rgba(80,255,130,0.95)";
+                ctx.fillText(
+                    `FOLLOWING: ${followedShip.codename}`,
+                    x,
+                    rowY
+                );
+
+                rowY += 16;
+            }
+
+            ctx.restore();
+
+            return rowY + 6;
+        }
+
         function drawHud() {
             const RESOURCES_OFFSET_Y = 900;
 
             drawText("DEEP SPACE EXTRACTION COMMAND", 24, 28);
             drawText("SECTOR: KAPPA-9 / STATUS: ACTIVE", 24, 46, 0.75);
-            drawText(`FLEET: ${ships.length} UNITS`, 24, 64, 0.75);
+            drawFleetHud(24, 46 + 18);
 
             drawSalvageEtaHud(24, 150);
 
@@ -7464,6 +7669,7 @@
             updateScienceProbes();
             updateSalvage();
             ships.forEach(updateShip);
+            updateCameraFollow();
 
             ctx.save();
             applyCameraTransform();
