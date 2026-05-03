@@ -663,6 +663,13 @@
             return "ORE";
         }
 
+        const LIBERATION_CORVETTE_BASE_SPEED = 3.4;
+        const LIBERATION_CORVETTE_BASE_CARGO = 1000;
+        const LIBERATION_CORVETTE_CARGO_PER_LEVEL = 1000;
+
+        let totalOreSheltered = 0;
+        let lastOreSheltered = 0;
+
         const DRONE_SHIP_RANGE = 250;
         const DRONE_LASER_INTERVAL = 42;
         const DRONE_ORBIT_SPEED = 0.045;
@@ -1645,10 +1652,35 @@
                 menuTitle: "LUCRATIVE LIBERATION COALLITION",
                 items: [
                     {
-                        label: "Liberty Awaits",
+                        label: "Liberation Corvette",
+                        getCost: () => getLiberationCorvetteCost(),
+                        description: () =>
+                            `Hires +1 fast off-sector courier. Cargo: ${getLiberationCorvetteCargoMax()} taxable ORE. Reduces current-cycle taxable ore without reducing real ore.`,
+                        canBuy: () => true,
+                        buy: () => {
+                            ships.push(makeLiberationCorvette(countShipsByKind("liberationCorvette")));
+                        }
+                    },
+                    {
+                        label: "Corvette Cargo Hold",
+                        type: "upgrade",
+                        getLevel: () => upgrades.liberationCorvetteCargo.level,
+                        getCap: () => upgrades.liberationCorvetteCargo.cap,
+                        getCost: () => getLiberationCorvetteCargoCost(),
+                        description: () =>
+                            `Increases Liberation Corvette cargo by +${LIBERATION_CORVETTE_CARGO_PER_LEVEL} taxable ORE per level. Current: ${getLiberationCorvetteCargoMax()}.`,
+                        isVisible: () =>
+                            upgrades.liberationCorvetteCargo.level < upgrades.liberationCorvetteCargo.cap,
+                        canBuy: () => true,
+                        buy: () => {
+                            upgrades.liberationCorvetteCargo.level++;
+                        }
+                    },
+                    {
+                        label: "A way out",
                         cost: {},
                         description: () =>
-                            "Ends this run. Future implementation: prestige / ascension mechanic for tax attenuation methods.",
+                            "Escape the sector. Ends this run. Future implementation: prestige / ascension mechanic for tax attenuation methods.",
                         canBuy: () => true,
                         buy: () => {
                             endRunWithLiberty();
@@ -1656,6 +1688,63 @@
                     }
                 ]
             };
+        }
+
+        function updateLiberationCorvette(ship) {
+            const speed = getEffectiveShipSpeed(ship);
+            const cargoMax = getEffectiveCargoMax(ship);
+
+            if (ship.state === "toStation") {
+                ship.targetX = station.x;
+                ship.targetY = station.y;
+
+                const arrived = moveToward(ship, station.x, station.y, speed);
+
+                if (arrived) {
+                    ship.state = "loading";
+                }
+
+                return;
+            }
+
+            if (ship.state === "loading") {
+                const sheltered = shelterTaxableOre(cargoMax);
+
+                if (sheltered > 0) {
+                    ship.cargo = sheltered;
+                    ship.exitPoint = getRandomSectorExitPoint();
+                    ship.targetX = ship.exitPoint.x;
+                    ship.targetY = ship.exitPoint.y;
+                    ship.state = "offsector";
+                } else {
+                    // Nothing taxable yet. Loiter near station and try again.
+                    const orbitAngle = frameCount * 0.01 + ship.x * 0.001;
+                    const loiterX = station.x + Math.cos(orbitAngle) * 115;
+                    const loiterY = station.y + Math.sin(orbitAngle) * 115;
+
+                    moveToward(ship, loiterX, loiterY, speed * 0.45);
+                }
+
+                return;
+            }
+
+            if (ship.state === "offsector") {
+                const arrived = moveToward(
+                    ship,
+                    ship.exitPoint.x,
+                    ship.exitPoint.y,
+                    speed
+                );
+
+                if (arrived) {
+                    // Cargo is already removed from the taxable cycle.
+                    // This just represents the off-sector delivery completing.
+                    ship.cargo = 0;
+                    ship.state = "toStation";
+                }
+
+                return;
+            }
         }
 
         function updateLucrativeLiberationShip() {
@@ -2386,6 +2475,10 @@
                 return ship.baseSpeed ?? STAR_SIPHONER_BASE_SPEED;
             }
 
+            if (kind === "liberationCorvette") {
+                return ship.baseSpeed ?? LIBERATION_CORVETTE_BASE_SPEED;
+            }
+
             if (kind === "transportShip") {
                 return ship.baseSpeed ?? TRANSPORT_SHIP_BASE_SPEED;
             }
@@ -2401,6 +2494,10 @@
             // Helion Siphoners use Large Shipyard cargo upgrades only.
             if (kind === "starSiphoner") {
                 return getStarSiphonerCargoMax();
+            }
+
+            if (kind === "liberationCorvette") {
+                return getLiberationCorvetteCargoMax();
             }
 
             if (kind === "transportShip") {
@@ -2626,6 +2723,41 @@
 
         function canUseHyperlane() {
             return getResourceAmount("helion") >= HYPERLANE_SIPHONER_COST;
+        }
+
+        function getRandomSectorExitPoint() {
+            const edge = Math.floor(rand(0, 4));
+
+            if (edge === 0) {
+                return { x: rand(0, WORLD_W), y: -180 };
+            }
+
+            if (edge === 1) {
+                return { x: WORLD_W + 180, y: rand(0, WORLD_H) };
+            }
+
+            if (edge === 2) {
+                return { x: rand(0, WORLD_W), y: WORLD_H + 180 };
+            }
+
+            return { x: -180, y: rand(0, WORLD_H) };
+        }
+
+        function makeLiberationCorvette(i) {
+            const spawn = lucrativeLiberationShip || station;
+
+            return {
+                kind: "liberationCorvette",
+                x: spawn.x + rand(-40, 40),
+                y: spawn.y + rand(-40, 40),
+                baseSpeed: LIBERATION_CORVETTE_BASE_SPEED,
+                cargo: 0,
+                state: "toStation",
+                targetX: station.x,
+                targetY: station.y,
+                exitPoint: getRandomSectorExitPoint(),
+                codename: `LLC-CORVETTE-${String(i + 1).padStart(2, "0")}`
+            };
         }
 
         function makeTransportShip(i) {
@@ -3163,11 +3295,53 @@
             wreckHaulingSpeed: {
                 level: 0,
                 cap: 5
+            },
+            liberationCorvetteCargo: {
+                level: 0,
+                cap: 10
             }
         };
 
         const SHIP_SPEED_MULTIPLIER = 0.5;
         const SHIP_CARGO_MULTIPLIER = 0.5;
+
+        function getLiberationCorvetteCost() {
+            return {
+                ore: Math.floor(50000 * Math.pow(2.15, countShipsByKind("liberationCorvette")))
+            };
+        }
+
+        function getLiberationCorvetteCargoCost() {
+            return {
+                ore: Math.floor(75000 * Math.pow(2.0, upgrades.liberationCorvetteCargo.level))
+            };
+        }
+
+        function getLiberationCorvetteCargoMax() {
+            return LIBERATION_CORVETTE_BASE_CARGO +
+                upgrades.liberationCorvetteCargo.level * LIBERATION_CORVETTE_CARGO_PER_LEVEL;
+        }
+
+        function getShelterableTaxableOre() {
+            if (!taxesUnlocked) return 0;
+
+            return Math.max(
+                0,
+                oreMinedThisTaxCycle - TAX_FREE_ORE_PER_CYCLE
+            );
+        }
+
+        function shelterTaxableOre(amount) {
+            const sheltered = Math.min(amount, getShelterableTaxableOre());
+
+            if (sheltered <= 0) return 0;
+
+            oreMinedThisTaxCycle -= sheltered;
+            totalOreSheltered += sheltered;
+            lastOreSheltered = sheltered;
+
+            return sheltered;
+        }
 
         function toRoman(n) {
             const romans = [
@@ -5462,6 +5636,11 @@
                 }
             }
 
+            if (kind === "liberationCorvette") {
+                updateLiberationCorvette(ship);
+                return;
+            }
+
             if (kind === "transportShip") {
                 updateTransportShip(ship);
                 return;
@@ -5527,6 +5706,39 @@
                 x: layout.x + (wx / WORLD_W) * layout.w,
                 y: layout.y + (wy / WORLD_H) * layout.h
             };
+        }
+
+        function drawLiberationCorvetteShape(hovered) {
+            // Fast medium courier / blockade-runner profile.
+            ctx.beginPath();
+            ctx.moveTo(28, 0);
+            ctx.lineTo(8, -12);
+            ctx.lineTo(-22, -10);
+            ctx.lineTo(-12, 0);
+            ctx.lineTo(-22, 10);
+            ctx.lineTo(8, 12);
+            ctx.closePath();
+            ctx.fill();
+            ctx.stroke();
+
+            // Side fins
+            ctx.beginPath();
+            ctx.moveTo(-6, -10);
+            ctx.lineTo(-16, -22);
+            ctx.moveTo(-6, 10);
+            ctx.lineTo(-16, 22);
+            ctx.stroke();
+
+            // Cargo / ledger bay
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.rect(-6, -6, 14, 12);
+            ctx.stroke();
+
+            // Engine ticks
+            ctx.fillStyle = hovered ? "rgba(180,255,210,0.95)" : GREEN;
+            ctx.fillRect(-26, -7, 3, 4);
+            ctx.fillRect(-26, 3, 3, 4);
         }
 
         function drawHyperlaneScreen() {
@@ -7375,6 +7587,7 @@
             const isSalvageShip = kind === "salvageShip";
             const isStarSiphoner = kind === "starSiphoner";
             const isTransport = kind === "transportShip";
+            const isLiberationCorvette = kind === "liberationCorvette";
 
             if (ship.carriedBy) return;
 
@@ -7435,15 +7648,17 @@
 
             ctx.strokeStyle = hovered ? "rgba(180,255,210,0.95)" : GREEN;
 
-            ctx.fillStyle = isTransport
+            ctx.fillStyle = isLiberationCorvette
                             ? "rgba(80,255,130,0.16)"
-                            : isStarSiphoner
-                                ? "rgba(80,255,130,0.18)"
-                                : isDroneCarrier
-                                    ? "rgba(80,255,180,0.14)"
-                                    : isSalvageShip
-                                        ? "rgba(120,255,190,0.18)"
-                                        : "rgba(0,255,90,0.12)";
+                            : isTransport
+                                ? "rgba(80,255,130,0.16)"
+                                : isStarSiphoner
+                                    ? "rgba(80,255,130,0.18)"
+                                    : isDroneCarrier
+                                        ? "rgba(80,255,180,0.14)"
+                                        : isSalvageShip
+                                            ? "rgba(120,255,190,0.18)"
+                                            : "rgba(0,255,90,0.12)";
 
             ctx.lineWidth = hovered ? 3 : 2;
             ctx.shadowColor = GREEN;
@@ -7451,7 +7666,9 @@
 
             ctx.beginPath();
 
-            if (isTransport) {
+            if (isLiberationCorvette) {
+                drawLiberationCorvetteShape(hovered);
+            } else if (isTransport) {
                 drawTransportShipShape(hovered);
             } else if (isStarSiphoner) {
                 drawStarSiphonerShape(hovered);
@@ -7519,6 +7736,22 @@
             }
 
             drawText(ship.codename, ship.x + 10, ship.y - 10);
+
+            if (isLiberationCorvette) {
+                const stateLabel =
+                    ship.state === "toStation"
+                        ? "TO STATION"
+                        : ship.state === "loading"
+                            ? "LOITERING"
+                            : "OFF-SECTOR";
+
+                drawText(
+                    `${stateLabel} SHELTER:${ship.cargo}/${getEffectiveCargoMax(ship)}`,
+                    ship.x + 14,
+                    ship.y + 6,
+                    0.65
+                );
+            }
 
             if (isTransport) {
                 const passengers = getTransportPassengers(ship).length;
@@ -7876,7 +8109,8 @@
             { key: "2", kind: "salvageShip", label: "SALVAGING SHIPS" },
             { key: "3", kind: "droneCarrier", label: "DRONE SHIPS" },
             { key: "4", kind: "starSiphoner", label: "HELION SIPHONERS" },
-            { key: "5", kind: "transportShip", label: "TRANSPORTS" }
+            { key: "5", kind: "transportShip", label: "TRANSPORTS" },
+            { key: "6", kind: "liberationCorvette", label: "LIBERATION CORVETTES" }
         ];
 
         let followedShip = null;
@@ -8082,6 +8316,23 @@
             );
             rowY += 16;
 
+            ctx.fillStyle = "rgba(80,255,130,0.65)";
+            ctx.fillText(
+                `SHELTERED THIS RUN: ${Math.floor(totalOreSheltered).toLocaleString("de-DE")}`,
+                x,
+                rowY
+            );
+            rowY += 16;
+
+            if (lastOreSheltered > 0) {
+                ctx.fillText(
+                    `LAST OFF-BOOK LOAD: ${Math.floor(lastOreSheltered).toLocaleString("de-DE")}`,
+                    x,
+                    rowY
+                );
+                rowY += 16;
+            }
+
             if (lastTaxBill) {
                 ctx.fillStyle = "rgba(80,255,130,0.55)";
                 ctx.fillText(
@@ -8193,6 +8444,7 @@
                 ["Metal", `${(stats.metal || 0).toLocaleString("de-DE")}`],
                 ["Helion", `${(stats.helion || 0).toLocaleString("de-DE")}`],
                 ["Taxes paid", `${(stats.taxesPaid || 0).toLocaleString("de-DE")} ORE`],
+                ["Ore sheltered", `${(stats.oreSheltered || 0).toLocaleString("de-DE")} ORE`],
                 ["Ships built", `${stats.shipsBuilt || 0}`],
                 ["Hyperlanes built", `${stats.hyperlanesBuilt || 0}`],
                 ["Salvage rights", `${stats.salvageRights || 0}`]
@@ -8274,7 +8526,8 @@
                 fleet: getFleetRunStats(),
                 hyperlanesBuilt: hyperlanes?.length || 0,
                 salvageRights: salvageSlots?.length || 0,
-                taxCyclesSurvived: lastTaxBill ? Math.floor(frameCount / TAX_CYCLE_FRAMES) : 0
+                taxCyclesSurvived: lastTaxBill ? Math.floor(frameCount / TAX_CYCLE_FRAMES) : 0,
+                oreSheltered: Math.floor(totalOreSheltered),
             };
 
             activeMenu = null;
