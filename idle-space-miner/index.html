@@ -88,30 +88,77 @@
             });
         }
 
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const soundBuffers = {};
+
+        async function loadSoundBuffer(name, url) {
+            const res = await fetch(url);
+            const arrayBuffer = await res.arrayBuffer();
+            soundBuffers[name] = await audioCtx.decodeAudioData(arrayBuffer);
+        }
+
+        function loadGameSounds() {
+            loadSoundBuffer("laser", "sounds/laser.wav");
+            loadSoundBuffer("oreGather", "sounds/ore-gather.wav");
+            loadSoundBuffer("menu", "sounds/menu.wav");
+        }
+
+        loadGameSounds();
+
         function playSound(name, options = {}) {
             if (!soundEnabled) return;
 
-            const base = sounds[name];
-            if (!base) return;
+            const buffer = soundBuffers[name];
+            if (!buffer) return;
+
+            if (audioCtx.state === "suspended") {
+                audioCtx.resume();
+            }
 
             const {
                 volume = 0.45,
                 volumeVar = 0,
                 pitch = 1,
-                pitchVar = 0
+                pitchVar = 0,
+                attackMs = 2,
+                releaseMs = 18
             } = options;
 
-            const s = base.cloneNode();
+            const source = audioCtx.createBufferSource();
+            const gain = audioCtx.createGain();
 
-            // volume variance
-            const finalVolume = volume + (Math.random() * 2 - 1) * volumeVar;
-            s.volume = Math.max(0, Math.min(1, finalVolume));
+            const finalVolume = Math.max(
+                0,
+                Math.min(1, volume + (Math.random() * 2 - 1) * volumeVar)
+            );
 
-            // pitch variance (playbackRate)
-            const finalPitch = pitch + (Math.random() * 2 - 1) * pitchVar;
-            s.playbackRate = Math.max(0.5, Math.min(2.0, finalPitch));
+            const finalPitch = Math.max(
+                0.5,
+                Math.min(2.0, pitch + (Math.random() * 2 - 1) * pitchVar)
+            );
 
-            s.play().catch(() => { });
+            source.buffer = buffer;
+            source.playbackRate.value = finalPitch;
+
+            source.connect(gain);
+            gain.connect(audioCtx.destination);
+
+            const now = audioCtx.currentTime;
+            const attack = attackMs / 1000;
+            const release = releaseMs / 1000;
+            const duration = buffer.duration / finalPitch;
+            const stopAt = now + duration;
+
+            // Tiny fade-in prevents attack clicks.
+            gain.gain.setValueAtTime(0, now);
+            gain.gain.linearRampToValueAtTime(finalVolume, now + attack);
+
+            // Tiny fade-out prevents browser/playbackRate tail clicks.
+            gain.gain.setValueAtTime(finalVolume, Math.max(now + attack, stopAt - release));
+            gain.gain.linearRampToValueAtTime(0, stopAt);
+
+            source.start(now);
+            source.stop(stopAt + 0.01);
         }
 
         const keys = {};
@@ -2363,10 +2410,12 @@
             });
 
             playSound("laser", {
-                volume: 0.35,
-                volumeVar: 0.08,
+                volume: 0.28,
+                volumeVar: 0.04,
                 pitch: 1,
-                pitchVar: 0.5
+                pitchVar: 0.18,
+                attackMs: 2,
+                releaseMs: 20
             });
         }
 
