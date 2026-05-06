@@ -5,6 +5,7 @@
     <meta charset="utf-8" />
     <title>Idle Space Miner</title>
     <style>
+        @import url('https://fonts.googleapis.com/css2?family=Audiowide&display=swap');
         body {
             margin: 0;
             background: #020802;
@@ -35,8 +36,20 @@
 
         const W = 1920;
         const H = 1080;
-        const WORLD_W = 6500;
-        const WORLD_H = 6500;
+        const WORLD_W = 9000;
+        const WORLD_H = 9000;
+
+        const NEBULA_COUNT = 7;
+        const NEBULA_MIN_DISTANCE_FROM_STATION = 3000;
+        const NEBULA_MAX_DISTANCE_FROM_STATION = 4300;
+        const NEBULA_EDGE_MARGIN = 160;
+        const NEBULA_MIN_DISTANCE_FROM_STARS = 950;
+
+        const NEBULA_COLOR_SETS = [
+            { core: "150,255,190", mid: "65,255,135", outer: "20,180,85" },
+            { core: "120,255,170", mid: "45,235,115", outer: "20,150,75" },
+            { core: "185,255,210", mid: "80,255,150", outer: "30,190,95" }
+        ];
 
         const CHUNK_RENDER_BUCKET_SIZE = 80;
         const MAX_RENDERED_CHUNKS_PER_BUCKET = 100;
@@ -183,6 +196,12 @@
             w: 220,
             h: 54
         };
+
+        const START_SCREEN_ASTEROID_COUNT = 12;
+        const START_SCREEN_FRIGATE_COUNT = 5;
+
+        const startScreenAsteroids = [];
+        const startScreenFrigates = [];
 
         function queueIncomingMessage(message) {
             incomingMessages.push(message);
@@ -586,6 +605,7 @@
         let scienceTickInterval = 60; // frames; 60 = once per second
 
         const celestialBodies = [];
+        const nebulas = [];
 
         let observatoryArrays = [];
         let arrayAssignSerial = 0;
@@ -1520,6 +1540,245 @@
 
         function pick(arr) {
             return arr[Math.floor(Math.random() * arr.length)];
+        }
+
+        function createNebulaPuffs(baseRadius) {
+            return Array.from({ length: 72 }, () => ({
+                angle: rand(0, Math.PI * 2),
+                dist: rand(0, baseRadius * 0.82),
+                radius: rand(baseRadius * 0.10, baseRadius * 0.28),
+                scaleX: rand(1.1, 2.8),
+                scaleY: rand(0.7, 1.45),
+                alpha: rand(0.35, 1.0),
+                drift: rand(0.45, 1.55),
+                rotation: rand(0, Math.PI * 2)
+            }));
+        }
+
+        function createNebulaFilaments(baseRadius) {
+            return Array.from({ length: 18 }, () => ({
+                angle: rand(0, Math.PI * 2),
+                dist: rand(baseRadius * 0.08, baseRadius * 0.72),
+                radius: rand(baseRadius * 0.12, baseRadius * 0.24),
+                scaleX: rand(2.2, 4.8),
+                scaleY: rand(0.35, 0.8),
+                alpha: rand(0.22, 0.6),
+                drift: rand(0.35, 1.1),
+                rotation: rand(0, Math.PI * 2)
+            }));
+        }
+
+        function createNebulaDust(baseRadius) {
+            return Array.from({ length: 110 }, () => ({
+                angle: rand(0, Math.PI * 2),
+                dist: rand(0, baseRadius * 0.95),
+                radius: rand(3, 12),
+                alpha: rand(0.05, 0.18),
+                drift: rand(0.6, 1.8)
+            }));
+        }
+
+        function createNebulaGaps(baseRadius) {
+            return Array.from({ length: 14 }, () => ({
+                angle: rand(0, Math.PI * 2),
+                dist: rand(0, baseRadius * 0.65),
+                radius: rand(baseRadius * 0.10, baseRadius * 0.22),
+                scaleX: rand(1.0, 2.4),
+                scaleY: rand(0.7, 1.4),
+                alpha: rand(0.04, 0.12),
+                drift: rand(0.3, 1.0),
+                rotation: rand(0, Math.PI * 2)
+            }));
+        }
+
+        function createNebulaPois(baseRadius) {
+            const count = Math.random() < 0.5 ? 1 : 2;
+            const pois = [];
+
+            for (let i = 0; i < count; i++) {
+                let placed = false;
+
+                for (let attempt = 0; attempt < 40 && !placed; attempt++) {
+                    const angle = rand(0, Math.PI * 2);
+                    const dist = rand(baseRadius * 0.18, baseRadius * 0.58);
+                    const radius = rand(25, 40);
+
+                    const candidate = {
+                        angle,
+                        dist,
+                        radius,
+                        phase: rand(0, Math.PI * 2)
+                    };
+
+                    const overlaps = pois.some(existing => {
+                        const ax = Math.cos(candidate.angle) * candidate.dist;
+                        const ay = Math.sin(candidate.angle) * candidate.dist;
+                        const bx = Math.cos(existing.angle) * existing.dist;
+                        const by = Math.sin(existing.angle) * existing.dist;
+
+                        const minDist = candidate.radius + existing.radius + 24;
+                        const dx = ax - bx;
+                        const dy = ay - by;
+
+                        return dx * dx + dy * dy < minDist * minDist;
+                    });
+
+                    if (!overlaps) {
+                        pois.push(candidate);
+                        placed = true;
+                    }
+                }
+            }
+
+            return pois;
+        }
+
+        function makeNebula(i, existingNebulas) {
+            for (let attempt = 0; attempt < 800; attempt++) {
+                const angle = Math.random() * Math.PI * 2;
+                const dist = rand(
+                    NEBULA_MIN_DISTANCE_FROM_STATION,
+                    NEBULA_MAX_DISTANCE_FROM_STATION
+                );
+
+                const radius = rand(420, 900);
+                const scaleX = rand(0.85, 1.8);
+                const scaleY = rand(0.55, 1.15);
+
+                const x = station.x + Math.cos(angle) * dist;
+                const y = station.y + Math.sin(angle) * dist;
+
+                if (
+                    x < NEBULA_EDGE_MARGIN ||
+                    x > WORLD_W - NEBULA_EDGE_MARGIN ||
+                    y < NEBULA_EDGE_MARGIN ||
+                    y > WORLD_H - NEBULA_EDGE_MARGIN
+                ) {
+                    continue;
+                }
+
+                const visualRadius = radius * Math.max(scaleX, scaleY);
+                const tooCloseToStar = celestialBodies.some(body => {
+                    if (body.type !== "STAR") return false;
+
+                    const minDist =
+                        NEBULA_MIN_DISTANCE_FROM_STARS +
+                        body.radius +
+                        visualRadius * 0.15;
+
+                    return distSq({ x, y }, body) < minDist * minDist;
+                });
+
+                if (tooCloseToStar) continue;
+                const overlaps = existingNebulas.some(n => {
+                    const otherVisualRadius = n.radius * Math.max(n.scaleX, n.scaleY);
+                    const minDist = (visualRadius + otherVisualRadius) * 0.45;
+
+                    return distSq({ x, y }, n) < minDist * minDist;
+                });
+
+                if (overlaps) continue;
+
+                return {
+                    x,
+                    y,
+                    radius,
+                    scaleX,
+                    scaleY,
+                    rotation: 0, //rand(0, Math.PI * 2),
+                    color: pick(NEBULA_COLOR_SETS),
+                    alpha: rand(0.5, 0.8),
+                    phase: rand(0, Math.PI * 2),
+                    pulseSpeed: rand(0.006, 0.014),
+                    puffs: createNebulaPuffs(radius),
+                    filaments: createNebulaFilaments(radius),
+                    dust: createNebulaDust(radius),
+                    gaps: createNebulaGaps(radius),
+                    pois: createNebulaPois(radius)
+                };
+            }
+
+            for (let attempt = 0; attempt < 360; attempt++) {
+                const angle =
+                    (i / NEBULA_COUNT) * Math.PI * 2 +
+                    (attempt / 360) * Math.PI * 2;
+
+                const dist = rand(
+                    NEBULA_MIN_DISTANCE_FROM_STATION + 160,
+                    NEBULA_MAX_DISTANCE_FROM_STATION - 120
+                );
+
+                const radius = rand(480, 760);
+                const scaleX = rand(0.9, 1.6);
+                const scaleY = rand(0.6, 1.1);
+
+                const x = station.x + Math.cos(angle) * dist;
+                const y = station.y + Math.sin(angle) * dist;
+
+                if (
+                    x < NEBULA_EDGE_MARGIN ||
+                    x > WORLD_W - NEBULA_EDGE_MARGIN ||
+                    y < NEBULA_EDGE_MARGIN ||
+                    y > WORLD_H - NEBULA_EDGE_MARGIN
+                ) {
+                    continue;
+                }
+
+                const visualRadius = radius * Math.max(scaleX, scaleY);
+
+                const tooCloseToStar = celestialBodies.some(body => {
+                    if (body.type !== "STAR") return false;
+
+                    const minDist =
+                        NEBULA_MIN_DISTANCE_FROM_STARS +
+                        body.radius +
+                        visualRadius * 0.15;
+
+                    return distSq({ x, y }, body) < minDist * minDist;
+                });
+
+                if (tooCloseToStar) continue;
+
+                return {
+                    x,
+                    y,
+                    radius,
+                    scaleX,
+                    scaleY,
+                    rotation: 0, // rand(0, Math.PI * 2),
+                    color: pick(NEBULA_COLOR_SETS),
+                    alpha: rand(0.5, 0.8),
+                    phase: rand(0, Math.PI * 2),
+                    pulseSpeed: rand(0.006, 0.014),
+                    puffs: createNebulaPuffs(radius),
+                    filaments: createNebulaFilaments(radius),
+                    dust: createNebulaDust(radius),
+                    gaps: createNebulaGaps(radius),
+                    pois: createNebulaPois(radius)
+                };
+            }
+
+            const radius = 560;
+            const x = station.x + Math.cos((i / NEBULA_COUNT) * Math.PI * 2) * (NEBULA_MAX_DISTANCE_FROM_STATION - 200);
+            const y = station.y + Math.sin((i / NEBULA_COUNT) * Math.PI * 2) * (NEBULA_MAX_DISTANCE_FROM_STATION - 200);
+
+            return {
+                x,
+                y,
+                radius,
+                scaleX: 1.2,
+                scaleY: 0.85,
+                rotation: 0, //rand(0, Math.PI * 2),
+                color: pick(NEBULA_COLOR_SETS),
+                alpha: rand(0.5, 0.8),
+                phase: rand(0, Math.PI * 2),
+                pulseSpeed: rand(0.006, 0.014),
+                puffs: createNebulaPuffs(radius),
+                filaments: createNebulaFilaments(radius),
+                dust: createNebulaDust(radius),
+                gaps: createNebulaGaps(radius),
+                pois: createNebulaPois(radius)
+            };
         }
 
         function getModuleById(id) {
@@ -2457,6 +2716,10 @@
 
         body = makeCelestialBodyAtDistance("STAR", "VIGIL-E", 2600, 2900, 46, 70, 20, 32);
         celestialBodies.push(body);
+
+        for (let i = 0; i < NEBULA_COUNT; i++) {
+            nebulas.push(makeNebula(i, nebulas));
+        }
 
         function getShipSpeedMultiplier() {
             return 1 + upgrades.shipSpeed.level * SHIP_SPEED_MULTIPLIER;
@@ -6047,11 +6310,273 @@
             ctx.restore();
         }
 
+        function isInsideStartScreenExclusionZone(x, y, padding = 0) {
+            return (
+                x >= W / 2 - 520 - padding &&
+                x <= W / 2 + 520 + padding &&
+                y >= H / 2 - 250 - padding &&
+                y <= H / 2 + 230 + padding
+            );
+        }
+
+        function makeStartScreenAsteroid(i) {
+            for (let attempt = 0; attempt < 300; attempt++) {
+                const radius = rand(34, 72);
+                const x = rand(90, W - 90);
+                const y = rand(90, H - 90);
+
+                if (isInsideStartScreenExclusionZone(x, y, radius + 36)) {
+                    continue;
+                }
+
+                const overlaps = startScreenAsteroids.some(other => {
+                    const minDist = radius + other.radius + 80;
+                    const dx = x - other.x;
+                    const dy = y - other.y;
+                    return dx * dx + dy * dy < minDist * minDist;
+                });
+
+                if (overlaps) continue;
+
+                const verts = [];
+                const sides = Math.floor(rand(8, 12));
+
+                for (let s = 0; s < sides; s++) {
+                    const t = (s / sides) * Math.PI * 2;
+                    const r = radius * rand(0.72, 1.18);
+
+                    verts.push({
+                        x: Math.cos(t) * r,
+                        y: Math.sin(t) * r
+                    });
+                }
+
+                return {
+                    x,
+                    y,
+                    radius,
+                    verts,
+                    rotation: rand(0, Math.PI * 2),
+                    drift: rand(-0.0025, 0.0025),
+                    codename: `BG-AST-${String(i + 1).padStart(2, "0")}`
+                };
+            }
+
+            return {
+                x: rand(90, W - 90),
+                y: rand(90, H - 90),
+                radius: 48,
+                verts: [
+                    { x: -34, y: -18 },
+                    { x: -10, y: -42 },
+                    { x: 26, y: -30 },
+                    { x: 40, y: -4 },
+                    { x: 26, y: 28 },
+                    { x: -6, y: 40 },
+                    { x: -32, y: 16 }
+                ],
+                rotation: 0,
+                drift: 0,
+                codename: `BG-AST-${String(i + 1).padStart(2, "0")}`
+            };
+        }
+
+        function chooseStartScreenFrigateTarget(ship) {
+            const options = startScreenAsteroids.filter(a => a !== ship.lastTarget);
+            const targetPool = options.length > 0 ? options : startScreenAsteroids;
+
+            ship.target = pick(targetPool);
+            ship.lastTarget = ship.target;
+
+            const angle = rand(0, Math.PI * 2);
+            const dist = ship.target.radius + rand(18, 28);
+
+            ship.targetX = ship.target.x + Math.cos(angle) * dist;
+            ship.targetY = ship.target.y + Math.sin(angle) * dist;
+            ship.state = "toTarget";
+        }
+
+        function makeStartScreenFrigate(i) {
+            const ship = {
+                x: rand(120, W - 120),
+                y: rand(120, H - 120),
+                speed: rand(0.55, 0.95),
+                state: "toTarget",
+                target: null,
+                targetX: 0,
+                targetY: 0,
+                angle: rand(0, Math.PI * 2),
+                miningTimer: 0,
+                beamPhase: rand(0, Math.PI * 2),
+                wobblePhase: rand(0, Math.PI * 2),
+                lastTarget: null,
+                codename: `BG-MINER-${String(i + 1).padStart(2, "0")}`
+            };
+
+            chooseStartScreenFrigateTarget(ship);
+            return ship;
+        }
+
+        function initStartScreenBackground() {
+            if (startScreenAsteroids.length > 0 || startScreenFrigates.length > 0) return;
+
+            for (let i = 0; i < START_SCREEN_ASTEROID_COUNT; i++) {
+                startScreenAsteroids.push(makeStartScreenAsteroid(i));
+            }
+
+            for (let i = 0; i < START_SCREEN_FRIGATE_COUNT; i++) {
+                startScreenFrigates.push(makeStartScreenFrigate(i));
+            }
+        }
+
+        function updateStartScreenBackground() {
+            initStartScreenBackground();
+
+            for (const asteroid of startScreenAsteroids) {
+                asteroid.rotation += asteroid.drift;
+            }
+
+            for (const ship of startScreenFrigates) {
+                if (!ship.target) {
+                    chooseStartScreenFrigateTarget(ship);
+                }
+
+                if (ship.state === "toTarget") {
+                    const dx = ship.targetX - ship.x;
+                    const dy = ship.targetY - ship.y;
+
+                    ship.angle = Math.atan2(dy, dx);
+
+                    const arrived = moveToward(ship, ship.targetX, ship.targetY, ship.speed);
+
+                    if (arrived) {
+                        ship.state = "mining";
+                        ship.miningTimer = Math.floor(rand(70, 150));
+                    }
+
+                    continue;
+                }
+
+                if (ship.state === "mining") {
+                    const dx = ship.target.x - ship.x;
+                    const dy = ship.target.y - ship.y;
+                    ship.angle = Math.atan2(dy, dx);
+
+                    const orbitAngle = ship.angle + Math.PI;
+                    ship.x += Math.cos(orbitAngle + Math.sin(frameCount * 0.03 + ship.wobblePhase) * 0.45) * 0.08;
+                    ship.y += Math.sin(orbitAngle + Math.sin(frameCount * 0.03 + ship.wobblePhase) * 0.45) * 0.08;
+
+                    ship.miningTimer--;
+
+                    if (ship.miningTimer <= 0) {
+                        chooseStartScreenFrigateTarget(ship);
+                    }
+                }
+            }
+        }
+
+        function drawStartScreenAsteroid(a) {
+            ctx.save();
+            ctx.translate(a.x, a.y);
+            ctx.rotate(a.rotation);
+
+            ctx.strokeStyle = "rgba(110,255,165,0.55)";
+            ctx.fillStyle = "rgba(0,255,90,0.05)";
+            ctx.lineWidth = 2;
+            ctx.shadowColor = GREEN;
+            ctx.shadowBlur = 8;
+
+            ctx.beginPath();
+            a.verts.forEach((p, i) => {
+                if (i === 0) ctx.moveTo(p.x, p.y);
+                else ctx.lineTo(p.x, p.y);
+            });
+            ctx.closePath();
+            ctx.fill();
+            ctx.stroke();
+
+            ctx.restore();
+        }
+
+        function drawStartScreenFrigate(ship) {
+            if (ship.state === "mining" && ship.target) {
+                ctx.save();
+
+                const beamPulse = 0.65 + Math.sin(frameCount * 0.25 + ship.beamPhase) * 0.25;
+
+                ctx.strokeStyle = `rgba(140,255,190,${0.45 + beamPulse * 0.25})`;
+                ctx.lineWidth = 1.5 + beamPulse;
+                ctx.shadowColor = GREEN;
+                ctx.shadowBlur = 8;
+                ctx.setLineDash([7, 5]);
+
+                ctx.beginPath();
+                ctx.moveTo(ship.x, ship.y);
+                ctx.lineTo(ship.target.x, ship.target.y);
+                ctx.stroke();
+
+                ctx.setLineDash([]);
+
+                for (let i = 0; i < 3; i++) {
+                    const sparkAngle = frameCount * 0.08 + ship.beamPhase + i * 2.1;
+                    const sparkDist = 8 + i * 4;
+
+                    ctx.fillStyle = `rgba(170,255,210,${0.18 + beamPulse * 0.18})`;
+                    ctx.beginPath();
+                    ctx.arc(
+                        ship.target.x + Math.cos(sparkAngle) * sparkDist,
+                        ship.target.y + Math.sin(sparkAngle) * sparkDist,
+                        1.8 + i * 0.45,
+                        0,
+                        Math.PI * 2
+                    );
+                    ctx.fill();
+                }
+
+                ctx.restore();
+            }
+
+            ctx.save();
+            ctx.translate(ship.x, ship.y);
+            ctx.rotate(ship.angle);
+
+            ctx.strokeStyle = "rgba(170,255,210,0.9)";
+            ctx.fillStyle = "rgba(0,255,90,0.14)";
+            ctx.lineWidth = 2;
+            ctx.shadowColor = GREEN;
+            ctx.shadowBlur = 10;
+
+            ctx.beginPath();
+            drawMiningFrigateShape();
+            ctx.fill();
+            ctx.stroke();
+
+            ctx.restore();
+        }
+
+        function drawStartScreenBackground() {
+            initStartScreenBackground();
+
+            ctx.save();
+            ctx.globalAlpha = 0.9;
+
+            for (const asteroid of startScreenAsteroids) {
+                drawStartScreenAsteroid(asteroid);
+            }
+
+            for (const ship of startScreenFrigates) {
+                drawStartScreenFrigate(ship);
+            }
+
+            ctx.restore();
+        }
+
         function drawStartScreen() {
             ctx.fillStyle = "rgba(0,12,0,0.35)";
             ctx.fillRect(0, 0, W, H);
 
             drawGrid();
+            drawStartScreenBackground();
 
             ctx.save();
             ctx.textAlign = "center";
@@ -6059,20 +6584,50 @@
             ctx.shadowColor = GREEN;
             ctx.shadowBlur = 18;
 
+            const panelX = W / 2 - 460;
+            const panelY = H / 2 - 210;
+            const panelW = 920;
+            const panelH = 390;
+
+            ctx.fillStyle = "rgba(6,8,8,0.48)";
+            ctx.fillRect(panelX, panelY, panelW, panelH);
+
             ctx.strokeStyle = GREEN;
-            ctx.fillStyle = "rgba(0,255,90,0.08)";
             ctx.lineWidth = 2;
+            ctx.strokeRect(panelX, panelY, panelW, panelH);
 
-            ctx.strokeRect(W / 2 - 420, H / 2 - 190, 840, 360);
+            const titleY = H / 2 - 98;
+            const titlePulse = 0.92 + Math.sin(frameCount * 0.035) * 0.08;
 
-            ctx.font = "46px monospace";
-            ctx.fillStyle = GREEN;
-            ctx.fillText("IDLE SPACE MINER", W / 2, H / 2 - 95);
+            ctx.save();
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+
+            ctx.shadowColor = "rgba(120,255,180,0.95)";
+            ctx.shadowBlur = 28;
+
+            ctx.lineWidth = 3;
+            ctx.strokeStyle = "rgba(170,255,210,0.35)";
+            ctx.fillStyle = "rgba(150,255,190,0.98)";
+            ctx.font = `70px "Audiowide", monospace`;
+
+            ctx.translate(W / 2, titleY);
+            ctx.scale(1, titlePulse);
+            ctx.strokeText("ORE-Legacy", 0, 0);
+            ctx.fillText("ORE-Legacy", 0, 0);
+
+            ctx.shadowBlur = 10;
+            ctx.fillStyle = "rgba(220,255,235,0.22)";
+            ctx.font = `70px "Audiowide", monospace`;
+            ctx.fillText("ORE-Legacy", 0, 2);
+
+            ctx.restore();
 
             ctx.font = "16px monospace";
+            ctx.fillStyle = GREEN;
             ctx.globalAlpha = 0.75;
-            ctx.fillText("DEEP SPACE EXTRACTION COMMAND", W / 2, H / 2 - 46);
-            ctx.fillText("SECTOR KAPPA-9 // MINING AUTHORIZATION REQUIRED", W / 2, H / 2 - 18);
+            ctx.fillText("DEEP SPACE EXTRACTION COMMAND", W / 2, H / 2 - 38);
+            ctx.fillText("SECTOR KAPPA-9 // MINING AUTHORIZATION REQUIRED", W / 2, H / 2 - 10);
             ctx.globalAlpha = 1;
 
             const hovered = pointInRect(mouseScreenX, mouseScreenY, startButton);
@@ -6480,6 +7035,182 @@
                 ctx.lineTo(WORLD_W, y);
                 ctx.stroke();
             }
+        }
+
+        function isNebulaVisible(nebula) {
+            const visualRadius = nebula.radius * Math.max(nebula.scaleX, nebula.scaleY);
+            const halfW = W / 2 / camera.zoom;
+            const halfH = H / 2 / camera.zoom;
+
+            return (
+                nebula.x + visualRadius >= camera.x - halfW &&
+                nebula.x - visualRadius <= camera.x + halfW &&
+                nebula.y + visualRadius >= camera.y - halfH &&
+                nebula.y - visualRadius <= camera.y + halfH
+            );
+        }
+
+        function drawNebula(nebula) {
+            if (!isNebulaVisible(nebula)) return;
+
+            const pulse = 0.84 + Math.sin(frameCount * nebula.pulseSpeed + nebula.phase) * 0.16;
+
+            ctx.save();
+            ctx.translate(nebula.x, nebula.y);
+            ctx.rotate(nebula.rotation);
+
+            // --- very soft base haze ---
+            ctx.save();
+            ctx.globalCompositeOperation = "screen";
+            ctx.scale(nebula.scaleX, nebula.scaleY);
+
+            const hull = ctx.createRadialGradient(0, 0, 0, 0, 0, nebula.radius);
+            hull.addColorStop(0.00, `rgba(${nebula.color.core},${0.10 * nebula.alpha * pulse})`);
+            hull.addColorStop(0.32, `rgba(${nebula.color.mid},${0.08 * nebula.alpha * pulse})`);
+            hull.addColorStop(0.72, `rgba(${nebula.color.outer},${0.045 * nebula.alpha * pulse})`);
+            hull.addColorStop(1.00, "rgba(0,0,0,0)");
+
+            ctx.fillStyle = hull;
+            ctx.beginPath();
+            ctx.arc(0, 0, nebula.radius, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+
+            // --- elongated fog filaments ---
+            ctx.globalCompositeOperation = "screen";
+
+            for (const filament of nebula.filaments) {
+                const a =
+                    filament.angle +
+                    Math.sin(frameCount * 0.0012 * filament.drift + nebula.phase) * 0.16;
+
+                const fx = Math.cos(a) * filament.dist * nebula.scaleX;
+                const fy = Math.sin(a) * filament.dist * nebula.scaleY;
+
+                ctx.save();
+                ctx.translate(fx, fy);
+                ctx.rotate(filament.rotation + Math.sin(frameCount * 0.001 * filament.drift) * 0.35);
+                ctx.scale(filament.scaleX, filament.scaleY);
+
+                const grad = ctx.createRadialGradient(0, 0, 0, 0, 0, filament.radius);
+                grad.addColorStop(0.00, `rgba(${nebula.color.core},${0.14 * nebula.alpha * filament.alpha * pulse})`);
+                grad.addColorStop(0.45, `rgba(${nebula.color.mid},${0.085 * nebula.alpha * filament.alpha * pulse})`);
+                grad.addColorStop(1.00, "rgba(0,0,0,0)");
+
+                ctx.fillStyle = grad;
+                ctx.beginPath();
+                ctx.arc(0, 0, filament.radius, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            }
+
+            // --- irregular cloud puffs ---
+            for (const puff of nebula.puffs) {
+                const a =
+                    puff.angle +
+                    Math.sin(frameCount * 0.0015 * puff.drift + nebula.phase) * 0.12;
+
+                const px = Math.cos(a) * puff.dist * nebula.scaleX;
+                const py = Math.sin(a) * puff.dist * nebula.scaleY;
+
+                ctx.save();
+                ctx.translate(px, py);
+                ctx.rotate(puff.rotation + Math.sin(frameCount * 0.0011 * puff.drift) * 0.18);
+                ctx.scale(puff.scaleX, puff.scaleY);
+
+                const grad = ctx.createRadialGradient(0, 0, 0, 0, 0, puff.radius);
+                grad.addColorStop(0.00, `rgba(${nebula.color.core},${0.18 * nebula.alpha * puff.alpha * pulse})`);
+                grad.addColorStop(0.35, `rgba(${nebula.color.mid},${0.12 * nebula.alpha * puff.alpha * pulse})`);
+                grad.addColorStop(0.72, `rgba(${nebula.color.outer},${0.06 * nebula.alpha * puff.alpha * pulse})`);
+                grad.addColorStop(1.00, "rgba(0,0,0,0)");
+
+                ctx.fillStyle = grad;
+                ctx.beginPath();
+                ctx.arc(0, 0, puff.radius, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            }
+
+            // --- fine mist / particulate detail ---
+            for (const dust of nebula.dust) {
+                const a =
+                    dust.angle +
+                    Math.sin(frameCount * 0.002 * dust.drift + nebula.phase) * 0.08;
+
+                const dx = Math.cos(a) * dust.dist * nebula.scaleX;
+                const dy = Math.sin(a) * dust.dist * nebula.scaleY;
+
+                ctx.fillStyle = `rgba(${nebula.color.core},${dust.alpha * nebula.alpha * pulse})`;
+                ctx.beginPath();
+                ctx.arc(dx, dy, dust.radius, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            // --- darker pockets to break up the "ellipse stack" look ---
+            ctx.globalCompositeOperation = "source-over";
+
+            for (const gap of nebula.gaps) {
+                const a =
+                    gap.angle +
+                    Math.sin(frameCount * 0.001 * gap.drift + nebula.phase) * 0.10;
+
+                const gx = Math.cos(a) * gap.dist * nebula.scaleX;
+                const gy = Math.sin(a) * gap.dist * nebula.scaleY;
+
+                ctx.save();
+                ctx.translate(gx, gy);
+                ctx.rotate(gap.rotation);
+                ctx.scale(gap.scaleX, gap.scaleY);
+
+                const gapGrad = ctx.createRadialGradient(0, 0, 0, 0, 0, gap.radius);
+                gapGrad.addColorStop(0.00, `rgba(0,18,0,${gap.alpha})`);
+                gapGrad.addColorStop(0.65, `rgba(0,18,0,${gap.alpha * 0.45})`);
+                gapGrad.addColorStop(1.00, "rgba(0,0,0,0)");
+
+                ctx.fillStyle = gapGrad;
+                ctx.beginPath();
+                ctx.arc(0, 0, gap.radius, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            }
+
+            // --- undiscovered points of interest ---
+            if (nebula.pois?.length) {
+                ctx.save();
+                ctx.setLineDash([8, 6]);
+                ctx.lineWidth = 2.5;
+                ctx.strokeStyle = `rgba(190,255,210,0.95)`;
+                ctx.fillStyle = `rgba(220,255,230,0.95)`;
+                ctx.textAlign = "center";
+                ctx.textBaseline = "middle";
+
+                for (const poi of nebula.pois) {
+                    const a =
+                        poi.angle +
+                        Math.sin(frameCount * 0.0012 + poi.phase) * 0.05;
+
+                    const px = Math.cos(a) * poi.dist * nebula.scaleX;
+                    const py = Math.sin(a) * poi.dist * nebula.scaleY;
+                    const r = poi.radius;
+
+                    ctx.globalAlpha = 0.82 + Math.sin(frameCount * 0.03 + poi.phase) * 0.12;
+
+                    ctx.beginPath();
+                    ctx.arc(px, py, r, 0, Math.PI * 2);
+                    ctx.stroke();
+
+                    ctx.save();
+                    ctx.translate(px, py + 1);
+                    ctx.rotate(-nebula.rotation);
+                    ctx.font = `${Math.floor(r * 1.2)}px monospace`;
+                    ctx.fillText("?", 0, 0);
+                    ctx.restore();
+                }
+
+                ctx.restore();
+            }
+
+            ctx.restore();
         }
 
         function drawStation() {
@@ -7581,6 +8312,14 @@
             ctx.fillRect(4, 17, 3, 3);
         }
 
+        function drawMiningFrigateShape() {
+            ctx.moveTo(12, 0);
+            ctx.lineTo(-9, -7);
+            ctx.lineTo(-5, 0);
+            ctx.lineTo(-9, 7);
+            ctx.closePath();
+        }
+
         function drawShip(ship) {
             const kind = ship.kind || "miningFrigate";
             const isDroneCarrier = kind === "droneCarrier";
@@ -7681,11 +8420,7 @@
             } else if (isSalvageShip) {
                 drawSalvageShipShape(hovered);
             } else {
-                ctx.moveTo(12, 0);
-                ctx.lineTo(-9, -7);
-                ctx.lineTo(-5, 0);
-                ctx.lineTo(-9, 7);
-                ctx.closePath();
+                drawMiningFrigateShape();
             }
 
             ctx.fill();
@@ -8544,6 +9279,7 @@
             frameCount++;
 
             if (gameState === "start") {
+                updateStartScreenBackground();
                 drawStartScreen();
                 requestAnimationFrame(loop);
                 return;
@@ -8586,6 +9322,7 @@
 
             drawGrid();
 
+            nebulas.forEach(drawNebula);
             asteroids.forEach(drawAsteroid);
             celestialBodies.forEach(drawCelestialBody);
             scienceProbes.forEach(drawScienceProbe);
