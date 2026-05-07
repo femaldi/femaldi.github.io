@@ -82,6 +82,7 @@
 
         let musicEnabled = true;
         let soundEffectsEnabled = true;
+        let crtEnabled = true;
 
         const sounds = {
             laser: new Audio("sounds/laser.wav"),
@@ -203,7 +204,18 @@
         const DIM = "rgba(80,255,130,0.35)";
         const FAINT = "rgba(80,255,130,0.15)";
 
-        const DEBT_TARGET_ORE = 6587651565;
+        const CRT_NOISE_DOTS = 90;
+        const CRT_GLITCH_MIN_DELAY = 90;
+        const CRT_GLITCH_MAX_DELAY = 260;
+
+        const crtImperfections = {
+            flicker: 0,
+            rollOffset: 0,
+            nextGlitchIn: 120,
+            glitches: []
+        };
+
+        const DEBT_TARGET_ORE = Math.random(6000000000, 7000000000);
 
         const incomingMessages = [];
         let activeIncomingMessage = null;
@@ -216,15 +228,23 @@
             w: 220,
             h: 54
         };
+
         const startMusicButton = {
-            x: W / 2 - 230,
+            x: W / 2 - 350,
             y: H / 2 + 166,
             w: 220,
             h: 42
         };
 
         const startSoundButton = {
-            x: W / 2 + 10,
+            x: W / 2 - 110,
+            y: H / 2 + 166,
+            w: 220,
+            h: 42
+        };
+
+        const startCrtButton = {
+            x: W / 2 + 130,
             y: H / 2 + 166,
             w: 220,
             h: 42
@@ -916,6 +936,10 @@
         const DRONE_RANGE_UPGRADE_AMOUNT = 75;
 
         const DRONE_CARRIER_OPERATION_MODES = ["mixed", "mining", "salvaging"];
+
+        let fpsCounter = 0;
+        let fpsFrameCount = 0;
+        let fpsLastTime = performance.now();
 
         function getDroneCarrierOperationMode(carrier) {
             return carrier.operationMode || "mixed";
@@ -4217,6 +4241,20 @@
                     return;
                 }
 
+                if (pointInRect(mx, my, startCrtButton)) {
+                    crtEnabled = !crtEnabled;
+
+                    if (soundEffectsEnabled) {
+                        playSound("menu", {
+                            volume: 0.24,
+                            pitch: crtEnabled ? 1.12 : 0.82,
+                            pitchVar: 0.03
+                        });
+                    }
+
+                    return;
+                }
+
                 if (pointInRect(mx, my, startButton)) {
                     gameState = "playing";
                     queueStartingMessages();
@@ -7049,6 +7087,7 @@
 
             drawStartToggleButton(startMusicButton, "MUSIC", musicEnabled);
             drawStartToggleButton(startSoundButton, "SFX", soundEffectsEnabled);
+            drawStartToggleButton(startCrtButton, "CRT", crtEnabled);
 
             ctx.restore();
 
@@ -9213,11 +9252,167 @@
             ctx.restore();
         }
 
+        function updateCRTImperfections() {
+            if (!crtEnabled) return;
+
+            crtImperfections.flicker = Math.random();
+
+            crtImperfections.rollOffset =
+                (crtImperfections.rollOffset + 1.15) % H;
+
+            crtImperfections.nextGlitchIn--;
+
+            if (crtImperfections.nextGlitchIn <= 0) {
+                const glitchCount = Math.floor(rand(1, 4));
+
+                for (let i = 0; i < glitchCount; i++) {
+                    const life = Math.floor(rand(4, 11));
+
+                    crtImperfections.glitches.push({
+                        y: rand(40, H - 80),
+                        h: rand(4, 22),
+                        offset: rand(-18, 18),
+                        life,
+                        maxLife: life,
+                        alpha: rand(0.08, 0.18)
+                    });
+                }
+
+                crtImperfections.nextGlitchIn = Math.floor(
+                    rand(CRT_GLITCH_MIN_DELAY, CRT_GLITCH_MAX_DELAY)
+                );
+            }
+
+            for (let i = crtImperfections.glitches.length - 1; i >= 0; i--) {
+                crtImperfections.glitches[i].life--;
+
+                if (crtImperfections.glitches[i].life <= 0) {
+                    crtImperfections.glitches.splice(i, 1);
+                }
+            }
+        }
+
+        function drawCRTGlitchSlices() {
+            if (crtImperfections.glitches.length <= 0) return;
+
+            ctx.save();
+
+            for (const glitch of crtImperfections.glitches) {
+                const t = glitch.life / glitch.maxLife;
+                const y = Math.floor(glitch.y);
+                const h = Math.floor(glitch.h);
+                const offset = Math.floor(glitch.offset * t);
+
+                ctx.globalAlpha = glitch.alpha * t;
+
+                // Copy a thin screen slice sideways. This creates a CRT sync-tear feel.
+                ctx.drawImage(
+                    canvas,
+                    0,
+                    y,
+                    W,
+                    h,
+                    offset,
+                    y,
+                    W,
+                    h
+                );
+
+                ctx.fillStyle = `rgba(140,255,180,${0.08 * t})`;
+                ctx.fillRect(0, y, W, 1);
+
+                ctx.fillStyle = `rgba(0,0,0,${0.20 * t})`;
+                ctx.fillRect(0, y + h - 1, W, 1);
+            }
+
+            ctx.restore();
+        }
+
+        function drawCRTNoise() {
+            ctx.save();
+
+            ctx.globalCompositeOperation = "screen";
+
+            for (let i = 0; i < CRT_NOISE_DOTS; i++) {
+                const x = Math.floor(rand(0, W));
+                const y = Math.floor(rand(0, H));
+                const w = Math.random() < 0.82 ? 1 : 2;
+                const alpha = rand(0.025, 0.09);
+
+                ctx.fillStyle = `rgba(120,255,170,${alpha})`;
+                ctx.fillRect(x, y, w, 1);
+            }
+
+            ctx.restore();
+        }
+
+        function drawCRTRollingBand() {
+            const y = crtImperfections.rollOffset;
+            const pulse = 0.5 + Math.sin(frameCount * 0.045) * 0.5;
+
+            ctx.save();
+
+            ctx.globalCompositeOperation = "screen";
+
+            const band = ctx.createLinearGradient(0, y - 34, 0, y + 34);
+            band.addColorStop(0.00, "rgba(80,255,130,0)");
+            band.addColorStop(0.50, `rgba(120,255,170,${0.025 + pulse * 0.018})`);
+            band.addColorStop(1.00, "rgba(80,255,130,0)");
+
+            ctx.fillStyle = band;
+            ctx.fillRect(0, y - 34, W, 68);
+
+            ctx.restore();
+        }
+
+        function drawCRTFlicker() {
+            const flickerAlpha = 0.012 + crtImperfections.flicker * 0.020;
+
+            ctx.save();
+
+            ctx.globalCompositeOperation = "screen";
+            ctx.fillStyle = `rgba(120,255,170,${flickerAlpha})`;
+            ctx.fillRect(0, 0, W, H);
+
+            // Occasional very faint dark pulse.
+            if (Math.random() < 0.035) {
+                ctx.globalCompositeOperation = "source-over";
+                ctx.fillStyle = "rgba(0,0,0,0.035)";
+                ctx.fillRect(0, 0, W, H);
+            }
+
+            ctx.restore();
+        }
+
+        function drawCRTImperfections() {
+            if (!crtEnabled) return;
+            drawCRTGlitchSlices();
+            drawCRTRollingBand();
+            drawCRTNoise();
+            //drawCRTFlicker();
+        }
+
         function drawScanlines() {
-            ctx.fillStyle = "rgba(0,0,0,0.18)";
+            if (!crtEnabled) return;
+
+            ctx.save();
+
             for (let y = 0; y < H; y += 3) {
+                const alpha = y % 6 === 0 ? 0.20 : 0.13;
+
+                ctx.fillStyle = `rgba(0,0,0,${alpha})`;
                 ctx.fillRect(0, y, W, 1);
             }
+
+            // Faint phosphor rows between the dark scanlines.
+            ctx.globalCompositeOperation = "screen";
+            ctx.fillStyle = "rgba(80,255,130,0.018)";
+
+            for (let y = 1; y < H; y += 6) {
+                ctx.fillRect(0, y, W, 1);
+            }
+
+            ctx.restore();
         }
 
         function drawVignette() {
@@ -9596,12 +9791,12 @@
                 ? 8 + pulse * 18 * t
                 : 6;
 
-            if (blink > 0) {
-                ctx.fillStyle = `rgba(120,255,170,${0.10 * t})`;
-                ctx.fillRect(x - 6, y - 13, 210, 18);
+            // if (blink > 0) {
+            //     ctx.fillStyle = `rgba(120,255,170,${0.10 * t})`;
+            //     ctx.fillRect(x - 6, y - 13, 210, 18);
 
-                ctx.fillStyle = `rgba(220,255,230,${0.75 + pulse * 0.25})`;
-            }
+            //     ctx.fillStyle = `rgba(220,255,230,${0.75 + pulse * 0.25})`;
+            // }
 
             ctx.fillText(`${label}: ${value}`, x, y);
 
@@ -9618,7 +9813,7 @@
                     id: "music",
                     label: "♪",
                     title: `MUSIC ${musicEnabled ? "ON" : "OFF"}`,
-                    x: W - IN_GAME_TOP_BUTTON_MARGIN - size * 3 - gap * 2,
+                    x: W - IN_GAME_TOP_BUTTON_MARGIN - size * 4 - gap * 3,
                     y,
                     w: size,
                     h: size,
@@ -9631,7 +9826,7 @@
                     id: "sfx",
                     label: "SFX",
                     title: `SFX ${soundEffectsEnabled ? "ON" : "OFF"}`,
-                    x: W - IN_GAME_TOP_BUTTON_MARGIN - size * 2 - gap,
+                    x: W - IN_GAME_TOP_BUTTON_MARGIN - size * 3 - gap * 2,
                     y,
                     w: size,
                     h: size,
@@ -9643,6 +9838,27 @@
                             playSound("menu", {
                                 volume: 0.28,
                                 pitch: 1.08,
+                                pitchVar: 0.03
+                            });
+                        }
+                    }
+                },
+                {
+                    id: "crt",
+                    label: "CRT",
+                    title: `CRT ${crtEnabled ? "ON" : "OFF"}`,
+                    x: W - IN_GAME_TOP_BUTTON_MARGIN - size * 2 - gap,
+                    y,
+                    w: size,
+                    h: size,
+                    enabled: crtEnabled,
+                    action: () => {
+                        crtEnabled = !crtEnabled;
+
+                        if (soundEffectsEnabled) {
+                            playSound("menu", {
+                                volume: 0.24,
+                                pitch: crtEnabled ? 1.12 : 0.82,
                                 pitchVar: 0.03
                             });
                         }
@@ -9743,6 +9959,37 @@
             }
 
             return false;
+        }
+
+        function updateFpsCounter() {
+            fpsFrameCount++;
+
+            const now = performance.now();
+            const elapsed = now - fpsLastTime;
+
+            if (elapsed >= 500) {
+                fpsCounter = Math.round((fpsFrameCount * 1000) / elapsed);
+                fpsFrameCount = 0;
+                fpsLastTime = now;
+            }
+        }
+
+        function drawFpsCounter() {
+            const x = W - IN_GAME_TOP_BUTTON_MARGIN;
+            const y = IN_GAME_TOP_BUTTON_MARGIN + IN_GAME_TOP_BUTTON_SIZE + 34;
+
+            ctx.save();
+
+            ctx.textAlign = "right";
+            ctx.textBaseline = "top";
+            ctx.font = "12px monospace";
+            ctx.fillStyle = "rgba(180,255,210,0.85)";
+            ctx.shadowColor = GREEN;
+            ctx.shadowBlur = 8;
+
+            ctx.fillText(`FPS: ${fpsCounter}`, x, y);
+
+            ctx.restore();
         }
 
         function drawHud() {
@@ -10208,16 +10455,21 @@
 
         function loop() {
             frameCount++;
+            updateFpsCounter();
+
+            updateCRTImperfections();
 
             if (gameState === "start") {
                 updateStartScreenBackground();
                 drawStartScreen();
+                drawCRTImperfections();
                 requestAnimationFrame(loop);
                 return;
             }
 
             if (gameState === "runEnded") {
                 drawRunEndedScreen();
+                drawCRTImperfections();
                 requestAnimationFrame(loop);
                 return;
             }
@@ -10234,6 +10486,7 @@
                 drawVignette();
                 drawDebtProgressBar();
                 drawLibertyEscapeOverlay();
+                drawCRTImperfections();
 
                 requestAnimationFrame(loop);
                 return;
@@ -10276,10 +10529,12 @@
 
             drawHud();
             drawInGameTopRightButtons();
+            drawFpsCounter();
             drawDebtProgressBar();
             drawHyperlaneScreen();
             drawCrosshair();
             drawIncomingMessage();
+            drawCRTImperfections();
 
             requestAnimationFrame(loop);
         }
