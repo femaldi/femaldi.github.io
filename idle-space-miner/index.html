@@ -2921,6 +2921,13 @@
                     }
 
                     if (spendCost(cost)) {
+                        playSound("menu", {
+                            volume: 0.35,
+                            volumeVar: 0.04,
+                            pitch: 1.05,
+                            pitchVar: 0.04
+                        });
+
                         buildHyperlaneTo(body);
                         closeHyperlaneScreen();
                     }
@@ -4028,11 +4035,25 @@
                         }
 
                         if (item.opensScreen) {
+                            playSound("menu", {
+                                volume: 0.35,
+                                volumeVar: 0.04,
+                                pitch: 1.05,
+                                pitchVar: 0.04
+                            });
+
                             item.buy();
                             return;
                         }
 
                         if (spendCost(cost)) {
+                            playSound("menu", {
+                                volume: 0.35,
+                                volumeVar: 0.04,
+                                pitch: 1.05,
+                                pitchVar: 0.04
+                            });
+
                             item.buy();
                         }
 
@@ -7700,15 +7721,49 @@
                 const canBuy = item.canBuy ? item.canBuy() : true;
                 const affordable = canBuy && canAffordCost(cost);
 
-                ctx.strokeStyle = affordable ? GREEN : "rgba(80,255,130,0.25)";
+                const hovered =
+                    mouseScreenX >= bx &&
+                    mouseScreenX <= bx + bw &&
+                    mouseScreenY >= by &&
+                    mouseScreenY <= by + bh;
+
+                ctx.lineWidth = hovered ? 2 : 1;
+                ctx.shadowBlur = hovered ? 18 : 8;
+
+                ctx.strokeStyle = affordable
+                    ? hovered
+                        ? "rgba(190,255,215,0.95)"
+                        : GREEN
+                    : hovered
+                        ? "rgba(110,255,160,0.45)"
+                        : "rgba(80,255,130,0.25)";
+
                 ctx.fillStyle = affordable
-                    ? "rgba(0,255,90,0.08)"
-                    : "rgba(0,255,90,0.03)";
+                    ? hovered
+                        ? "rgba(80,255,140,0.22)"
+                        : "rgba(0,255,90,0.08)"
+                    : hovered
+                        ? "rgba(80,255,130,0.08)"
+                        : "rgba(0,255,90,0.03)";
 
                 ctx.fillRect(bx, by, bw, bh);
                 ctx.strokeRect(bx, by, bw, bh);
 
-                ctx.fillStyle = affordable ? GREEN : "rgba(80,255,130,0.35)";
+                if (hovered) {
+                    ctx.fillStyle = affordable
+                        ? "rgba(190,255,215,0.10)"
+                        : "rgba(120,255,170,0.05)";
+                    ctx.fillRect(bx + 2, by + 2, bw - 4, bh - 4);
+                }
+
+                ctx.fillStyle = affordable
+                    ? hovered
+                        ? "rgba(220,255,230,1)"
+                        : GREEN
+                    : hovered
+                        ? "rgba(120,255,170,0.55)"
+                        : "rgba(80,255,130,0.35)";
+
                 let label = item.label;
 
                 if (item.type === "upgrade") {
@@ -7717,14 +7772,6 @@
                 }
 
                 ctx.fillText(`${label} (${formatCost(cost)})`, bx + 8, by + 14);
-
-                if (affordable) {
-                    const pulse = Math.floor(frameCount / 12) % 2;
-                    const offset = pulse ? 2 : 0;
-
-                    ctx.fillText(">>", bx - 24 - offset, by + 14);
-                    ctx.fillText("<<", bx + bw + 8 + offset, by + 14);
-                }
 
                 item.bounds = { x: bx, y: by, w: bw, h: bh };
             });
