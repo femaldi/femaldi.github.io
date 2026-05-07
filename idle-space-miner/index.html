@@ -4080,7 +4080,21 @@
             //Celestial bodies
             for (const body of celestialBodies) {
                 if (pointInCelestialBody(mx, my, body)) {
+                    const wasAlreadyObserved = observatoryArrays.some(a => a.target === body);
+
                     assignArrayToCelestialBody(body);
+
+                    const isNowObserved = observatoryArrays.some(a => a.target === body);
+
+                    if (!wasAlreadyObserved && isNowObserved) {
+                        playSound("menu", {
+                            volume: 0.35,
+                            volumeVar: 0.04,
+                            pitch: 1.12,
+                            pitchVar: 0.04
+                        });
+                    }
+
                     return;
                 }
             }
