@@ -80,7 +80,8 @@
         let oreGatherSoundDelay = 0;
         const ORE_GATHER_SOUND_SPACING = 2; // frames between sounds
 
-        const soundEnabled = true;
+        let musicEnabled = true;
+        let soundEffectsEnabled = true;
 
         const sounds = {
             laser: new Audio("sounds/laser.wav"),
@@ -94,7 +95,13 @@
         }
 
         function startMusic() {
-            if (musicAudio) return; // prevent multiple starts
+            if (!musicEnabled) return;
+
+            if (musicAudio) {
+                musicAudio.volume = 0.1;
+                musicAudio.play().catch(() => {});
+                return;
+            }
 
             musicAudio = new Audio("sounds/music.wav");
             musicAudio.loop = true;
@@ -102,6 +109,19 @@
             musicAudio.play().catch(() => {
                 // autoplay might fail, but since this is user-triggered it should work
             });
+        }
+
+        function setMusicEnabled(enabled) {
+            musicEnabled = enabled;
+
+            if (!musicAudio) return;
+
+            if (musicEnabled) {
+                musicAudio.volume = 0.1;
+                musicAudio.play().catch(() => {});
+            } else {
+                musicAudio.pause();
+            }
         }
 
         const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -122,7 +142,7 @@
         loadGameSounds();
 
         function playSound(name, options = {}) {
-            if (!soundEnabled) return;
+            if (!soundEffectsEnabled) return;
 
             const buffer = soundBuffers[name];
             if (!buffer) return;
@@ -195,6 +215,19 @@
             y: H / 2 + 90,
             w: 220,
             h: 54
+        };
+        const startMusicButton = {
+            x: W / 2 - 230,
+            y: H / 2 + 166,
+            w: 220,
+            h: 42
+        };
+
+        const startSoundButton = {
+            x: W / 2 + 10,
+            y: H / 2 + 166,
+            w: 220,
+            h: 42
         };
 
         const START_SCREEN_ASTEROID_COUNT = 12;
@@ -327,6 +360,15 @@
             metal: 0,
             helion: 0
         };
+
+        const resourceBlinkTimers = {
+            ore: 0,
+            science: 0,
+            metal: 0,
+            helion: 0
+        };
+
+        const RESOURCE_BLINK_FRAMES = 28;
 
         let hasDiscoveredScience = false;
         let hasDiscoveredMetal = false;
@@ -546,6 +588,10 @@
         }
 
         function addResource(type, amount) {
+            if (amount > 0 && resourceBlinkTimers[type] !== undefined) {
+                resourceBlinkTimers[type] = RESOURCE_BLINK_FRAMES;
+            }
+
             resources[type] = (resources[type] ?? 0) + amount;
 
             if (type === "science" && amount > 0) {
@@ -677,18 +723,187 @@
             addResource(resourceType || "ore", amount);
         }
 
+        function getDisplayedResourceGain(resourceType, amount) {
+            if (amount <= 0) return null;
+
+            if (resourceType === "richOre") {
+                return {
+                    type: "ore",
+                    amount: amount * RICH_ORE_VALUE_MULTIPLIER
+                };
+            }
+
+            return {
+                type: resourceType || "ore",
+                amount
+            };
+        }
+
+        function spawnScienceFloatingText(amount) {
+            if (amount <= 0) return;
+
+            const observatory = getModuleById("observatory");
+            if (!observatory) return;
+
+            spawnFloatingResourceText(
+                observatory.x,
+                observatory.y - 72,
+                "sci",
+                amount,
+                {
+                    scale: 1.05,
+                    vy: -0.38
+                }
+            );
+        }
+
+        function spawnFloatingResourceText(x, y, resourceType, amount, options = {}) {
+            if (amount <= 0) return;
+
+            floatingResourceTexts.push({
+                x: x + rand(-10, 10),
+                y,
+                vx: rand(-0.08, 0.08),
+                vy: options.vy ?? -0.42,
+                life: FLOATING_RESOURCE_TEXT_LIFE,
+                maxLife: FLOATING_RESOURCE_TEXT_LIFE,
+                resourceType: resourceType || "ore",
+                amount: Math.floor(amount),
+                scale: options.scale ?? 1,
+                drift: rand(0, Math.PI * 2)
+            });
+        }
+
+        function spawnFloatingResourceGain(x, y, resourceType, amount, options = {}) {
+            const gain = getDisplayedResourceGain(resourceType, amount);
+            if (!gain) return;
+
+            spawnFloatingResourceText(x, y, gain.type.substr(0, 3), gain.amount, options);
+        }
+
+        function recordGravPullResourceGain(pullTarget, resourceType, amount) {
+            if (!pullTarget || pullTarget.id !== "gravityPulse") return;
+
+            const gain = getDisplayedResourceGain(resourceType, amount);
+            if (!gain) return;
+
+            if (!pendingGravPullResourceGain) {
+                pendingGravPullResourceGain = {
+                    x: pullTarget.x,
+                    y: pullTarget.y,
+                    totals: {},
+                    settleTimer: GRAV_PULL_GAIN_SETTLE_FRAMES
+                };
+            }
+
+            pendingGravPullResourceGain.totals[gain.type] =
+                (pendingGravPullResourceGain.totals[gain.type] || 0) + gain.amount;
+
+            pendingGravPullResourceGain.settleTimer = GRAV_PULL_GAIN_SETTLE_FRAMES;
+        }
+
+        function updatePendingGravPullResourceGain() {
+            if (!pendingGravPullResourceGain) return;
+
+            const stillPullingToGrav = floatingOre.some(ore =>
+                ore.pull && ore.pullTarget?.id === "gravityPulse"
+            );
+
+            if (stillPullingToGrav) {
+                pendingGravPullResourceGain.settleTimer = GRAV_PULL_GAIN_SETTLE_FRAMES;
+                return;
+            }
+
+            pendingGravPullResourceGain.settleTimer--;
+
+            if (pendingGravPullResourceGain.settleTimer > 0) return;
+
+            let rowOffset = 0;
+
+            for (const [type, amount] of Object.entries(pendingGravPullResourceGain.totals)) {
+                spawnFloatingResourceText(
+                    pendingGravPullResourceGain.x,
+                    pendingGravPullResourceGain.y - 62 + rowOffset,
+                    type.substr(0, 3),
+                    amount,
+                    {
+                        scale: 1.15,
+                        vy: -0.36
+                    }
+                );
+
+                rowOffset -= 18;
+            }
+
+            pendingGravPullResourceGain = null;
+        }
+
+        function updateFloatingResourceTexts() {
+            for (let i = floatingResourceTexts.length - 1; i >= 0; i--) {
+                const text = floatingResourceTexts[i];
+
+                text.life--;
+                text.x += text.vx + Math.sin(frameCount * 0.035 + text.drift) * 0.015;
+                text.y += text.vy;
+                text.vy *= 0.985;
+
+                if (text.life <= 0) {
+                    floatingResourceTexts.splice(i, 1);
+                }
+            }
+        }
+
+        function drawFloatingResourceTexts() {
+            if (floatingResourceTexts.length <= 0) return;
+
+            ctx.save();
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+
+            for (const text of floatingResourceTexts) {
+                const t = text.life / text.maxLife;
+                const alpha = Math.min(1, t * 1.35);
+                const pulse = 1 + Math.sin(frameCount * 0.2 + text.drift) * 0.04;
+                const size = Math.floor(15 * text.scale * pulse);
+
+                ctx.globalAlpha = alpha;
+                ctx.font = `bold ${size}px monospace`;
+                ctx.fillStyle = "rgba(210,255,225,0.96)";
+                ctx.shadowColor = GREEN;
+                ctx.shadowBlur = 14;
+
+                ctx.fillText(
+                    `+${text.amount.toLocaleString("de-DE")} ${text.resourceType.toUpperCase()}`,
+                    text.x,
+                    text.y
+                );
+            }
+
+            ctx.restore();
+        }
+
         function getCargoResourceLabel(resourceType) {
             if (resourceType === "richOre") return "RICH ORE";
             if (resourceType === "metal") return "METAL";
             return "ORE";
         }
 
+        const IN_GAME_TOP_BUTTON_SIZE = 44;
+        const IN_GAME_TOP_BUTTON_GAP = 10;
+        const IN_GAME_TOP_BUTTON_MARGIN = 24;
+
         const LIBERATION_CORVETTE_BASE_SPEED = 3.4;
-        const LIBERATION_CORVETTE_BASE_CARGO = 1000;
-        const LIBERATION_CORVETTE_CARGO_PER_LEVEL = 1000;
+        const LIBERATION_CORVETTE_BASE_CARGO = 10000;
+        const LIBERATION_CORVETTE_CARGO_PER_LEVEL = 10000;
 
         let totalOreSheltered = 0;
         let lastOreSheltered = 0;
+
+        const LIBERTY_ESCAPE_POD_SPEED = 3.2;
+        const LIBERTY_ESCAPE_SHIP_SPEED = 6;
+        const LIBERTY_ESCAPE_EXIT_MARGIN = 25;
+
+        let libertyEscapeAnimation = null;
 
         const DRONE_SHIP_RANGE = 250;
         const DRONE_LASER_INTERVAL = 42;
@@ -1904,7 +2119,7 @@
                 targetX: parking.x,
                 targetY: parking.y,
                 radius: 42,
-                speed: 2.0,
+                speed: 6.0,
                 state: "inbound",
                 angle: 0,
                 codename: "LLC-LIBERTY",
@@ -2516,16 +2731,23 @@
 
             scienceTickTimer = 0;
 
+            let totalScienceGained = 0;
+
             for (const array of observatoryArrays) {
                 if (!array.target) continue;
 
                 const orbitingProbes = getOrbitingProbeCount(array.target);
                 const multiplier = 1 + orbitingProbes;
+                const scienceGained = Math.floor(array.target.sciencePerSecond * multiplier);
 
-                addResource(
-                    "science",
-                    Math.floor(array.target.sciencePerSecond * multiplier)
-                );
+                if (scienceGained <= 0) continue;
+
+                addResource("science", scienceGained);
+                totalScienceGained += scienceGained;
+            }
+
+            if (totalScienceGained > 0) {
+                spawnScienceFloatingText(totalScienceGained);
             }
         }
 
@@ -3265,7 +3487,20 @@
         function depositTransportCargoAtStation(transport) {
             if (transport.cargo <= 0) return;
 
-            addResource("ore", Math.floor(transport.cargo));
+            const deposited = Math.floor(transport.cargo);
+            const largeShipyard = getModuleById("largeShipyard") || station;
+
+            addResource("ore", deposited);
+            queueOreGatherSound();
+
+            spawnFloatingResourceText(
+                largeShipyard.x,
+                largeShipyard.y - 82,
+                "ore",
+                deposited,
+                { scale: 1.18 }
+            );
+
             transport.cargo = 0;
         }
 
@@ -3701,6 +3936,11 @@
         const floatingOre = [];
         const laserBeams = [];
         const gravityPulses = [];
+        const floatingResourceTexts = [];
+        let pendingGravPullResourceGain = null;
+
+        const FLOATING_RESOURCE_TEXT_LIFE = 78;
+        const GRAV_PULL_GAIN_SETTLE_FRAMES = 14;
 
         const CLICK_COOLDOWNS = {
             laser: {
@@ -3822,6 +4062,10 @@
             }
         }
 
+        function areGameplayControlsDisabled() {
+            return gameState === "libertyEscape" || gameState === "runEnded";
+        }
+
         function centerCameraOnStation() {
             camera.x = station.x;
             camera.y = station.y;
@@ -3833,6 +4077,11 @@
 
             mouseScreenX = (e.clientX - rect.left) * (canvas.width / rect.width);
             mouseScreenY = (e.clientY - rect.top) * (canvas.height / rect.height);
+
+            if (areGameplayControlsDisabled()) {
+                isCameraDragging = false;
+                return;
+            }
 
             if (isCameraDragging) {
                 camera.x = cameraStartX - (mouseScreenX - dragStartX) / camera.zoom;
@@ -3847,12 +4096,27 @@
 
         canvas.addEventListener("wheel", e => {
             e.preventDefault();
+            if (areGameplayControlsDisabled()) return;
             clearFollowedShip();
             zoomCamera(e.deltaY < 0 ? 1.12 : 1 / 1.12);
         });
 
         window.addEventListener("keydown", e => {
             keys[e.code] = true;
+
+            if (gameState === "runEnded") {
+                if (e.code === "Space") {
+                    e.preventDefault();
+                    window.location.reload();
+                }
+
+                return;
+            }
+
+            if (areGameplayControlsDisabled()) {
+                e.preventDefault();
+                return;
+            }
 
             if (isMessageActive()) {
                 if (e.code === "Space") {
@@ -3898,6 +4162,8 @@
         });
 
         function updateCameraKeyboard() {
+            if (areGameplayControlsDisabled()) return;
+
             const movingCamera =
                 keys.KeyW ||
                 keys.KeyA ||
@@ -3923,10 +4189,33 @@
                 return;
             }
 
+            if (areGameplayControlsDisabled()) {
+                return;
+            }
+
             if (gameState === "start") {
                 const rect = canvas.getBoundingClientRect();
                 const mx = (e.clientX - rect.left) * (canvas.width / rect.width);
                 const my = (e.clientY - rect.top) * (canvas.height / rect.height);
+
+                if (pointInRect(mx, my, startMusicButton)) {
+                    setMusicEnabled(!musicEnabled);
+                    return;
+                }
+
+                if (pointInRect(mx, my, startSoundButton)) {
+                    soundEffectsEnabled = !soundEffectsEnabled;
+
+                    if (soundEffectsEnabled) {
+                        playSound("menu", {
+                            volume: 0.28,
+                            pitch: 1.08,
+                            pitchVar: 0.03
+                        });
+                    }
+
+                    return;
+                }
 
                 if (pointInRect(mx, my, startButton)) {
                     gameState = "playing";
@@ -4005,6 +4294,10 @@
             const sx = (e.clientX - rect.left) * (canvas.width / rect.width);
             const sy = (e.clientY - rect.top) * (canvas.height / rect.height);
             const { x: mx, y: my } = screenToWorld(sx, sy);
+
+            if (handleInGameTopRightButtonClick(sx, sy)) {
+                return;
+            }
 
             if (activeHyperlaneScreen) {
                 handleHyperlaneScreenClick(sx, sy);
@@ -4680,6 +4973,11 @@
                             );
                         } else {
                             depositCargoResource(ore.resourceType || "ore", 1);
+                            recordGravPullResourceGain(
+                                pullTarget,
+                                ore.resourceType || "ore",
+                                1
+                            );
                             collected = true;
                         }
 
@@ -4849,7 +5147,17 @@
                                 ship.cargo
                             );
                         } else {
-                            depositCargoResource(ship.cargoResourceType || resourceType, ship.cargo);
+                            const depositedType = ship.cargoResourceType || resourceType;
+                            const depositedAmount = ship.cargo;
+
+                            depositCargoResource(depositedType, depositedAmount);
+                            spawnFloatingResourceGain(
+                                homeBase.x,
+                                homeBase.y - 72,
+                                depositedType,
+                                depositedAmount,
+                                { scale: 1.05 }
+                            );
                         }
 
                         queueOreGatherSound();
@@ -5907,7 +6215,18 @@
 
                 if (moveToward(ship, dock.x, dock.y, getEffectiveShipSpeed(ship))) {
                     if (ship.cargo > 0) {
-                        addResource("helion", ship.cargo);
+                        const deposited = ship.cargo;
+                        const largeShipyard = getModuleById("largeShipyard") || station;
+
+                        addResource("helion", deposited);
+
+                        spawnFloatingResourceText(
+                            largeShipyard.x,
+                            largeShipyard.y - 82,
+                            "hel",
+                            deposited,
+                            { scale: 1.18 }
+                        );
                         queueOreGatherSound();
                     }
 
@@ -6606,6 +6925,49 @@
             ctx.restore();
         }
 
+        function drawStartToggleButton(button, label, enabled) {
+            const hovered = pointInRect(mouseScreenX, mouseScreenY, button);
+
+            ctx.save();
+
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.font = "14px monospace";
+
+            ctx.shadowColor = GREEN;
+            ctx.shadowBlur = hovered ? 18 : 8;
+
+            ctx.lineWidth = hovered ? 2.5 : 1.5;
+            ctx.strokeStyle = hovered
+                ? "rgba(190,255,215,0.95)"
+                : "rgba(80,255,130,0.7)";
+
+            ctx.fillStyle = hovered
+                ? "rgba(80,255,140,0.16)"
+                : "rgba(6,8,8,0.55)";
+
+            ctx.fillRect(button.x, button.y, button.w, button.h);
+            ctx.strokeRect(button.x, button.y, button.w, button.h);
+
+            ctx.fillStyle = enabled
+                ? "rgba(180,255,210,0.95)"
+                : "rgba(80,255,130,0.38)";
+
+            ctx.fillText(
+                `${label}: ${enabled ? "ON" : "OFF"}`,
+                button.x + button.w / 2,
+                button.y + button.h / 2
+            );
+
+            // if (hovered) {
+            //     ctx.font = "13px monospace";
+            //     ctx.fillStyle = "rgba(180,255,210,0.75)";
+            //     ctx.fillText("TOGGLE", button.x + button.w / 2, button.y + button.h + 18);
+            // }
+
+            ctx.restore();
+        }
+
         function drawStartScreen() {
             ctx.fillStyle = "rgba(0,12,0,0.35)";
             ctx.fillRect(0, 0, W, H);
@@ -6622,7 +6984,7 @@
             const panelX = W / 2 - 460;
             const panelY = H / 2 - 210;
             const panelW = 920;
-            const panelH = 390;
+            const panelH = 470;
 
             ctx.fillStyle = "rgba(6,8,8,0.48)";
             ctx.fillRect(panelX, panelY, panelW, panelH);
@@ -6684,6 +7046,9 @@
                 ctx.fillText(">>", startButton.x - 28, startButton.y + startButton.h / 2);
                 ctx.fillText("<<", startButton.x + startButton.w + 28, startButton.y + startButton.h / 2);
             }
+
+            drawStartToggleButton(startMusicButton, "MUSIC", musicEnabled);
+            drawStartToggleButton(startSoundButton, "SFX", soundEffectsEnabled);
 
             ctx.restore();
 
@@ -8999,6 +9364,62 @@
             clampCamera();
         }
 
+        function drawObservatoryHud(x, y) {
+            if (observatoryArrays.length <= 0) return y;
+
+            const lineH = 16;
+
+            ctx.save();
+
+            ctx.font = "12px monospace";
+            ctx.textAlign = "left";
+            ctx.textBaseline = "top";
+            ctx.shadowColor = GREEN;
+            ctx.shadowBlur = 8;
+
+            ctx.fillStyle = "rgba(80,255,130,0.65)";
+            ctx.fillText("OBSERVATORY ARRAYS", x, y);
+
+            let rowY = y + 18;
+
+            for (const array of observatoryArrays) {
+                ctx.fillStyle = "rgba(80,255,130,0.45)";
+                ctx.fillText(array.id, x, rowY);
+
+                if (!array.target) {
+                    ctx.fillStyle = "rgba(80,255,130,0.38)";
+                    ctx.fillText("UNUSED // NO CELESTIAL BODY ASSIGNED", x + 74, rowY);
+                    rowY += lineH;
+                    continue;
+                }
+
+                const body = array.target;
+                const orbitingProbes = getOrbitingProbeCount(body);
+                const baseYield = body.sciencePerSecond;
+                const effectiveYield = baseYield * (1 + orbitingProbes);
+
+                ctx.fillStyle = GREEN;
+                ctx.fillText(
+                    `${body.codename} // ${body.type} // R:${Math.floor(body.radius)} // SCI:${baseYield}/s // PROBES:${orbitingProbes} // EFFECTIVE:${effectiveYield}/s`,
+                    x + 74,
+                    rowY
+                );
+
+                // ctx.fillStyle = "rgba(80,255,130,0.65)";
+                // ctx.fillText(
+                //     `PROBES:${orbitingProbes} // EFFECTIVE:${effectiveYield}/s`,
+                //     x + 430,
+                //     rowY
+                // );
+
+                rowY += lineH;
+            }
+
+            ctx.restore();
+
+            return rowY + 6;
+        }
+
         function drawFleetHud(x, y) {
             ctx.save();
 
@@ -9144,19 +9565,234 @@
             return rowY + 6;
         }
 
+        function updateResourceBlinkTimers() {
+            for (const type in resourceBlinkTimers) {
+                if (resourceBlinkTimers[type] > 0) {
+                    resourceBlinkTimers[type]--;
+                }
+            }
+        }
+
+        function drawResourceCounter(type, label, value, x, y) {
+            const blink = resourceBlinkTimers[type] || 0;
+            const t = blink / RESOURCE_BLINK_FRAMES;
+            const pulse = blink > 0 ? 0.5 + Math.sin(frameCount * 0.55) * 0.5 : 0;
+
+            ctx.save();
+
+            ctx.font = blink > 0
+                ? "bold 13px monospace"
+                : "12px monospace";
+
+            ctx.fillStyle = blink > 0
+                ? `rgba(220,255,230,${0.75 + pulse * 0.25})`
+                : GREEN;
+
+            ctx.shadowColor = blink > 0
+                ? "rgba(180,255,210,1)"
+                : GREEN;
+
+            ctx.shadowBlur = blink > 0
+                ? 8 + pulse * 18 * t
+                : 6;
+
+            if (blink > 0) {
+                ctx.fillStyle = `rgba(120,255,170,${0.10 * t})`;
+                ctx.fillRect(x - 6, y - 13, 210, 18);
+
+                ctx.fillStyle = `rgba(220,255,230,${0.75 + pulse * 0.25})`;
+            }
+
+            ctx.fillText(`${label}: ${value}`, x, y);
+
+            ctx.restore();
+        }
+
+        function getInGameTopRightButtons() {
+            const size = IN_GAME_TOP_BUTTON_SIZE;
+            const gap = IN_GAME_TOP_BUTTON_GAP;
+            const y = IN_GAME_TOP_BUTTON_MARGIN;
+
+            return [
+                {
+                    id: "music",
+                    label: "♪",
+                    title: `MUSIC ${musicEnabled ? "ON" : "OFF"}`,
+                    x: W - IN_GAME_TOP_BUTTON_MARGIN - size * 3 - gap * 2,
+                    y,
+                    w: size,
+                    h: size,
+                    enabled: musicEnabled,
+                    action: () => {
+                        setMusicEnabled(!musicEnabled);
+                    }
+                },
+                {
+                    id: "sfx",
+                    label: "SFX",
+                    title: `SFX ${soundEffectsEnabled ? "ON" : "OFF"}`,
+                    x: W - IN_GAME_TOP_BUTTON_MARGIN - size * 2 - gap,
+                    y,
+                    w: size,
+                    h: size,
+                    enabled: soundEffectsEnabled,
+                    action: () => {
+                        soundEffectsEnabled = !soundEffectsEnabled;
+
+                        if (soundEffectsEnabled) {
+                            playSound("menu", {
+                                volume: 0.28,
+                                pitch: 1.08,
+                                pitchVar: 0.03
+                            });
+                        }
+                    }
+                },
+                {
+                    id: "start",
+                    label: "↩",
+                    title: "RETURN TO START",
+                    x: W - IN_GAME_TOP_BUTTON_MARGIN - size,
+                    y,
+                    w: size,
+                    h: size,
+                    enabled: true,
+                    action: () => {
+                        window.location.reload();
+                    }
+                }
+            ];
+        }
+
+        function drawInGameTopRightButton(button) {
+            const hovered = pointInRect(mouseScreenX, mouseScreenY, button);
+
+            ctx.save();
+
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.font = button.id === "start"
+                ? "22px monospace"
+                : button.id === "music"
+                    ? "bold 24px monospace"
+                    : "bold 16px monospace";
+
+            ctx.shadowColor = GREEN;
+            ctx.shadowBlur = hovered ? 18 : 8;
+
+            ctx.lineWidth = hovered ? 2.5 : 1.5;
+
+            ctx.strokeStyle = hovered
+                ? "rgba(190,255,215,0.95)"
+                : "rgba(80,255,130,0.72)";
+
+            ctx.fillStyle = hovered
+                ? "rgba(80,255,140,0.18)"
+                : "rgba(6,8,8,0.58)";
+
+            ctx.fillRect(button.x, button.y, button.w, button.h);
+            ctx.strokeRect(button.x, button.y, button.w, button.h);
+
+            ctx.fillStyle = button.enabled
+                ? "rgba(190,255,215,0.95)"
+                : "rgba(80,255,130,0.32)";
+
+            ctx.fillText(
+                button.label,
+                button.x + button.w / 2,
+                button.y + button.h / 2 + 1
+            );
+
+            if (!button.enabled) {
+                ctx.strokeStyle = "rgba(80,255,130,0.42)";
+                ctx.lineWidth = 2;
+
+                ctx.beginPath();
+                ctx.moveTo(button.x + 10, button.y + button.h - 10);
+                ctx.lineTo(button.x + button.w - 10, button.y + 10);
+                ctx.stroke();
+            }
+
+            if (hovered) {
+                ctx.font = "12px monospace";
+                ctx.fillStyle = "rgba(180,255,210,0.85)";
+                ctx.textAlign = "right";
+                ctx.fillText(button.title, W - IN_GAME_TOP_BUTTON_MARGIN, button.y + button.h + 18);
+            }
+
+            ctx.restore();
+        }
+
+        function drawInGameTopRightButtons() {
+            for (const button of getInGameTopRightButtons()) {
+                drawInGameTopRightButton(button);
+            }
+        }
+
+        function handleInGameTopRightButtonClick(sx, sy) {
+            for (const button of getInGameTopRightButtons()) {
+                if (
+                    sx >= button.x &&
+                    sx <= button.x + button.w &&
+                    sy >= button.y &&
+                    sy <= button.y + button.h
+                ) {
+                    button.action();
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         function drawHud() {
             const RESOURCES_OFFSET_Y = 900;
 
             drawText("DEEP SPACE EXTRACTION COMMAND", 24, 28);
             drawText("SECTOR: KAPPA-9 / STATUS: ACTIVE", 24, 46, 0.75);
-            drawFleetHud(24, 64 + 18);
-            drawSalvageEtaHud(24, 250);
-            drawTaxHud(24, 400);
+            let hudY = drawFleetHud(24, 64 + 18);
+            hudY = drawObservatoryHud(24, hudY);
+            hudY = drawSalvageEtaHud(24, hudY + 4);
 
-            drawText(`ORE: ${resources.ore}`, 24, RESOURCES_OFFSET_Y + 82, 1.0);
-            if (hasDiscoveredScience) drawText(`SCIENCE: ${resources.science}`, 24, RESOURCES_OFFSET_Y + 100, 1.0);
-            if (hasDiscoveredMetal) drawText(`METAL: ${resources.metal}`, 24, RESOURCES_OFFSET_Y + 118, 1.0);
-            if (hasDiscoveredHelion) drawText(`HELION: ${Math.floor(resources.helion).toLocaleString("de-DE")}`, 24, RESOURCES_OFFSET_Y + 136, 1.0);
+            drawTaxHud(24, Math.max(hudY + 10, 400));
+
+            drawResourceCounter(
+                "ore",
+                "ORE",
+                Math.floor(resources.ore).toLocaleString("de-DE"),
+                24,
+                RESOURCES_OFFSET_Y + 82
+            );
+
+            if (hasDiscoveredScience) {
+                drawResourceCounter(
+                    "science",
+                    "SCIENCE",
+                    Math.floor(resources.science).toLocaleString("de-DE"),
+                    24,
+                    RESOURCES_OFFSET_Y + 100
+                );
+            }
+
+            if (hasDiscoveredMetal) {
+                drawResourceCounter(
+                    "metal",
+                    "METAL",
+                    Math.floor(resources.metal).toLocaleString("de-DE"),
+                    24,
+                    RESOURCES_OFFSET_Y + 118
+                );
+            }
+
+            if (hasDiscoveredHelion) {
+                drawResourceCounter(
+                    "helion",
+                    "HELION",
+                    Math.floor(resources.helion).toLocaleString("de-DE"),
+                    24,
+                    RESOURCES_OFFSET_Y + 136
+                );
+            }
 
             const hovered = getHoveredTarget();
 
@@ -9284,7 +9920,7 @@
             ctx.textAlign = "center";
             ctx.globalAlpha = 0.7;
             ctx.font = "13px monospace";
-            ctx.fillText("Future implementation: prestige mechanics", W / 2, y + boxH - 48);
+            ctx.fillText("SPACE // RETURN TO START SCREEN", W / 2, y + boxH - 48);
             ctx.globalAlpha = 1;
 
             ctx.restore();
@@ -9309,7 +9945,208 @@
             return stats;
         }
 
+        function getLibertyEscapeExitPoint(ship) {
+            let dx = ship.x - station.x;
+            let dy = ship.y - station.y;
+
+            const len = Math.hypot(dx, dy) || 1;
+            dx /= len;
+            dy /= len;
+
+            const targetMinX = -LIBERTY_ESCAPE_EXIT_MARGIN;
+            const targetMaxX = WORLD_W + LIBERTY_ESCAPE_EXIT_MARGIN;
+            const targetMinY = -LIBERTY_ESCAPE_EXIT_MARGIN;
+            const targetMaxY = WORLD_H + LIBERTY_ESCAPE_EXIT_MARGIN;
+
+            const tx = dx > 0
+                ? (targetMaxX - ship.x) / dx
+                : (targetMinX - ship.x) / dx;
+
+            const ty = dy > 0
+                ? (targetMaxY - ship.y) / dy
+                : (targetMinY - ship.y) / dy;
+
+            const t = Math.min(
+                tx > 0 ? tx : Infinity,
+                ty > 0 ? ty : Infinity
+            );
+
+            return {
+                x: ship.x + dx * t,
+                y: ship.y + dy * t
+            };
+        }
+
+        function startLibertyEscapeAnimation() {
+            const ship = lucrativeLiberationShip;
+
+            if (!ship) {
+                finishRunWithLiberty();
+                return;
+            }
+
+            activeMenu = null;
+            activeHyperlaneScreen = false;
+            activeIncomingMessage = null;
+            mouseDown = false;
+            heldAsteroidTarget = null;
+            isCameraDragging = false;
+
+            if (typeof clearFollowedShip === "function") {
+                clearFollowedShip();
+            }
+
+            ship.state = "escapeWaiting";
+            ship.angle = Math.atan2(ship.y - station.y, ship.x - station.x);
+
+            libertyEscapeAnimation = {
+                phase: "podToShip",
+                ship,
+                pod: {
+                    x: station.x,
+                    y: station.y,
+                    angle: 0
+                },
+                exitPoint: null
+            };
+
+            gameState = "libertyEscape";
+
+            camera.x = station.x;
+            camera.y = station.y;
+            camera.zoom = Math.max(camera.zoom, 0.9);
+        }
+
+        function updateLibertyEscapeCamera(target) {
+            camera.x += (target.x - camera.x) * 0.16;
+            camera.y += (target.y - camera.y) * 0.16;
+        }
+
+        function updateLibertyEscapeAnimation() {
+            if (!libertyEscapeAnimation) {
+                finishRunWithLiberty();
+                return;
+            }
+
+            const anim = libertyEscapeAnimation;
+            const ship = anim.ship;
+
+            if (anim.phase === "podToShip") {
+                const dx = ship.x - anim.pod.x;
+                const dy = ship.y - anim.pod.y;
+
+                anim.pod.angle = Math.atan2(dy, dx);
+
+                const arrived = moveToward(
+                    anim.pod,
+                    ship.x,
+                    ship.y,
+                    LIBERTY_ESCAPE_POD_SPEED
+                );
+
+                updateLibertyEscapeCamera(anim.pod);
+
+                if (arrived) {
+                    anim.phase = "shipExit";
+                    anim.exitPoint = getLibertyEscapeExitPoint(ship);
+
+                    ship.state = "escaping";
+                    ship.targetX = anim.exitPoint.x;
+                    ship.targetY = anim.exitPoint.y;
+                }
+
+                return;
+            }
+
+            if (anim.phase === "shipExit") {
+                const dx = anim.exitPoint.x - ship.x;
+                const dy = anim.exitPoint.y - ship.y;
+
+                ship.angle = Math.atan2(dy, dx);
+
+                moveToward(
+                    ship,
+                    anim.exitPoint.x,
+                    anim.exitPoint.y,
+                    LIBERTY_ESCAPE_SHIP_SPEED
+                );
+
+                updateLibertyEscapeCamera(ship);
+
+                const leftMap =
+                    ship.x < -LIBERTY_ESCAPE_EXIT_MARGIN + 20 ||
+                    ship.x > WORLD_W + LIBERTY_ESCAPE_EXIT_MARGIN - 20 ||
+                    ship.y < -LIBERTY_ESCAPE_EXIT_MARGIN + 20 ||
+                    ship.y > WORLD_H + LIBERTY_ESCAPE_EXIT_MARGIN - 20;
+
+                if (leftMap) {
+                    finishRunWithLiberty();
+                }
+            }
+        }
+
+        function drawLibertyEscapePod() {
+            if (!libertyEscapeAnimation) return;
+            if (libertyEscapeAnimation.phase !== "podToShip") return;
+
+            const pod = libertyEscapeAnimation.pod;
+
+            ctx.save();
+            ctx.translate(pod.x, pod.y);
+            ctx.rotate(pod.angle);
+
+            ctx.strokeStyle = "rgba(220,255,230,0.95)";
+            ctx.fillStyle = "rgba(80,255,130,0.16)";
+            ctx.lineWidth = 2;
+            ctx.shadowColor = GREEN;
+            ctx.shadowBlur = 16;
+
+            ctx.beginPath();
+            ctx.moveTo(14, 0);
+            ctx.lineTo(2, -8);
+            ctx.lineTo(-12, -6);
+            ctx.lineTo(-16, 0);
+            ctx.lineTo(-12, 6);
+            ctx.lineTo(2, 8);
+            ctx.closePath();
+            ctx.fill();
+            ctx.stroke();
+
+            ctx.beginPath();
+            ctx.arc(-2, 0, 3, 0, Math.PI * 2);
+            ctx.stroke();
+
+            ctx.restore();
+
+            drawText("ESCAPE POD", pod.x + 14, pod.y - 18, 0.65);
+        }
+
+        function drawLibertyEscapeOverlay() {
+            if (gameState !== "libertyEscape") return;
+
+            ctx.save();
+
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.font = "14px monospace";
+            ctx.fillStyle = "rgba(180,255,210,0.85)";
+            ctx.shadowColor = GREEN;
+            ctx.shadowBlur = 12;
+
+            const label = libertyEscapeAnimation?.phase === "podToShip"
+                ? "LIBERTY TRANSFER // ESCAPE POD IN TRANSIT"
+                : "LIBERTY TRANSFER // LLC SHIP DEPARTING SECTOR";
+
+            ctx.fillText(label, W / 2, H - 42);
+
+            ctx.restore();
+        }
+
         function endRunWithLiberty() {
+            startLibertyEscapeAnimation();
+        }
+
+        function finishRunWithLiberty() {
             runEndStats = {
                 durationFrames: frameCount,
                 debtProgress: Math.floor(totalOreAcquired),
@@ -9326,6 +10163,7 @@
                 oreSheltered: Math.floor(totalOreSheltered),
             };
 
+            libertyEscapeAnimation = null;
             activeMenu = null;
             activeIncomingMessage = null;
 
@@ -9334,6 +10172,38 @@
             }
 
             gameState = "runEnded";
+        }
+
+        function drawWorldScene() {
+            ctx.save();
+            applyCameraTransform();
+
+            drawGrid();
+
+            if (typeof nebulas !== "undefined") {
+                nebulas.forEach(drawNebula);
+            }
+
+            asteroids.forEach(drawAsteroid);
+            celestialBodies.forEach(drawCelestialBody);
+            scienceProbes.forEach(drawScienceProbe);
+            drawSalvage();
+            drawTaxCollectors();
+            drawLucrativeLiberationShip();
+            drawLibertyEscapePod();
+
+            drawObservationLinks();
+            drawLaserBeams();
+            drawFloatingOre();
+            drawGravityPulses();
+            drawHyperlanes();
+
+            ships.forEach(drawShip);
+
+            drawStation();
+            drawFloatingResourceTexts();
+
+            ctx.restore();
         }
 
         function loop() {
@@ -9348,6 +10218,23 @@
 
             if (gameState === "runEnded") {
                 drawRunEndedScreen();
+                requestAnimationFrame(loop);
+                return;
+            }
+
+            if (gameState === "libertyEscape") {
+                updateLibertyEscapeAnimation();
+
+                ctx.fillStyle = "rgba(0,12,0,0.35)";
+                ctx.fillRect(0, 0, W, H);
+
+                drawWorldScene();
+
+                drawScanlines();
+                drawVignette();
+                drawDebtProgressBar();
+                drawLibertyEscapeOverlay();
+
                 requestAnimationFrame(loop);
                 return;
             }
@@ -9369,6 +10256,9 @@
             updateActiveMenu();
             updateLaserBeams();
             updateFloatingOre();
+            updatePendingGravPullResourceGain();
+            updateFloatingResourceTexts();
+            updateResourceBlinkTimers();
             updateGravityPulses();
             updateScienceProduction();
             updateScienceProbes();
@@ -9378,36 +10268,14 @@
             ships.forEach(updateShip);
             updateCameraFollow();
 
-            ctx.save();
-            applyCameraTransform();
-
-            drawGrid();
-
-            nebulas.forEach(drawNebula);
-            asteroids.forEach(drawAsteroid);
-            celestialBodies.forEach(drawCelestialBody);
-            scienceProbes.forEach(drawScienceProbe);
-            drawSalvage();
-            drawTaxCollectors();
-            drawLucrativeLiberationShip();
-
-            drawObservationLinks();
-            drawLaserBeams();
-            drawFloatingOre();
-            drawGravityPulses();
-            drawHyperlanes();
-
-            ships.forEach(drawShip);
-
-            drawStation();
-
-            ctx.restore();
+            drawWorldScene();
 
             drawActiveMenu();
             drawScanlines();
             drawVignette();
 
             drawHud();
+            drawInGameTopRightButtons();
             drawDebtProgressBar();
             drawHyperlaneScreen();
             drawCrosshair();
