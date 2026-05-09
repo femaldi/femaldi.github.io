@@ -1,0 +1,19 @@
+appId: com.yourstudio.orelegacy
+productName: ORE-Legacy
+
+directories:
+  output: release
+
+files:
+  - electron/**
+  - dist-renderer/**
+
+asar: true
+
+win:
+  target:
+    - dir
+  artifactName: ORE-Legacy-${version}-${arch}.${ext}
+
+extraMetadata:
+  main: electron/main.js
