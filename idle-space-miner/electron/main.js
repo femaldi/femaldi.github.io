@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, ipcMain } = require("electron");
+const { app, BrowserWindow, Menu, ipcMain, shell } = require("electron");
 const path = require("path");
 
 const isDev = !app.isPackaged;
@@ -38,6 +38,19 @@ function createWindow() {
 
     return win;
 }
+
+ipcMain.handle("app:openExternal", async (_event, url) => {
+    if (typeof url !== "string") return;
+
+    const allowed =
+        url.startsWith("https://") ||
+        url.startsWith("mailto:") ||
+        url.startsWith("steam://");
+
+    if (!allowed) return;
+
+    await shell.openExternal(url);
+});
 
 ipcMain.handle("app:quit", () => {
     app.quit();
