@@ -1021,39 +1021,59 @@
         let messageInputLock = 0;
 
         let gameState = "start";
+        let startScreenMenuMode = "main"; // "main" | "options"
+
+        const START_MENU_BUTTON_W = 260;
+        const START_MENU_BUTTON_H = 48;
+        const START_MENU_BUTTON_GAP = 16;
+
         const startButton = {
-            x: W / 2 - 110,
-            y: H / 2 + 90,
-            w: 220,
-            h: 54
+            x: W / 2 - START_MENU_BUTTON_W / 2,
+            y: H / 2 + 38,
+            w: START_MENU_BUTTON_W,
+            h: START_MENU_BUTTON_H
         };
 
-        const startMusicButton = {
-            x: W / 2 - 350,
-            y: H / 2 + 166,
-            w: 220,
-            h: 42
-        };
-
-        const startSoundButton = {
-            x: W / 2 - 110,
-            y: H / 2 + 166,
-            w: 220,
-            h: 42
-        };
-
-        const startCrtButton = {
-            x: W / 2 + 130,
-            y: H / 2 + 166,
-            w: 220,
-            h: 42
+        const startOptionsButton = {
+            x: W / 2 - START_MENU_BUTTON_W / 2,
+            y: startButton.y + START_MENU_BUTTON_H + START_MENU_BUTTON_GAP,
+            w: START_MENU_BUTTON_W,
+            h: START_MENU_BUTTON_H
         };
 
         const startExitButton = {
-            x: W / 2 - 110,
-            y: H / 2 + 216,
-            w: 220,
-            h: 42
+            x: W / 2 - START_MENU_BUTTON_W / 2,
+            y: startOptionsButton.y + START_MENU_BUTTON_H + START_MENU_BUTTON_GAP,
+            w: START_MENU_BUTTON_W,
+            h: START_MENU_BUTTON_H
+        };
+
+        const startMusicButton = {
+            x: W / 2 - START_MENU_BUTTON_W / 2,
+            y: H / 2 + 24,
+            w: START_MENU_BUTTON_W,
+            h: START_MENU_BUTTON_H
+        };
+
+        const startSoundButton = {
+            x: W / 2 - START_MENU_BUTTON_W / 2,
+            y: startMusicButton.y + START_MENU_BUTTON_H + START_MENU_BUTTON_GAP,
+            w: START_MENU_BUTTON_W,
+            h: START_MENU_BUTTON_H
+        };
+
+        const startCrtButton = {
+            x: W / 2 - START_MENU_BUTTON_W / 2,
+            y: startSoundButton.y + START_MENU_BUTTON_H + START_MENU_BUTTON_GAP,
+            w: START_MENU_BUTTON_W,
+            h: START_MENU_BUTTON_H
+        };
+
+        const startOptionsBackButton = {
+            x: W / 2 - START_MENU_BUTTON_W / 2,
+            y: startCrtButton.y + START_MENU_BUTTON_H + START_MENU_BUTTON_GAP,
+            w: START_MENU_BUTTON_W,
+            h: START_MENU_BUTTON_H
         };
 
         const START_SCREEN_ASTEROID_COUNT = 12;
@@ -4940,6 +4960,13 @@
                 return;
             }
 
+            if (gameState === "start" && startScreenMenuMode === "options" && e.code === "Escape") {
+                e.preventDefault();
+                startScreenMenuMode = "main";
+                playSound("menu", { volume: 0.3, pitch: 0.95, variance: 0.03 });
+                return;
+            }
+
             if (gameState === "runEnded") {
                 if (e.code === "Space") {
                     e.preventDefault();
@@ -5029,75 +5056,6 @@
                 return;
             }
 
-            if (gameState === "start") {
-                const rect = canvas.getBoundingClientRect();
-                const mx = (e.clientX - rect.left) * (canvas.width / rect.width);
-                const my = (e.clientY - rect.top) * (canvas.height / rect.height);
-
-                if (pointInRect(mx, my, startBugReportButton)) {
-                    playSound("menu", { volume: 0.35, pitch: 1.08, variance: 0.03 });
-                    openExternalUrl(BUG_REPORT_URL);
-                    return;
-                }
-
-                if (pointInRect(mx, my, startWishlistButton)) {
-                    playSound("menu", { volume: 0.35, pitch: 1.12, variance: 0.03 });
-                    openExternalUrl(STEAM_WISHLIST_URL);
-                    return;
-                }
-
-                if (pointInRect(mx, my, startMusicButton)) {
-                    setMusicEnabled(!musicEnabled);
-                    return;
-                }
-
-                if (pointInRect(mx, my, startSoundButton)) {
-                    soundEffectsEnabled = !soundEffectsEnabled;
-
-                    if (soundEffectsEnabled) {
-                        playSound("menu", {
-                            volume: 0.28,
-                            pitch: 1.08,
-                            pitchVar: 0.03
-                        });
-                    }
-
-                    return;
-                }
-
-                if (pointInRect(mx, my, startCrtButton)) {
-                    crtEnabled = !crtEnabled;
-
-                    if (soundEffectsEnabled) {
-                        playSound("menu", {
-                            volume: 0.24,
-                            pitch: crtEnabled ? 1.12 : 0.82,
-                            pitchVar: 0.03
-                        });
-                    }
-
-                    return;
-                }
-
-                if (pointInRect(mx, my, startExitButton)) {
-                    if (window.oreLegacy?.quit) {
-                        window.oreLegacy.quit();
-                    } else {
-                        window.close();
-                    }
-
-                    return;
-                }
-
-                if (pointInRect(mx, my, startButton)) {
-                    gameState = "playing";
-                    queueStartingMessages();
-                    startMusic();
-                }
-
-                return;
-            }
-
             if (activeHyperlaneScreen) {
                 return;
             }
@@ -5119,6 +5077,92 @@
             const sx = (e.clientX - rect.left) * (canvas.width / rect.width);
             const sy = (e.clientY - rect.top) * (canvas.height / rect.height);
             const { x: mx, y: my } = screenToWorld(sx, sy);
+
+            if (gameState === "start") {
+                if (pointInRect(sx, sy, startBugReportButton)) {
+                    playSound("menu", { volume: 0.35, pitch: 1.08, variance: 0.03 });
+                    openExternalUrl(BUG_REPORT_URL);
+                    return;
+                }
+
+                if (pointInRect(sx, sy, startWishlistButton)) {
+                    playSound("menu", { volume: 0.35, pitch: 1.12, variance: 0.03 });
+                    openExternalUrl(STEAM_WISHLIST_URL);
+                    return;
+                }
+
+                if (startScreenMenuMode === "options") {
+                    if (pointInRect(sx, sy, startMusicButton)) {
+                        setMusicEnabled(!musicEnabled);
+                        playSound("menu", {
+                            volume: 0.35,
+                            pitch: musicEnabled ? 1.15 : 0.85,
+                            variance: 0.03
+                        });
+                        return;
+                    }
+
+                    if (pointInRect(sx, sy, startSoundButton)) {
+                        soundEffectsEnabled = !soundEffectsEnabled;
+
+                        if (soundEffectsEnabled) {
+                            playSound("menu", { volume: 0.35, pitch: 1.15, variance: 0.03 });
+                        }
+
+                        return;
+                    }
+
+                    if (pointInRect(sx, sy, startCrtButton)) {
+                        crtEnabled = !crtEnabled;
+                        playSound("menu", {
+                            volume: 0.35,
+                            pitch: crtEnabled ? 1.15 : 0.85,
+                            variance: 0.03
+                        });
+                        return;
+                    }
+
+                    if (pointInRect(sx, sy, startOptionsBackButton)) {
+                        startScreenMenuMode = "main";
+                        playSound("menu", { volume: 0.35, pitch: 0.95, variance: 0.03 });
+                        return;
+                    }
+
+                    return;
+                }
+
+                if (pointInRect(sx, sy, startButton)) {
+                    gameState = "playing";
+                    queueStartingMessages();
+
+                    if (musicEnabled) {
+                        startMusic();
+                    }
+
+                    playSound("menu", { volume: 0.45, pitch: 1.05, variance: 0.03 });
+                    return;
+                }
+
+                if (pointInRect(sx, sy, startOptionsButton)) {
+                    startScreenMenuMode = "options";
+                    playSound("menu", { volume: 0.35, pitch: 1.08, variance: 0.03 });
+                    return;
+                }
+
+                if (pointInRect(sx, sy, startExitButton)) {
+                    playSound("menu", { volume: 0.35, pitch: 0.85, variance: 0.03 });
+
+                    if (window.oreLegacy?.quit) {
+                        window.oreLegacy.quit();
+                    } else {
+                        window.close();
+                    }
+
+                    return;
+                }
+
+                return;
+            }
 
             // detect asteroid under cursor at press time
             for (const asteroid of getMineableTargets()) {
@@ -7701,6 +7745,63 @@
             }
         }
 
+        function drawStartMenuButton(button, label, options = {}) {
+            const hovered = pointInRect(mouseScreenX, mouseScreenY, button);
+            const danger = options.danger === true;
+
+            ctx.save();
+
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.font = "20px monospace";
+
+            ctx.shadowColor = danger ? "rgba(255,120,120,0.75)" : GREEN;
+            ctx.shadowBlur = hovered ? 22 : 10;
+
+            ctx.lineWidth = hovered ? 3 : 2;
+
+            ctx.strokeStyle = danger
+                ? hovered
+                    ? "rgba(255,170,170,0.95)"
+                    : "rgba(255,120,120,0.60)"
+                : hovered
+                    ? "rgba(190,255,215,0.95)"
+                    : "rgba(80,255,130,0.72)";
+
+            ctx.fillStyle = danger
+                ? hovered
+                    ? "rgba(255,80,80,0.14)"
+                    : "rgba(60,0,0,0.20)"
+                : hovered
+                    ? "rgba(80,255,140,0.16)"
+                    : "rgba(0,255,90,0.07)";
+
+            ctx.fillRect(button.x, button.y, button.w, button.h);
+            ctx.strokeRect(button.x, button.y, button.w, button.h);
+
+            ctx.fillStyle = danger
+                ? hovered
+                    ? "rgba(255,215,215,0.98)"
+                    : "rgba(255,150,150,0.78)"
+                : hovered
+                    ? "rgba(215,255,230,0.98)"
+                    : GREEN;
+
+            ctx.fillText(label, button.x + button.w / 2, button.y + button.h / 2);
+
+            if (hovered) {
+                ctx.font = "16px monospace";
+                ctx.fillStyle = danger
+                    ? "rgba(255,170,170,0.85)"
+                    : "rgba(180,255,210,0.85)";
+
+                ctx.fillText(">>", button.x - 28, button.y + button.h / 2);
+                ctx.fillText("<<", button.x + button.w + 28, button.y + button.h / 2);
+            }
+
+            ctx.restore();
+        }
+
         function drawStartScreenAsteroid(a) {
             ctx.save();
             ctx.translate(a.x, a.y);
@@ -7881,103 +7982,90 @@
             ctx.fillRect(0, 0, W, H);
 
             drawGrid();
-            drawStartScreenBackground();
+
+            if (typeof drawStartScreenBackground === "function") {
+                drawStartScreenBackground();
+            }
 
             ctx.save();
-            ctx.textAlign = "center";
-            ctx.textBaseline = "middle";
-            ctx.shadowColor = GREEN;
-            ctx.shadowBlur = 18;
 
             const panelX = W / 2 - 460;
-            const panelY = H / 2 - 210;
+            const panelY = H / 2 - 250;
             const panelW = 920;
-            const panelH = 500;
+            const panelH = 580;
 
-            ctx.fillStyle = "rgba(6,8,8,0.48)";
+            ctx.fillStyle = "rgba(6,8,8,0.54)";
             ctx.fillRect(panelX, panelY, panelW, panelH);
 
             ctx.strokeStyle = GREEN;
             ctx.lineWidth = 2;
+            ctx.shadowColor = GREEN;
+            ctx.shadowBlur = 16;
             ctx.strokeRect(panelX, panelY, panelW, panelH);
 
-            const titleY = H / 2 - 98;
-            const titlePulse = 0.92 + Math.sin(frameCount * 0.035) * 0.08;
+            ctx.strokeStyle = "rgba(180,255,210,0.22)";
+            ctx.lineWidth = 1;
+            ctx.strokeRect(panelX + 10, panelY + 10, panelW - 20, panelH - 20);
 
-            ctx.save();
             ctx.textAlign = "center";
             ctx.textBaseline = "middle";
 
-            ctx.shadowColor = "rgba(120,255,180,0.95)";
-            ctx.shadowBlur = 28;
+            ctx.shadowColor = GREEN;
+            ctx.shadowBlur = 22;
+            ctx.font = "70px Audiowide, monospace";
 
-            ctx.lineWidth = 3;
-            ctx.strokeStyle = "rgba(170,255,210,0.35)";
-            ctx.fillStyle = "rgba(150,255,190,0.98)";
-            ctx.font = `70px "Audiowide", monospace`;
+            ctx.lineWidth = 4;
+            ctx.strokeStyle = "rgba(170,255,205,0.22)";
+            ctx.strokeText("ORE-Legacy", W / 2, panelY + 92);
 
-            ctx.translate(W / 2, titleY);
-            ctx.scale(1, titlePulse);
-            ctx.strokeText("ORE-Legacy", 0, 0);
-            ctx.fillText("ORE-Legacy", 0, 0);
-
-            ctx.shadowBlur = 10;
-            ctx.fillStyle = "rgba(220,255,235,0.22)";
-            ctx.font = `70px "Audiowide", monospace`;
-            ctx.fillText("ORE-Legacy", 0, 2);
-
-            ctx.restore();
-
-            ctx.font = "16px monospace";
             ctx.fillStyle = GREEN;
-            ctx.globalAlpha = 0.75;
-            ctx.fillText("DEEP SPACE EXTRACTION COMMAND", W / 2, H / 2 - 38);
-            ctx.fillText("SECTOR KAPPA-9 // MINING AUTHORIZATION REQUIRED", W / 2, H / 2 - 10);
+            ctx.fillText("ORE-Legacy", W / 2, panelY + 92);
+
+            ctx.font = "15px monospace";
+            ctx.globalAlpha = 0.78;
+            ctx.fillText("DEEP SPACE EXTRACTION COMMAND", W / 2, panelY + 145);
+            ctx.fillText("SECTOR KAPPA-9 // MINING AUTHORIZATION REQUIRED", W / 2, panelY + 171);
             ctx.globalAlpha = 1;
 
-            const hovered = pointInRect(mouseScreenX, mouseScreenY, startButton);
+            if (startScreenMenuMode === "main") {
+                drawStartMenuButton(startButton, "START");
+                drawStartMenuButton(startOptionsButton, "OPTIONS");
+                drawStartMenuButton(startExitButton, "EXIT");
+            } else {
+                ctx.font = "20px monospace";
+                ctx.fillStyle = "rgba(180,255,210,0.95)";
+                ctx.shadowBlur = 12;
+                ctx.fillText("OPTIONS", W / 2, H / 2 - 26);
 
-            ctx.strokeStyle = hovered ? "rgba(120,255,160,0.95)" : GREEN;
-            ctx.fillStyle = hovered ? "rgba(0,255,90,0.18)" : "rgba(0,255,90,0.08)";
-            ctx.lineWidth = hovered ? 3 : 2;
-            ctx.shadowBlur = hovered ? 24 : 12;
-
-            ctx.fillRect(startButton.x, startButton.y, startButton.w, startButton.h);
-            ctx.strokeRect(startButton.x, startButton.y, startButton.w, startButton.h);
-
-            ctx.font = "22px monospace";
-            ctx.fillStyle = GREEN;
-            ctx.fillText("START", W / 2, startButton.y + startButton.h / 2);
-
-            if (hovered) {
-                ctx.font = "16px monospace";
-                ctx.fillText(">>", startButton.x - 28, startButton.y + startButton.h / 2);
-                ctx.fillText("<<", startButton.x + startButton.w + 28, startButton.y + startButton.h / 2);
+                drawStartToggleButton(startMusicButton, "MUSIC", musicEnabled);
+                drawStartToggleButton(startSoundButton, "SFX", soundEffectsEnabled);
+                drawStartToggleButton(startCrtButton, "CRT", crtEnabled);
+                drawStartMenuButton(startOptionsBackButton, "BACK");
             }
-
-            drawStartToggleButton(startMusicButton, "MUSIC", musicEnabled);
-            drawStartToggleButton(startSoundButton, "SFX", soundEffectsEnabled);
-            drawStartToggleButton(startCrtButton, "CRT", crtEnabled);
-            drawStartActionButton(startExitButton, "EXIT");
-
-            drawStartCornerActionButton(
-                startBugReportButton,
-                "REPORT A BUG",
-                "bug",
-                "left"
-            );
-
-            drawStartCornerActionButton(
-                startWishlistButton,
-                "WISHLIST ON STEAM",
-                "steam",
-                "right"
-            );
 
             ctx.restore();
 
-            drawScanlines();
-            drawVignette();
+            if (crtEnabled) {
+                drawScanlines();
+                drawVignette();
+            }
+
+            if (typeof drawStartCornerActionButton === "function") {
+                drawStartCornerActionButton(
+                    startBugReportButton,
+                    "REPORT A BUG",
+                    "bug",
+                    "left"
+                );
+
+                drawStartCornerActionButton(
+                    startWishlistButton,
+                    "WISHLIST ON STEAM",
+                    "steam",
+                    "right"
+                );
+            }
+
             drawCrosshair();
         }
 
@@ -11053,11 +11141,11 @@
 
             ctx.fillText(label, textX, button.y + button.h / 2);
 
-            if (hovered) {
-                ctx.font = "10px monospace";
-                ctx.fillStyle = "rgba(150,255,190,0.56)";
-                ctx.fillText("OPEN LINK", textX, button.y - 9);
-            }
+            // if (hovered) {
+            //     ctx.font = "10px monospace";
+            //     ctx.fillStyle = "rgba(150,255,190,0.56)";
+            //     ctx.fillText("OPEN LINK", textX, button.y - 9);
+            // }
 
             ctx.restore();
         }
